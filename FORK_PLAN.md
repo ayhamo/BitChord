@@ -73,7 +73,7 @@ Later in this phase, if wanted: `NavidromeSource : MusicSource` so Navidrome res
 
 - `NavidromeClipCanvas`: first provider in `canvasFor()` for Navidrome songs. Fetches `/rest/x-clip/<folder>/<file>.background.mp4` with the `X-ND-Authorization` JWT (from Navidrome `/auth/login`).
 - Reuse BitChord's canvas cache and player instead of building our own.
-- Blocked on the server route (same as the psysonic fork, item 10).
+- Done: `NavidromeClips`, played as an ordinary canvas (BitChord's canvas player and disk cache, the "Animated cover art" and cellular switches). Seen on the emulator: RISE (Youtube FLAC). Songs without a clip still get the Apple/Tidal/Community/Spotify search.
 
 ## Phase 6: smaller extras
 

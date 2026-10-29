@@ -130,6 +130,10 @@ object Http {
         chain.proceed(request)
     }
 
+    /** fork: set by the app (Navidrome's login for its own API and x-clip backdrops); read per request. */
+    @Volatile
+    var forkInterceptor: okhttp3.Interceptor? = null
+
     val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
@@ -137,6 +141,7 @@ object Http {
         .dispatcher(Dispatcher().apply { maxRequestsPerHost = 16 })
         .connectionPool(ConnectionPool(16, 5, TimeUnit.MINUTES))
         .addInterceptor(webDavInterceptor)
+        .addInterceptor { chain -> forkInterceptor?.intercept(chain) ?: chain.proceed(chain.request()) } // fork
         .apply { if (USAGE_LOGGING_ENABLED) addNetworkInterceptor(usageInterceptor) }
         .build()
 }

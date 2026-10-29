@@ -33,6 +33,7 @@ object NavidromeRepository {
     fun invalidate() {
         generation++
         cached = null
+        NavidromeClips.reset()
     }
 
     suspend fun getSongs(): List<Song> = lock.withLock {

@@ -74,6 +74,8 @@ object CanvasRepository {
     suspend fun canvasFor(song: Song): CanvasArtwork? {
         // Only skip when there is no catalogue identity to search on.
         if (song.videoId.isBlank() && (song.localUri != null || song.localPath != null)) return null
+        // fork: a Navidrome song's own backdrop clip (x-clip) before any catalogue search
+        com.music.bitchord.data.navidrome.NavidromeClips.canvasFor(song)?.let { return it }
 
         val title = song.title.cleaned()
         val artist = song.artist.cleaned()

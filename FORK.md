@@ -11,6 +11,8 @@ Everything this fork adds lives in new files where possible. This file lists eve
 | `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeClient.kt` | Subsonic client: token auth, `search3` paging, raw stream and cover URLs |
 | `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeRepository.kt` | The library as `Song` rows (tags, per-song covers), cached in memory |
 | `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeLyrics.kt` | Timed lyrics from `getLyricsBySongId` for Navidrome stream URLs, remembered per song |
+| `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeClips.kt` | x-clip video backdrops: real path from `/api/song/<id>`, `/rest/x-clip/<folder>/<stem>.background.mp4`, Navidrome login (`/auth/login`) added by an interceptor, 7-day "no clip" notes (`bitchord_navidrome_clips` prefs) |
+| `app/src/test/java/com/music/bitchord/NavidromeClipsTest.kt` | Clip URL from a song path |
 | `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeHome.kt` | Album shelves (recently added / recent / most played / random) laid over the top of Home |
 | `app/src/test/java/com/music/bitchord/NavidromeLyricsTest.kt` | Lyrics answer → player lines (offset, word stamps, plain text ignored) |
 | `app/src/main/res/values/strings_fork.xml` | Fork strings |
@@ -33,6 +35,8 @@ Everything this fork adds lives in new files where possible. This file lists eve
 | `MainActivity.kt` | `showNavidromeEditor` state, `onEditNavidrome = …` passed to `SourcesScreen`, and the `ServerEditorHost` block before the SMB editor |
 | `data/lyrics/EmbeddedLyrics.kt` | `forUri()`: first two lines hand a Navidrome stream URL to `NavidromeLyrics` (covers both the player screen and the service's lyric subtitle) |
 | `shared/…/data/model/Models.kt` | `String.artworkAt()`: for a `/rest/getCoverArt` URL, `size=` is set to the asked px (`SUBSONIC_SIZE` regex next to `PARAM_SIZE_HINT`). Rows get small covers, the player 1200 px, which is what lets an animated WebP through. Test in `ModelsTest.subsonicCoverArtTakesTheAskedSize` |
+| `shared/…/data/Http.kt` | `forkInterceptor` property (set by `NavidromeClips.init`) and one `.addInterceptor { … forkInterceptor … }` line after the WebDAV one |
+| `data/canvas/CanvasRepository.kt` | `canvasFor()`: `NavidromeClips.canvasFor(song)` tried first, right after the blank-id guard; no clip falls through to the catalogue searches as before |
 | `BitChordApplication.kt` (`newImageLoader`) | `add(AnimatedCoverDecoder.Factory())` first in `components {}` |
 | `app/build.gradle.kts`, `tv/build.gradle.kts` | `coil-gif:3.0.4` next to `coil-svg` (tv compiles the app's sources, so it needs it too) |
 | `ui/screens/SettingsSheet.kt` | "Animated covers" sub-row right after the upstream "Animated cover art" (canvas video) row |
