@@ -8,12 +8,12 @@ import com.music.bitchord.data.model.HomeShelf
 import kotlinx.coroutines.flow.MutableStateFlow
 
 /**
- * Fork: Home in sections, "Navidrome" (the server's shelves), "Spotify" (the
- * account's mixes) and "YouTube" (upstream's feed), each folding away under its
+ * Fork: Home in sections, "Navidrome" (the server's shelves), "YouTube"
+ * (upstream's feed) and "Spotify" (the account's mixes), each folding away under its
  * heading, as Explore's panels do ([ForkExplore]).
  *
- * The app lays the server's and Spotify's shelves over the top of the feed and
- * sets how many of each lead it (`NavidromeHome.onTop`); with none of either
+ * The app lays the server's shelves over the top of the feed and Spotify's
+ * after its end, and sets how many of each there are (`NavidromeHome.onTop`); with none of either
  * there are no headings and Home is upstream's.
  */
 object ForkHome {
@@ -50,8 +50,8 @@ internal class ForkHomeState(
         if (navidrome <= 0 && spotify <= 0) return null
         return listOf(
             ForkHomeSection("navidrome", "Navidrome", navidromeOpen, ForkHome.navidromeOpen, shelves.take(navidrome)),
-            ForkHomeSection("spotify", "Spotify", spotifyOpen, ForkHome.spotifyOpen, shelves.drop(navidrome).take(spotify)),
-            ForkHomeSection("youtube", "YouTube", youtubeOpen, ForkHome.youtubeOpen, shelves.drop(navidrome + spotify)),
+            ForkHomeSection("youtube", "YouTube", youtubeOpen, ForkHome.youtubeOpen, shelves.drop(navidrome).dropLast(spotify)),
+            ForkHomeSection("spotify", "Spotify", spotifyOpen, ForkHome.spotifyOpen, shelves.takeLast(spotify)),
         ).filter { it.shelves.isNotEmpty() }
     }
 }

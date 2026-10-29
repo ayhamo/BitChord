@@ -107,7 +107,7 @@ object NavidromeHome {
     /** Home's "Made for you" shelf title, set as Home loads. */
     @Volatile private var spotifyTitle = "Made for you"
 
-    /** [youtube]'s feed with these shelves, then the Spotify mixes, in front of it. */
+    /** [youtube]'s feed with these shelves in front of it and the Spotify mixes after it. */
     fun onTop(
         youtube: StateFlow<UiState<List<HomeShelf>>>,
         scope: CoroutineScope,
@@ -122,15 +122,15 @@ object NavidromeHome {
             // Offline mode: what is kept on the phone, in place of the server's shelves.
             val navidrome = if (!shown) emptyList() else if (offline) listOfNotNull(kept?.takeIf { it.items.isNotEmpty() }) else server
             val spotify = if (offline) emptyList() else listOfNotNull(com.music.bitchord.fork.ForkSpotifyMixes.shelf(spotifyTitle))
-            val ours = navidrome + spotify
-            // Home's "Navidrome" and "Spotify" sections are the first this many shelves (ForkHome); none, no sections.
+            // The server's shelves lead the feed; the Spotify mixes come after its end (Navidrome, YouTube, Spotify).
+            // Home's "Navidrome" section is the first this many shelves and "Spotify" the last (ForkHome); none, no sections.
             com.music.bitchord.ui.screens.ForkHome.navidromeShelves.value = navidrome.size
             com.music.bitchord.ui.screens.ForkHome.spotifyShelves.value = spotify.size
             when {
-                ours.isEmpty() -> feed
-                feed is UiState.Success -> UiState.Success(ours + feed.data)
+                navidrome.isEmpty() && spotify.isEmpty() -> feed
+                feed is UiState.Success -> UiState.Success(navidrome + feed.data + spotify)
                 // Loading or failed: the library is still worth showing meanwhile.
-                else -> UiState.Success(ours)
+                else -> UiState.Success(navidrome + spotify)
             }
         }.stateIn(scope, SharingStarted.Eagerly, youtube.value)
 

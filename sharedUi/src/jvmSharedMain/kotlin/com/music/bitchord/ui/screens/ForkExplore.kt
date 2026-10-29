@@ -23,8 +23,8 @@ import com.music.bitchord.ui.components.PAGE_GUTTER
 import kotlinx.coroutines.flow.MutableStateFlow
 
 /**
- * Fork: Explore in panels, "YouTube" (upstream's moods and genres),
- * "Navidrome" (the server's genres) and "Spotify" (the account's mixes), each
+ * Fork: Explore in panels, "Navidrome" (the server's genres), "YouTube"
+ * (upstream's moods and genres) and "Spotify" (the account's mixes), each
  * folding away under its heading. The app fills [navidromeGenres] and
  * [spotifyMixes]; with neither there are no headings at all, so Explore is
  * upstream's.
@@ -65,24 +65,29 @@ internal fun rememberForkExplore(): ForkExploreState {
     )
 }
 
-/** The "YouTube" heading, above upstream's grid; only when there is another panel too. */
-internal fun LazyListScope.forkYouTubeHeading(state: ForkExploreState) {
+/**
+ * Above upstream's grid: the "Navidrome" panel, then the "YouTube" heading
+ * (only when there is another panel). Tiles in rows of [columns], drawn by
+ * [row] (upstream's tile row).
+ */
+internal fun LazyListScope.forkPanelsAbove(
+    state: ForkExploreState,
+    columns: Int,
+    row: @Composable (List<MoodGenre>) -> Unit,
+) {
+    panel("navidrome", "Navidrome", state.genres, state.navidromeOpen, ForkExplore.navidromeOpen, columns, row)
     if (!state.panels) return
     item(key = "fork:explore:youtube") {
         PanelHeading("YouTube", state.youtubeOpen) { ForkExplore.youtubeOpen.value = !state.youtubeOpen }
     }
 }
 
-/**
- * The "Navidrome" and "Spotify" panels, each a heading and, open, its tiles in
- * rows of [columns], drawn by [row] (upstream's tile row).
- */
-internal fun LazyListScope.forkNavidromePanel(
+/** Below upstream's grid: the "Spotify" panel. */
+internal fun LazyListScope.forkPanelsBelow(
     state: ForkExploreState,
     columns: Int,
     row: @Composable (List<MoodGenre>) -> Unit,
 ) {
-    panel("navidrome", "Navidrome", state.genres, state.navidromeOpen, ForkExplore.navidromeOpen, columns, row)
     panel("spotify", "Spotify", state.mixes, state.spotifyOpen, ForkExplore.spotifyOpen, columns, row)
 }
 

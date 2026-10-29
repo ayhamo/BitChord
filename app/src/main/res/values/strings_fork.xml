@@ -26,7 +26,7 @@
     <string name="fork_navidrome_scrobble_subtitle">Your server shows what is playing, and counts songs played to the end</string>
     <string name="fork_settings">Fork settings</string>
     <string name="fork_crossfade_on_skip">Crossfade on skip</string>
-    <string name="fork_crossfade_on_skip_subtitle">Next and Previous blend into the new track too</string>
+    <string name="fork_crossfade_on_skip_subtitle">Next and Previous blend into the new track too, also with Automix on (Automix still mixes songs that end on their own)</string>
     <string name="fork_sort_reversed">Reverse order</string>
     <string name="fork_navidrome_home_shelves">Navidrome on Home</string>
     <string name="fork_navidrome_home_shelves_subtitle">Your server\'s albums and playlists above YouTube\'s feed</string>

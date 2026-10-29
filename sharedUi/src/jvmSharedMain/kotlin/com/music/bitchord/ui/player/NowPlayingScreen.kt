@@ -1802,7 +1802,7 @@ fun NowPlayingScreen(
                         // The whole screen is the sheets' frost source: there is
                         // no full-bleed banner here to be it instead.
                         fullArtworkBlurContent(backgroundModifier.hazeSource(playerHaze))
-                        forkLandscapeClip?.let { ForkLandscapeBackdrop(it, isPlaying, dockMoving, dimmed = lyricsOpen || queueOpen, modifier = backgroundModifier) } // fork
+                        forkLandscapeClip?.let { ForkLandscapeBackdrop(it, remoteArt, isPlaying, dockMoving, dimmed = lyricsOpen || queueOpen, modifier = backgroundModifier) } // fork
                     },
                     artwork = { artworkModifier ->
                         LandscapeArtwork(

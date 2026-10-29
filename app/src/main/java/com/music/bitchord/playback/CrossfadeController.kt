@@ -766,7 +766,7 @@ class CrossfadeController(
     /**
      * Next / Previous as a blend into [toIndex] rather than a cut (fork-only).
      *
-     * Only in classic crossfade mode: a length set and Automix off, nothing in
+     * With a crossfade length set, or with Automix on (then a plain fade, see below): nothing in
      * flight, playing, no party, no version swap. The fade runs the same arm →
      * blend → handoff as a track running out, except it is cued now: [begin]
      * loads [toIndex] instead of the next item and the fade point is "as soon
@@ -782,12 +782,16 @@ class CrossfadeController(
             return false
         }
         if (!com.music.bitchord.fork.ForkSettings.crossfadeOnSkip.value) return false
-        if (phase != Phase.IDLE || AppSettings.smartFadeEnabled.value) return false
+        if (phase != Phase.IDLE) return false
         if (versionSwapActive() || ListenTogether.state.value.inParty) return false
         val out = active()
         if (!out.isPlaying || toIndex == out.currentMediaItemIndex) return false
         if (toIndex !in 0 until out.mediaItemCount) return false
-        val fade = configuredFadeMs()
+        // With Automix on, a skip blends too (there is no time to analyse it, so a plain fade of the
+        // slider's length, or Automix's own fallback with the slider off); songs running out are
+        // still Automix's, planned at the end as before.
+        val fade = configuredFadeMs().takeIf { it > 0L }
+            ?: if (AppSettings.smartFadeEnabled.value) (DEFAULT_SMART_FALLBACK_SECONDS * 1000).toLong() else 0L
         if (fade <= 0L) return false
         skipTarget = toIndex
         if (!begin(fade, endMs = 0L, smart = false, targetIndex = toIndex)) {
