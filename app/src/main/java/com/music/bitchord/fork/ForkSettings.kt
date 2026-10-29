@@ -23,20 +23,20 @@ object ForkSettings {
      */
     val crossfadeOnSkip: StateFlow<Boolean> = _crossfadeOnSkip.asStateFlow()
 
-    private val _animatedCovers = MutableStateFlow(true)
+    private val _coverClips = MutableStateFlow(true)
 
-    /** Animated WebP covers keep moving at player sizes; see `AnimatedCoverDecoder`. */
-    val animatedCovers: StateFlow<Boolean> = _animatedCovers.asStateFlow()
+    /** A Navidrome song's `.cover.mp4` plays over its sleeve; see `NavidromeClips`. */
+    val coverClips: StateFlow<Boolean> = _coverClips.asStateFlow()
 
     fun init(context: Context) {
         prefs = context.getSharedPreferences("bitchord_fork", Context.MODE_PRIVATE)
         _crossfadeOnSkip.value = prefs.getBoolean(KEY_CROSSFADE_ON_SKIP, true)
-        _animatedCovers.value = prefs.getBoolean(KEY_ANIMATED_COVERS, true)
+        _coverClips.value = prefs.getBoolean(KEY_COVER_CLIPS, true)
     }
 
-    fun setAnimatedCovers(value: Boolean) {
-        _animatedCovers.value = value
-        prefs.edit().putBoolean(KEY_ANIMATED_COVERS, value).apply()
+    fun setCoverClips(value: Boolean) {
+        _coverClips.value = value
+        prefs.edit().putBoolean(KEY_COVER_CLIPS, value).apply()
     }
 
     fun setCrossfadeOnSkip(value: Boolean) {
@@ -45,5 +45,5 @@ object ForkSettings {
     }
 
     private const val KEY_CROSSFADE_ON_SKIP = "crossfade_on_skip"
-    private const val KEY_ANIMATED_COVERS = "animated_covers"
+    private const val KEY_COVER_CLIPS = "cover_clips"
 }

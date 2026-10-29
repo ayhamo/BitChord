@@ -213,7 +213,6 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
             // Coil's own transport never sees Http.client's interceptor, so
             // the header is attached per request instead. See WebDavCoilAuth.
             .components {
-                add(com.music.bitchord.fork.AnimatedCoverDecoder.Factory()) // fork: animated WebP covers
                 add(WebDavCoilAuth())
                 // Covers filed on the SMB share; anything else falls
                 // through to Coil's own fetchers. See SmbCoverFetcher.

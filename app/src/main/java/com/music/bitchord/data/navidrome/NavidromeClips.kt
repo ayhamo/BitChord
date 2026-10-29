@@ -6,6 +6,7 @@ import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.fork.ForkSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -24,14 +25,20 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Video backdrops from the owner's server (fork-only), as in the psysonic
- * fork: a song file can have a looping `<file name>.background.mp4` next to
- * it, served at `/rest/x-clip/<folder>/<file name>.background.mp4` behind
- * Navidrome's own login (`X-ND-Authorization: Bearer <token>`).
+ * Video clips from the owner's server (fork-only), as in the psysonic fork: a
+ * song file can have looping clips next to it, a square `<file name>.cover.mp4`
+ * (an animated cover) and a `<file name>.background.mp4` (a backdrop), served
+ * at `/rest/x-clip/<folder>/<clip name>` behind Navidrome's own login
+ * (`X-ND-Authorization: Bearer <token>`).
  *
- * Handed to the player as an ordinary canvas ([CanvasArtwork]), tried before
- * the catalogue searches, so it plays through BitChord's canvas player and its
- * disk cache, under the same "Animated cover art" and cellular switches.
+ * BitChord has one place for a clip: the canvas, which plays over the sleeve.
+ * So the cover clip is tried first (it is made for that square), then the
+ * backdrop, each behind its own switch ([ForkSettings][com.music.bitchord.fork.ForkSettings]).
+ * The clip is handed to the player as an ordinary canvas ([CanvasArtwork]),
+ * tried before the catalogue searches, so it plays through BitChord's canvas
+ * player (the still cover first, the clip fading in once it draws, paused in
+ * the background) and its disk cache, under the same "Animated cover art" and
+ * cellular switches.
  * The login header can't travel in a URL, so [interceptor] (plugged into
  * [Http.client]) adds it to x-clip and native-API requests for the configured
  * server, and logs in again once on a 401.
@@ -47,8 +54,14 @@ object NavidromeClips {
     private lateinit var prefs: SharedPreferences
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
-    /** Clip URLs found this session, by song id. */
+    /** The two clips a song can have, in the order they are tried. */
+    internal enum class Kind(val suffix: String) { COVER(".cover.mp4"), BACKDROP(".background.mp4") }
+
+    /** Clip URLs found this session, by "<song id>|<kind>". */
     private val found = ConcurrentHashMap<String, String>()
+
+    /** Song paths read this session, by song id, so trying a second clip costs no second lookup. */
+    private val paths = ConcurrentHashMap<String, String>()
 
     @Volatile private var token: String? = null
     private val tokenLock = Any()
@@ -63,40 +76,50 @@ object NavidromeClips {
     fun reset() {
         token = null
         found.clear()
+        paths.clear()
         if (::prefs.isInitialized) prefs.edit().clear().apply()
     }
 
-    /** The song's backdrop clip, or null (none, not a Navidrome song, or the server couldn't be asked). */
+    /** The song's clip, cover first, or null (none, switched off, not a Navidrome song, or the server couldn't be asked). */
     suspend fun canvasFor(song: Song): CanvasArtwork? = withContext(Dispatchers.IO) {
         if (!NavidromeSettings.isNavidromeId(song.videoId) || !NavidromeSettings.isConfigured()) return@withContext null
         val id = song.videoId.removePrefix(NavidromeSettings.ID_PREFIX)
-        val url = found[id] ?: run {
-            if (System.currentTimeMillis() - prefs.getLong(id, 0L) < MISS_MS) return@withContext null
-            lookUp(id) ?: return@withContext null
-        }
+        if (!ForkSettings.coverClips.value) return@withContext null
+        val url = clip(id, Kind.COVER) ?: return@withContext null
         CanvasArtwork(url = url, title = song.title, artist = song.artist, album = song.albumName)
     }
 
-    private fun lookUp(id: String): String? = try {
+    private fun clip(id: String, kind: Kind): String? {
+        val key = "$id|${kind.name}"
+        found[key]?.let { return it }
+        if (System.currentTimeMillis() - prefs.getLong(key, 0L) < MISS_MS) return null
+        return lookUp(id, kind, key)
+    }
+
+    private fun lookUp(id: String, kind: Kind, key: String): String? = try {
         val base = base() ?: return null
-        val path = songPath(base, id) ?: return null
-        val url = clipUrl(base, path)?.toString() ?: return null
+        val path = paths[id] ?: songPath(base, id)?.also { paths[id] = it } ?: return null
+        val url = clipUrl(base, path, kind)?.toString() ?: return null
         // One byte, to know whether there is a clip before the player mounts it.
         val probe = Request.Builder().url(url).header("Range", "bytes=0-0").get().build()
         Http.client.newCall(probe).execute().use { response ->
             when {
-                response.isSuccessful -> url.also { found[id] = it }
-                // Only the clip route's own "no clip" is remembered (it sends Cache-Control);
-                // a 404 from a server without the route, or any other failure, is asked again later.
+                response.isSuccessful -> url.also {
+                    found[key] = it
+                    Log.d(TAG, "$key: found")
+                }
+                // Only the clip route's own "no clip" is remembered: it always sends
+                // `Cache-Control: private, max-age=604800`. A 404 without it (route missing, proxy
+                // reloading), a 5xx or a timeout is a failure, asked again next time.
                 response.code == 404 && response.header("Cache-Control")?.contains("max-age") == true -> {
-                    prefs.edit().putLong(id, System.currentTimeMillis()).apply()
+                    prefs.edit().putLong(key, System.currentTimeMillis()).apply()
                     null
                 }
-                else -> null.also { Log.d(TAG, "clip for $id: HTTP ${response.code}") }
+                else -> null.also { Log.d(TAG, "$key: HTTP ${response.code}") }
             }
         }
     } catch (e: java.io.IOException) {
-        Log.d(TAG, "clip for $id: ${e.message}")
+        Log.d(TAG, "$key: ${e.message}")
         null
     }
 
@@ -114,8 +137,8 @@ object NavidromeClips {
         }
     }
 
-    /** `…/Youtube FLAC/001-Song.flac` → `<base>/rest/x-clip/Youtube FLAC/001-Song.background.mp4`. */
-    internal fun clipUrl(base: HttpUrl, songPath: String): HttpUrl? {
+    /** `…/Youtube FLAC/001-Song.flac` → `<base>/rest/x-clip/Youtube FLAC/001-Song.cover.mp4` (or `.background.mp4`). */
+    internal fun clipUrl(base: HttpUrl, songPath: String, kind: Kind): HttpUrl? {
         val parts = songPath.split('/', '\\').filter { it.isNotEmpty() }
         if (parts.size < 2) return null
         val file = parts.last()
@@ -123,7 +146,7 @@ object NavidromeClips {
         return base.newBuilder()
             .addPathSegment("rest").addPathSegment("x-clip")
             .addPathSegment(parts[parts.size - 2])
-            .addPathSegment("$stem.background.mp4")
+            .addPathSegment(stem + kind.suffix)
             .build()
     }
 

@@ -319,8 +319,6 @@ dependencies {
     // Title logos are PNG, but artist signatures are usually SVG — without
     // this Coil can't decode them (see ArtistSignatureRepository).
     implementation("io.coil-kt.coil3:coil-svg:3.0.4")
-    // fork: animated WebP covers (AnimatedImageDecoder); see fork/AnimatedCoverDecoder
-    implementation("io.coil-kt.coil3:coil-gif:3.0.4")
     implementation("androidx.palette:palette-ktx:1.0.0")
 
     // ---- Frosted glass / progressive blur (Telegram-style bars) ----

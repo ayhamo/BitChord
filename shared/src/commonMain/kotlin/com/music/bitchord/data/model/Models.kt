@@ -297,9 +297,8 @@ fun String?.durationMillis(): Long {
 fun String?.artworkAt(px: Int): String? {
     if (this == null) return null
     var sized = this.replace(SIZE_HINT, "w$px-h$px")
-    // fork: a Navidrome cover (Subsonic getCoverArt) is sized by its `size` parameter. Navidrome
-    // never upscales: asked for more than the original it sends the file as stored, which is what
-    // keeps an animated WebP cover animated on the player (1200 px).
+    // fork: a Navidrome cover (Subsonic getCoverArt) is sized by its `size` parameter, so a row
+    // downloads a row-sized cover and the player a sharp one, instead of 600 px everywhere.
     if ("/rest/getCoverArt" in this) sized = sized.replace(SUBSONIC_SIZE, "$1size=$px")
     return if (isGoogleImageHost(this)) {
         sized.replace(PARAM_SIZE_HINT, "=s$px")

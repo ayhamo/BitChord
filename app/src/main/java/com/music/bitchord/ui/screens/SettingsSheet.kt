@@ -914,16 +914,18 @@ fun SettingsScreen(
                     onClick = { AppSettings.setAnimatedCanvas(!animatedCanvas) },
                 )
             }
-            // fork: animated WebP covers, separate from the canvas videos above
-            val animatedCoversTitle = stringResource(R.string.fork_animated_covers)
-            row(animatedCoversTitle, "animated", "webp", "cover", divided = false) {
-                val animatedCovers by com.music.bitchord.fork.ForkSettings.animatedCovers.collectAsStateWithLifecycle()
-                SettingsSubRow(
-                    title = animatedCoversTitle,
-                    subtitle = stringResource(R.string.fork_animated_covers_subtitle),
-                    checked = animatedCovers,
-                    onCheckedChange = com.music.bitchord.fork.ForkSettings::setAnimatedCovers,
-                )
+            // fork: Navidrome cover clips, which play through the canvas switched on above
+            if (animatedCanvas) {
+                val coverClipsTitle = stringResource(R.string.fork_cover_clips)
+                row(coverClipsTitle, "canvas", "navidrome", "cover", "video", divided = false) {
+                    val coverClips by com.music.bitchord.fork.ForkSettings.coverClips.collectAsStateWithLifecycle()
+                    SettingsSubRow(
+                        title = coverClipsTitle,
+                        subtitle = stringResource(R.string.fork_cover_clips_subtitle),
+                        checked = coverClips,
+                        onCheckedChange = com.music.bitchord.fork.ForkSettings::setCoverClips,
+                    )
+                }
             }
             // Reads as part of the Animated cover art option above it, not
             // as a separate setting. Nothing to narrow while the clip itself

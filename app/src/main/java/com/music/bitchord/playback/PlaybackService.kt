@@ -3201,6 +3201,7 @@ class PlaybackService : MediaLibraryService() {
         // press before that steps to the previous one.
         .setMaxSeekToPreviousPositionMs(BACK_RESTARTS_AFTER_MS)
         .build()
+        .also(com.music.bitchord.fork.PlayerDecoderNames::track) // fork
 
     /**
      * Moves the session onto the player the crossfade has just started the
@@ -3243,6 +3244,9 @@ class PlaybackService : MediaLibraryService() {
             reason = if (skipBlend) Player.MEDIA_ITEM_TRANSITION_REASON_SEEK else Player.MEDIA_ITEM_TRANSITION_REASON_AUTO, // fork
             alreadyAudible = true,
         )
+        // fork: the incoming decoder started before this player was listened to; see PlayerDecoderNames
+        com.music.bitchord.fork.PlayerDecoderNames.of(incoming)?.let(AudioOutputStatus::publishDecoder)
+        publishNerdStats() // fork: its format is known already, don't wait for the next playing tick
 
         // A crossfade starts the incoming item on the player that was idle, so
         // it never delivers onMediaItemTransition to playbackListener. Keep
@@ -5498,6 +5502,7 @@ class PlaybackService : MediaLibraryService() {
 
     private fun currentSourceName(mediaId: String?, mediaItem: MediaItem?): String? {
         val id = mediaId ?: return null
+        if (com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(id)) return "Navidrome" // fork
         if (isLocalPlayback(id, mediaItem)) {
             return "Local Storage"
         }

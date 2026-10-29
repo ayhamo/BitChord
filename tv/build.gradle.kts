@@ -354,8 +354,6 @@ dependencies {
     implementation("io.coil-kt.coil3:coil-network-okhttp:3.0.4")
     // The shared app sources register SvgDecoder (artist signatures).
     implementation("io.coil-kt.coil3:coil-svg:3.0.4")
-    // fork: the shared app sources register AnimatedCoverDecoder
-    implementation("io.coil-kt.coil3:coil-gif:3.0.4")
     implementation("androidx.palette:palette-ktx:1.0.0")
 
     // ---- Frosted glass / progressive blur (Telegram-style bars) ----

@@ -66,14 +66,15 @@ Later in this phase, if wanted: `NavidromeSource : MusicSource` so Navidrome res
 
 - Animated covers: add Coil's animated decoder (`coil-gif`, `AnimatedImageDecoder` on API 28+, minSdk is 26). Animate at player sizes only; keep list thumbnails still.
 - Grey-star artist placeholder: check what BitChord shows for artists with Navidrome's placeholder; use the song cover instead if needed.
-- Done: `AnimatedCoverDecoder` + "Animated covers" switch, and Navidrome cover URLs sized per surface through `artworkAt`. Seen moving on the player: "Locked out of Heaven" (Youtube FLAC). At the old fixed `size=600` the server sent it still.
+- Changed: animated covers are now the server's square `.cover.mp4` clips (as in psysonic), not WebP inside the songs. The cover square shows the cover clip, else Apple/Tidal/Community motion art, else the still cover. The WebP decoder and `coil-gif` were removed again; Navidrome cover URLs stay sized per surface through `artworkAt`.
 - Star: not needed. BitChord never loads Navidrome artist images (artist pages show its own person placeholder, the backdrop uses the song cover), so the star can't appear.
 
 ## Phase 5: video backdrops from my server
 
 - `NavidromeClipCanvas`: first provider in `canvasFor()` for Navidrome songs. Fetches `/rest/x-clip/<folder>/<file>.background.mp4` with the `X-ND-Authorization` JWT (from Navidrome `/auth/login`).
 - Reuse BitChord's canvas cache and player instead of building our own.
-- Done: `NavidromeClips`, played as an ordinary canvas (BitChord's canvas player and disk cache, the "Animated cover art" and cellular switches). Seen on the emulator: RISE (Youtube FLAC). Songs without a clip still get the Apple/Tidal/Community/Spotify search.
+- `NavidromeClips` (login, path lookup, x-clip URLs, miss notes) is done and serves the cover clips.
+- Open: `.background.mp4` backdrops need their own layer behind the player (BitChord has none; its only full-screen video is Spotify's Canvas, which replaces the cover). Not started; approach to decide.
 
 ## Phase 6: smaller extras
 
