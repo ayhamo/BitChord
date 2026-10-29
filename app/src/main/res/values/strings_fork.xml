@@ -12,6 +12,8 @@
     <string name="navidrome_home_recent">Recently played</string>
     <string name="navidrome_home_frequent">Most played</string>
     <string name="navidrome_home_random">Random albums</string>
+    <string name="fork_animated_covers">Animated covers</string>
+    <string name="fork_animated_covers_subtitle">Covers stored as animated WebP keep moving on the player and large cards</string>
     <string name="fork_crossfade_on_skip">Crossfade on skip</string>
     <string name="fork_crossfade_on_skip_subtitle">Next and Previous blend into the new track too</string>
 </resources>

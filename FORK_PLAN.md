@@ -66,6 +66,8 @@ Later in this phase, if wanted: `NavidromeSource : MusicSource` so Navidrome res
 
 - Animated covers: add Coil's animated decoder (`coil-gif`, `AnimatedImageDecoder` on API 28+, minSdk is 26). Animate at player sizes only; keep list thumbnails still.
 - Grey-star artist placeholder: check what BitChord shows for artists with Navidrome's placeholder; use the song cover instead if needed.
+- Done: `AnimatedCoverDecoder` + "Animated covers" switch, and Navidrome cover URLs sized per surface through `artworkAt`. Seen moving on the player: "Locked out of Heaven" (Youtube FLAC). At the old fixed `size=600` the server sent it still.
+- Star: not needed. BitChord never loads Navidrome artist images (artist pages show its own person placeholder, the backdrop uses the song cover), so the star can't appear.
 
 ## Phase 5: video backdrops from my server
 

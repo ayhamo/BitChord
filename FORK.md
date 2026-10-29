@@ -14,7 +14,8 @@ Everything this fork adds lives in new files where possible. This file lists eve
 | `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeHome.kt` | Album shelves (recently added / recent / most played / random) laid over the top of Home |
 | `app/src/test/java/com/music/bitchord/NavidromeLyricsTest.kt` | Lyrics answer → player lines (offset, word stamps, plain text ignored) |
 | `app/src/main/res/values/strings_fork.xml` | Fork strings |
-| `app/src/main/java/com/music/bitchord/fork/ForkSettings.kt` | Fork playback switches (`bitchord_fork` prefs): crossfade on skip |
+| `app/src/main/java/com/music/bitchord/fork/ForkSettings.kt` | Fork switches (`bitchord_fork` prefs): crossfade on skip, animated covers |
+| `app/src/main/java/com/music/bitchord/fork/AnimatedCoverDecoder.kt` | Coil decoder: animated WebP/GIF covers keep moving at 256 px and up (API 28+) |
 
 ## Hooks in upstream files
 
@@ -31,6 +32,10 @@ Everything this fork adds lives in new files where possible. This file lists eve
 | `ui/screens/SourcesScreen.kt` | `onEditNavidrome` parameter (defaults to `{}`) and a `RemoteLibrarySection` for Navidrome after the SMB one |
 | `MainActivity.kt` | `showNavidromeEditor` state, `onEditNavidrome = …` passed to `SourcesScreen`, and the `ServerEditorHost` block before the SMB editor |
 | `data/lyrics/EmbeddedLyrics.kt` | `forUri()`: first two lines hand a Navidrome stream URL to `NavidromeLyrics` (covers both the player screen and the service's lyric subtitle) |
+| `shared/…/data/model/Models.kt` | `String.artworkAt()`: for a `/rest/getCoverArt` URL, `size=` is set to the asked px (`SUBSONIC_SIZE` regex next to `PARAM_SIZE_HINT`). Rows get small covers, the player 1200 px, which is what lets an animated WebP through. Test in `ModelsTest.subsonicCoverArtTakesTheAskedSize` |
+| `BitChordApplication.kt` (`newImageLoader`) | `add(AnimatedCoverDecoder.Factory())` first in `components {}` |
+| `app/build.gradle.kts`, `tv/build.gradle.kts` | `coil-gif:3.0.4` next to `coil-svg` (tv compiles the app's sources, so it needs it too) |
+| `ui/screens/SettingsSheet.kt` | "Animated covers" sub-row right after the upstream "Animated cover art" (canvas video) row |
 | `res/xml/backup_rules.xml`, `res/xml/data_extraction_rules.xml` | Exclude `bitchord_navidrome.xml` and `bitchord_navidrome_plain.xml`, next to the `bitchord_sources` lines |
 
 ## Gotchas

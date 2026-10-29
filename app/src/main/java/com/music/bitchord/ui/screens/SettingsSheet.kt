@@ -914,6 +914,17 @@ fun SettingsScreen(
                     onClick = { AppSettings.setAnimatedCanvas(!animatedCanvas) },
                 )
             }
+            // fork: animated WebP covers, separate from the canvas videos above
+            val animatedCoversTitle = stringResource(R.string.fork_animated_covers)
+            row(animatedCoversTitle, "animated", "webp", "cover", divided = false) {
+                val animatedCovers by com.music.bitchord.fork.ForkSettings.animatedCovers.collectAsStateWithLifecycle()
+                SettingsSubRow(
+                    title = animatedCoversTitle,
+                    subtitle = stringResource(R.string.fork_animated_covers_subtitle),
+                    checked = animatedCovers,
+                    onCheckedChange = com.music.bitchord.fork.ForkSettings::setAnimatedCovers,
+                )
+            }
             // Reads as part of the Animated cover art option above it, not
             // as a separate setting. Nothing to narrow while the clip itself
             // is off. Defaults to off: a clip loops for as long as its track

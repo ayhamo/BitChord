@@ -37,6 +37,20 @@ class ModelsTest {
         )
     }
 
+    // fork: Navidrome covers are sized by `size=`, the rest of the URL untouched
+    @Test
+    fun subsonicCoverArtTakesTheAskedSize() {
+        assertEquals(
+            "https://nd.test/rest/getCoverArt?u=a&t=0f&s=xy&%76=1.16.1&c=BitChord&f=json&id=mf-1&size=1200",
+            "https://nd.test/rest/getCoverArt?u=a&t=0f&s=xy&%76=1.16.1&c=BitChord&f=json&id=mf-1&size=600"
+                .artworkAt(1200),
+        )
+        assertEquals(
+            "https://nd.test/rest/stream?id=1&size=600",
+            "https://nd.test/rest/stream?id=1&size=600".artworkAt(160),
+        )
+    }
+
     private fun album(id: String) = ShelfItem(id, "", null, null, id)
     private fun song(id: String) = ShelfItem(id, "", null, id, null)
 
