@@ -27,7 +27,7 @@ Base: upstream `main` at `04a4a838` (2026-10-26).
 ## Phase 0: build in Docker (first thing tomorrow)
 
 - Image: `eclipse-temurin:17` + Android SDK `platforms;android-37.0`, build-tools, **NDK + CMake 3.22.1** (native analyzer/DSD libs are built with CMake). Gradle 8.11.1 via wrapper.
-- Volumes for Gradle and SDK caches; Docker disk is on D:. APKs go to `D:\Programs\BitChord\out`.
+- Volumes for Gradle and SDK caches; Docker disk is on D:. APKs go to `out\` in the repo (locally git-excluded).
 - Build `assembleDevDebug`: dev flavor is `com.dev.bitchord` ("BitChord Dev"), so it installs next to anything else. ABI splits give an x86_64 APK for the LDPlayer emulator.
 - Signing: our key in `docker/keys` (gitignored; `*.jks` is already ignored upstream). `local.properties` Last.fm keys can stay empty for now.
 - Fix CRLF on `gradlew` inside the container, like before.
@@ -81,6 +81,8 @@ Later in this phase, if wanted: `NavidromeSource : MusicSource` so Navidrome res
 - Reverse album order (`#` header, remembered per album).
 - Scrobble plays to Navidrome (`scrobble` endpoint), star/unstar sync, Navidrome playlists.
 - Done: scrobbling ("Report plays to Navidrome", on by default). All fork switches are also in a "Fork settings" group before Advanced.
+- Done: star sync (the player's and the notification's star are the server's star), Navidrome playlists (Home shelf, pages in the playlist's order).
+- Reverse album: already upstream. Every album/playlist page's sort menu has "Date added" with an arrow that flips the running order, remembered per page, and Play follows it. No fork code.
 - Skipped: Discord covers (BitChord already has its own Discord presence; check later), "big albums open faster" (probably not needed on Android).
 
 ## Phase 7: updates + CI

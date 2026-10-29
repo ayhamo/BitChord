@@ -53,6 +53,8 @@ class NavidromeClient(
         val suffix: String?,
         val bitDepth: Int?,
         val samplingRate: Int?,
+        /** Starred on the server (Subsonic sends the date it was starred, or nothing). */
+        val starred: Boolean = false,
     )
 
     suspend fun ping() {
@@ -86,6 +88,33 @@ class NavidromeClient(
     data class AlbumRow(val id: String, val name: String, val artist: String?, val coverArt: String?)
 
     /** `getAlbumList2` of [type] (`newest`, `recent`, `frequent`, `random`, …). */
+    /** Star (the app's heart) or unstar a song. */
+    suspend fun setStarred(id: String, starred: Boolean) {
+        call(if (starred) "star" else "unstar", "id" to id)
+    }
+
+    /** One playlist on the server, for a Home card. */
+    data class PlaylistRow(val id: String, val name: String, val songCount: Int?, val coverArt: String?)
+
+    suspend fun playlists(): List<PlaylistRow> {
+        val result = call("getPlaylists")
+        return asList(result["playlists"]?.jsonObject?.get("playlist")).mapNotNull { element ->
+            val o = element as? JsonObject ?: return@mapNotNull null
+            PlaylistRow(
+                id = o.string("id") ?: return@mapNotNull null,
+                name = o.string("name") ?: return@mapNotNull null,
+                songCount = o.int("songCount"),
+                coverArt = o.string("coverArt"),
+            )
+        }
+    }
+
+    /** A playlist's songs, in its own order. */
+    suspend fun playlistSongs(id: String): List<SongRow> {
+        val result = call("getPlaylist", "id" to id)
+        return songRows(result["playlist"]?.jsonObject?.get("entry"))
+    }
+
     suspend fun albums(type: String, size: Int): List<AlbumRow> {
         val result = call("getAlbumList2", "type" to type, "size" to size.toString())
         return asList(result["albumList2"]?.jsonObject?.get("album")).mapNotNull { element ->
@@ -194,6 +223,7 @@ class NavidromeClient(
             suffix = o.string("suffix"),
             bitDepth = o.int("bitDepth"),
             samplingRate = o.int("samplingRate"),
+            starred = o.string("starred") != null,
         )
     }
 

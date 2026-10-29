@@ -67,6 +67,7 @@ import com.music.bitchord.ui.theme.stableStatusBarInsets
 import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.isNavidrome // fork
 
 /**
  * The widest the two columns are allowed to get between them, centred in
@@ -463,7 +464,7 @@ internal fun LandscapeCredits(
         // Same gate as the portrait player's: no account to like against for a
         // guest, and no YouTube identity to rate a local file or a finished
         // download against either.
-        if (signedIn && song.localUri == null) {
+        if ((signedIn && song.localUri == null) || song.isNavidrome) { // fork: Navidrome stars
             val liked = likeStatus == LikeStatus.LIKE
             CircleGlyph(
                 icon = if (liked) BitChordIcons.StarFilled else BitChordIcons.Star,

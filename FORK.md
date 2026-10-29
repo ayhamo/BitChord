@@ -17,6 +17,9 @@ Everything this fork adds lives in new files where possible. This file lists eve
 | `app/src/test/java/com/music/bitchord/NavidromeLyricsTest.kt` | Lyrics answer → player lines (offset, word stamps, plain text ignored) |
 | `app/src/main/res/values/strings_fork.xml` | Fork strings |
 | `app/src/main/java/com/music/bitchord/fork/ForkSettings.kt` | Fork switches (`bitchord_fork` prefs): crossfade on skip, Navidrome cover clips, backdrop clips, report plays to Navidrome |
+| `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeStars.kt` | The heart/star for Navidrome songs as the server's star (`star`/`unstar`), seeded from the songs' `starred` |
+| `app/src/main/java/com/music/bitchord/data/navidrome/NavidromePlaylists.kt` | Server playlists as pages (`local:group:playlist:navidrome:<id>`), reached from the Home "Playlists" shelf |
+| `shared/src/commonMain/kotlin/com/music/bitchord/data/model/ForkSong.kt` | `NAVIDROME_ID_PREFIX`, `Song.isNavidrome` (readable from the shared UI) |
 | `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeScrobble.kt` | "Now playing" and finished plays sent to Navidrome (`scrobble`, submission false/true) |
 | `app/src/main/java/com/music/bitchord/ui/screens/ForkSettingsRows.kt` | The fork switches as full settings rows, for the "Fork settings" group |
 | `sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/ForkPausedCover.kt` | The cover drawn back over a full-screen clip while paused |
@@ -43,6 +46,9 @@ Everything this fork adds lives in new files where possible. This file lists eve
 | `ui/screens/SettingsSheet.kt` | "Navidrome cover clips" and "Navidrome backdrop clips" sub-rows (inside a fork `if (animatedCanvas)`) right after the upstream "Animated cover art" (canvas video) row; "Report plays to Navidrome" row after "Account & integrations"; a "Fork settings" `SearchableSettingsGroup` just before Advanced repeating all fork switches |
 | `shared/…/data/canvas/CanvasArtwork.kt` | `CanvasSource`: `BACKDROP` value and `fillsPhone` (SPOTIFY or BACKDROP) |
 | `sharedUi/…/ui/player/NowPlayingScreen.kt` | Three `== CanvasSource.SPOTIFY` checks (`spotifyCanvasOnPhone`, `spotifyCanvasFullscreen`, `clipFullscreen`) read `?.fillsPhone == true`, so a backdrop gets Spotify Canvas's full-screen presentation; `ForkPausedCover(…)` after the Canvas dim box |
+| `ui/MainViewModel.kt` (stars, playlists) | `setLike()`: a first block for Navidrome ids (optimistic `LikeState`, `NavidromeStars.rate`, roll back on failure) before `requireSignIn()`; `localPageState()`: `NavidromePlaylists.pageState(…)` asked before `remoteLibrary(…)` |
+| `sharedUi/…/NowPlayingScreen.kt`, `LandscapePlayer.kt` | The star's gate `signedIn && song.localUri == null` also lets `song.isNavidrome` through (+ import) |
+| `playback/PlaybackService.kt` (stars) | `canLike()` also true for Navidrome ids; `toggleFavoriteFromNotification()` calls `NavidromeStars.rate` for them instead of `YtMusicRepository.rate` |
 | `playback/PlaybackService.kt` (ListenBrainz) | First line of `submitListenBrainzFinished` / `submitListenBrainzPlayingNow`: `NavidromeScrobble.finished/nowPlaying` |
 | `res/xml/backup_rules.xml`, `res/xml/data_extraction_rules.xml` | Exclude `bitchord_navidrome.xml` and `bitchord_navidrome_plain.xml`, next to the `bitchord_sources` lines |
 

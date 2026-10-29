@@ -15,7 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Development happens on Windows with no local JDK/SDK; builds run in Docker (`docker/`):
 
 ```powershell
-.\docker\build.ps1               # builds the image, then assembleDevDebug; APKs land in D:\Programs\BitChord\out
+.\docker\build.ps1               # builds the image, then assembleDevDebug; APKs land in out\ (repo root, excluded via .git/info/exclude; delete them when a round of work is done)
 .\docker\build.ps1 -NoImage      # reuse the existing image
 .\docker\build.ps1 -NoImage -Task testDevDebugUnitTest
 ```

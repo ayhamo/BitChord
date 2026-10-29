@@ -673,6 +673,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * registered, and people tap again.
      */
     fun setLike(videoId: String, status: LikeStatus) {
+        if (com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(videoId)) { // fork: a star on the Navidrome server
+            val previous = likeStatusOf(videoId)
+            if (previous == status) return
+            LikeState.set(videoId, status)
+            viewModelScope.launch {
+                com.music.bitchord.data.navidrome.NavidromeStars.rate(videoId, status)
+                    .onFailure { LikeState.set(videoId, previous) }
+            }
+            return
+        }
         if (!requireSignIn()) return
         val previous = likeStatusOf(videoId)
         if (previous == status) return
@@ -2832,6 +2842,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         com.music.bitchord.data.spotify.LocalPlaylistStore.getPlaylist(browseId)?.let { playlist ->
             return nonEmpty(playlist.songs) { text(R.string.spotify_import_empty_playlist) }
         }
+        com.music.bitchord.data.navidrome.NavidromePlaylists.pageState(browseId) { text(R.string.navidrome_playlist_empty) } // fork
+            ?.let { return it }
         remoteLibrary(browseId)?.let { return remoteSongsState(it) }
         LocalGroups.folderOf(browseId)?.let { folderId ->
             // Read off a fresh listing of the folder it came from: a grouping

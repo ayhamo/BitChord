@@ -1,13 +1,13 @@
 # Builds the BitChord fork's dev debug APK in Docker.
 #  - source is bind-mounted; Gradle caches live in the bitchord-gradle volume (Docker's disk is on D:).
 #  - debug signing key lives in docker/keys (gitignored), mounted as /root/.android so it never changes.
-#  - APKs go to D:\Programs\BitChord\out
+#  - APKs go to out\ in the repo (git-excluded locally); delete them once a round of work is finished
 param([switch]$NoImage, [string]$Task = 'assembleDevDebug')
 $ErrorActionPreference = 'Continue'
 function Check($what) { if ($LASTEXITCODE -ne 0) { Write-Host "$what failed ($LASTEXITCODE)"; exit $LASTEXITCODE } }
 
 $repo = Split-Path $PSScriptRoot -Parent
-$out = 'D:\Programs\BitChord\out'
+$out = Join-Path $repo 'out'
 New-Item -ItemType Directory -Force $out, "$PSScriptRoot\keys" | Out-Null
 
 if (-not $NoImage) {

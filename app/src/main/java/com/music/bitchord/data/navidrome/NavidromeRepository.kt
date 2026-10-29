@@ -41,15 +41,20 @@ object NavidromeRepository {
         if (!isConfigured()) return@withLock emptyList()
         val startedAt = generation
         val client = client()
+        val starred = mutableSetOf<String>()
         val songs = buildList {
             var offset = 0
             while (true) {
                 val page = client.songs(offset, PAGE)
-                page.forEach { add(it.toSong(client)) }
+                page.forEach { row ->
+                    add(row.toSong(client))
+                    if (row.starred) starred += NavidromeSettings.ID_PREFIX + row.id
+                }
                 if (page.size < PAGE) break
                 offset += PAGE
             }
         }
+        NavidromeStars.seed(starred)
         // The settings changed while this was paging: it describes the old server.
         if (startedAt == generation) {
             cached = songs

@@ -61,9 +61,15 @@ object NavidromeHome {
         val label = context.getString(R.string.navidrome)
         try {
             shelves.value = coroutineScope {
-                SHELVES.map { (type, title) ->
+                val albums = SHELVES.map { (type, title) ->
                     async { HomeShelf(context.getString(title), client.albums(type, PER_SHELF).map { it.toItem(client) }, label) }
-                }.awaitAll()
+                }
+                val playlists = async {
+                    HomeShelf(context.getString(R.string.navidrome_home_playlists), client.playlists().map { it.toItem(client, context) }, label)
+                }
+                // Playlists second: after what is new, before what is played most.
+                val loaded = albums.awaitAll()
+                listOf(loaded.first(), playlists.await()) + loaded.drop(1)
             }.filter { it.items.isNotEmpty() }
         } catch (e: IOException) {
             Log.d(TAG, "home shelves: ${e.message}")
@@ -85,6 +91,14 @@ object NavidromeHome {
                 else -> UiState.Success(ours)
             }
         }.stateIn(scope, SharingStarted.Eagerly, youtube.value)
+
+    private fun NavidromeClient.PlaylistRow.toItem(client: NavidromeClient, context: Context) = ShelfItem(
+        title = name,
+        subtitle = songCount?.let { context.resources.getQuantityString(R.plurals.navidrome_playlist_songs, it, it) }.orEmpty(),
+        thumbnailUrl = coverArt?.let { client.coverUrl(it) },
+        videoId = null,
+        browseId = NavidromePlaylists.pageId(id),
+    )
 
     private fun NavidromeClient.AlbumRow.toItem(client: NavidromeClient) = ShelfItem(
         title = name,

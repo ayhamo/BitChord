@@ -12,6 +12,12 @@
     <string name="navidrome_home_recent">Recently played</string>
     <string name="navidrome_home_frequent">Most played</string>
     <string name="navidrome_home_random">Random albums</string>
+    <string name="navidrome_home_playlists">Playlists</string>
+    <string name="navidrome_playlist_empty">This playlist is empty.</string>
+    <plurals name="navidrome_playlist_songs">
+        <item quantity="one">%d song</item>
+        <item quantity="other">%d songs</item>
+    </plurals>
     <string name="fork_cover_clips">Navidrome cover clips</string>
     <string name="fork_cover_clips_subtitle">A song\'s own cover video from your server plays over its cover</string>
     <string name="fork_backdrop_clips">Navidrome backdrop clips</string>
