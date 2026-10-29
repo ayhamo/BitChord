@@ -89,15 +89,18 @@ object NavidromeClips {
         val id = song.videoId.removePrefix(NavidromeSettings.ID_PREFIX)
         // A backdrop takes the whole phone (the Canvas presentation, cover back on top while
         // paused); without one, the cover clip plays over the sleeve. One clip plays at a time.
+        // The cover clip is also looked up next to a backdrop: where the backdrop can't fill the
+        // screen (wide window, landscape) the cover square plays the cover clip, never the backdrop.
         val backdrop = if (ForkSettings.backdropClips.value) clip(id, Kind.BACKDROP) else null
-        val url = backdrop ?: (if (ForkSettings.coverClips.value) clip(id, Kind.COVER) else null)
-            ?: return@withContext null
+        val cover = if (ForkSettings.coverClips.value) clip(id, Kind.COVER) else null
+        val url = backdrop ?: cover ?: return@withContext null
         CanvasArtwork(
             url = url,
             title = song.title,
             artist = song.artist,
             album = song.albumName,
             source = if (backdrop != null) CanvasSource.BACKDROP else CanvasSource.OTHER,
+            sleeveUrl = cover.takeIf { backdrop != null },
         )
     }
 

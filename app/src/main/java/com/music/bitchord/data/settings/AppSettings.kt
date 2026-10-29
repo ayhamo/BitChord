@@ -133,6 +133,7 @@ enum class LocalMusicSort {
  */
 enum class SongSort {
     DEFAULT,
+    REVERSED, // fork: the running order backwards (psysonic's reverse #)
     TITLE_ASC,
     TITLE_DESC,
     DATE_ADDED_ASC,

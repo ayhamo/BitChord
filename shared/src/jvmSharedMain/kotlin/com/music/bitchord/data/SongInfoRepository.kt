@@ -57,6 +57,7 @@ object SongInfoRepository {
     }
 
     suspend fun load(song: Song): SongInfo = withContext(Dispatchers.IO) {
+        ForkSongInfo.provider?.invoke(song)?.let { return@withContext it } // fork
         if (song.localUri != null || !Regex("[A-Za-z0-9_-]{11}").matches(song.videoId)) {
             return@withContext SongInfo(album = song.albumName)
         }

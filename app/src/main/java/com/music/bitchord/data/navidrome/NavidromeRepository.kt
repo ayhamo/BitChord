@@ -97,6 +97,7 @@ object NavidromeRepository {
      * them in for a song it has never heard of.
      */
     internal fun NavidromeClient.SongRow.toSong(client: NavidromeClient): Song {
+        NavidromeAlbums.remember(album, albumId) // so its album page opens with one request
         val lossless = suffix?.lowercase() in LOSSLESS_SUFFIXES
         val artistName = artist ?: "Unknown Artist"
         return Song(

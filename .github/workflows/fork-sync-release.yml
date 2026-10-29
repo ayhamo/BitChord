@@ -1,7 +1,7 @@
 # Fork-only workflow. Once a day it checks upstream BitChord's latest release.
 # When upstream has a release this fork has not released yet, it merges that
 # release into this fork's main (in the runner only, nothing is pushed), runs
-# the fork's tests, builds the dev release APKs signed with the fork's key,
+# the fork's tests, builds the prod release APKs (com.music.bitchord) signed with the fork's key,
 # checks the signing certificate and publishes `fork-v<version>` with the APKs,
 # their SHA-256 sums and a build attestation. The app's updater (pointed at
 # this fork) then offers it.
@@ -31,9 +31,9 @@ concurrency:
 
 env:
   UPSTREAM: kushagrasinghx/BitChord
-  # The fork's signing certificate (the key the dev builds are signed with, so a
-  # release installs as an update over them). A build signed with anything else fails.
-  EXPECTED_CERT_SHA256: 67d0062c006e35b7a3b7233fc9885a79ce7c876d80468ed5d2e123165f2a225a
+  # The fork's own release certificate (key in docker/keys/release, gitignored; the secrets hold it).
+  # A build signed with anything else fails.
+  EXPECTED_CERT_SHA256: 767de1ba5a02b81479bb8112ab6c752fd007cccdbd7f7b01a3cff1c09f3aea2e
 
 jobs:
   check:
@@ -108,7 +108,7 @@ jobs:
             :app:testDevDebugUnitTest --tests 'com.music.bitchord.Navidrome*' \
             :shared:jvmTest --tests 'com.music.bitchord.data.model.ModelsTest'
 
-      - name: signed dev release build
+      - name: signed release build
         env:
           FORK_KEYSTORE_BASE64: ${{ secrets.FORK_KEYSTORE_BASE64 }}
           FORK_KEYSTORE_PASSWORD: ${{ secrets.FORK_KEYSTORE_PASSWORD }}
@@ -122,7 +122,7 @@ jobs:
             echo "keyAlias=$FORK_KEY_ALIAS"
             echo "keyPassword=$FORK_KEYSTORE_PASSWORD"
           } > keystore.properties
-          ./gradlew --no-daemon -Pbitchord.bundleWear=false :app:assembleDevRelease
+          ./gradlew --no-daemon -Pbitchord.bundleWear=false :app:assembleProdRelease
           rm -f keystore.properties "$RUNNER_TEMP/fork.keystore"
 
       - name: check the signatures and name the APKs
@@ -130,11 +130,11 @@ jobs:
           set -euo pipefail
           apksigner=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
           mkdir out
-          for apk in app/build/outputs/apk/dev/release/*.apk; do
+          for apk in app/build/outputs/apk/prod/release/*.apk; do
             "$apksigner" verify --print-certs "$apk" | tee certs.txt
             grep -q "SHA-256 digest: $EXPECTED_CERT_SHA256" certs.txt
-            # app-dev-universal-release.apk -> BitChord-v1.8.1.apk, app-dev-arm64-v8a-release.apk -> BitChord-v1.8.1_arm64-v8a.apk
-            abi=$(basename "$apk" .apk | sed -e 's/^app-dev-//' -e 's/-release$//')
+            # app-prod-universal-release.apk -> BitChord-v1.8.1.apk, app-prod-arm64-v8a-release.apk -> BitChord-v1.8.1_arm64-v8a.apk
+            abi=$(basename "$apk" .apk | sed -e 's/^app-prod-//' -e 's/-release$//')
             if [ "$abi" = "universal" ]; then name="BitChord-v$VERSION.apk"; else name="BitChord-v${VERSION}_$abi.apk"; fi
             cp "$apk" "out/$name"
           done

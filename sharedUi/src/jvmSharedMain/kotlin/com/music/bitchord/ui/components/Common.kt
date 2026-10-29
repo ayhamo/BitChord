@@ -65,6 +65,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth // fork
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshState
 import androidx.compose.foundation.shape.CircleShape
@@ -550,6 +551,8 @@ private fun SongRowContent(
                         style = MaterialTheme.typography.bodyLarge,
                         color = subtitleColor,
                         maxLines = 1,
+                        softWrap = false,
+                        modifier = Modifier.wrapContentWidth(unbounded = true), // fork: 3-digit numbers (big albums) were cut to 2
                     )
                 }
             }

@@ -4108,6 +4108,7 @@ private fun BitChordApp(
             }
             val onToggleVersion: (() -> Unit)? = if (fromPlayer &&
                 hasAlternateVersion &&
+                !com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(song.videoId) && // fork: a Navidrome file has no video version
                 !switchingAudioVersion &&
                 controller?.currentMediaItem?.mediaId == song.videoId
             ) {
@@ -5530,6 +5531,7 @@ private fun FrostedMenuRow(
 @Composable
 private fun SongSort.localizedLabel(): String = when (this) {
     SongSort.DEFAULT -> stringResource(R.string.sort_default)
+    SongSort.REVERSED -> stringResource(R.string.fork_sort_reversed) // fork
     SongSort.TITLE_ASC -> stringResource(R.string.sort_title_ascending)
     SongSort.TITLE_DESC -> stringResource(R.string.sort_title_descending)
     SongSort.DATE_ADDED_ASC -> stringResource(R.string.sort_date_added_oldest)

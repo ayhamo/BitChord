@@ -2626,6 +2626,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 artwork = localPlaylist.songs.firstOrNull { !it.thumbnailUrl.isNullOrBlank() }?.thumbnailUrl
             }
             val local = localPageState(browseId)
+            com.music.bitchord.data.navidrome.NavidromeAlbums.header(browseId)?.let { artwork = it.cover; credit = it.artist } // fork: the album's cover and artist, not the opening song's
             val state = when {
                 local != null -> local
                 resolved == BrowseType.ARTIST -> {
@@ -2843,6 +2844,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             return nonEmpty(playlist.songs) { text(R.string.spotify_import_empty_playlist) }
         }
         com.music.bitchord.data.navidrome.NavidromePlaylists.pageState(browseId) { text(R.string.navidrome_playlist_empty) } // fork
+            ?.let { return it }
+        com.music.bitchord.data.navidrome.NavidromeAlbums.pageState(browseId) { text(R.string.no_tracks_here) } // fork
             ?.let { return it }
         remoteLibrary(browseId)?.let { return remoteSongsState(it) }
         LocalGroups.folderOf(browseId)?.let { folderId ->

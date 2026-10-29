@@ -100,11 +100,14 @@ object NavidromeHome {
         browseId = NavidromePlaylists.pageId(id),
     )
 
-    private fun NavidromeClient.AlbumRow.toItem(client: NavidromeClient) = ShelfItem(
-        title = name,
-        subtitle = artist.orEmpty(),
-        thumbnailUrl = coverArt?.let { client.coverUrl(it) },
-        videoId = null,
-        browseId = LocalGroups.albumPageId(NavidromeSettings.BROWSE_ID, name),
-    )
+    private fun NavidromeClient.AlbumRow.toItem(client: NavidromeClient): ShelfItem {
+        NavidromeAlbums.remember(name, id) // so its album page opens with one request
+        return ShelfItem(
+            title = name,
+            subtitle = artist.orEmpty(),
+            thumbnailUrl = coverArt?.let { client.coverUrl(it) },
+            videoId = null,
+            browseId = LocalGroups.albumPageId(NavidromeSettings.BROWSE_ID, name),
+        )
+    }
 }

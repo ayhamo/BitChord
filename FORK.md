@@ -11,7 +11,7 @@ Everything this fork adds lives in new files where possible. This file lists eve
 | `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeClient.kt` | Subsonic client: token auth, `search3` paging, raw stream and cover URLs |
 | `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeRepository.kt` | The library as `Song` rows (tags, per-song covers), cached in memory |
 | `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeLyrics.kt` | Timed lyrics from `getLyricsBySongId` for Navidrome stream URLs, remembered per song |
-| `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeClips.kt` | x-clip cover clips: real path from `/api/song/<id>`, `/rest/x-clip/<folder>/<stem>.cover.mp4` played as the canvas over the sleeve, Navidrome login (`/auth/login`) added by an interceptor, 7-day "no clip" notes (`bitchord_navidrome_clips` prefs). `Kind.BACKDROP` (`.background.mp4`) is there for the backdrop layer, not used yet |
+| `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeClips.kt` | x-clip cover clips: real path from `/api/song/<id>`, `/rest/x-clip/<folder>/<stem>.cover.mp4` played in the cover square, `.background.mp4` backdrops (with the cover clip as `sleeveUrl`), Navidrome login (`/auth/login`) added by an interceptor, 7-day "no clip" notes (`bitchord_navidrome_clips` prefs). |
 | `app/src/test/java/com/music/bitchord/NavidromeClipsTest.kt` | Clip URL from a song path |
 | `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeHome.kt` | Album shelves (recently added / recent / most played / random) laid over the top of Home |
 | `app/src/test/java/com/music/bitchord/NavidromeLyricsTest.kt` | Lyrics answer → player lines (offset, word stamps, plain text ignored) |
@@ -24,6 +24,11 @@ Everything this fork adds lives in new files where possible. This file lists eve
 | `app/src/main/java/com/music/bitchord/ui/screens/ForkSettingsRows.kt` | The fork switches as full settings rows, for the "Fork settings" group |
 | `sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/ForkPausedCover.kt` | The cover drawn back over a full-screen clip while paused |
 | `app/src/main/java/com/music/bitchord/fork/PlayerDecoderNames.kt` | The decoder each ExoPlayer last stood up, so a crossfade handoff can publish it (the Audio Pipeline showed "—" after every crossfade) |
+| `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeAlbums.kt` | Navidrome album pages (`local:group:album:navidrome:<name>`) from `getAlbum` (album id remembered from songs/Home cards, else `search3`) instead of the whole library; the album's own cover and artist for the header |
+| `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeSongInfo.kt` | Song Info for Navidrome songs from `getSong`: release date, your plays, rating/star |
+| `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/ForkSongInfo.kt` | Provider slot the app fills, asked first by `SongInfoRepository.load` |
+| `sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/ForkSleeveClip.kt` | `forkInSleeve()`: where a backdrop can't fill the screen, the sleeve plays the cover clip (`sleeveUrl`) or the still cover, never the backdrop |
+| `docker/keys/release/` (gitignored) | The fork's release key `bitchord-release.jks` + `keystore.properties` (random password). Back it up: without it no update installs over a release |
 
 ## Hooks in upstream files
 
@@ -51,8 +56,17 @@ Everything this fork adds lives in new files where possible. This file lists eve
 | `playback/PlaybackService.kt` (stars) | `canLike()` also true for Navidrome ids; `toggleFavoriteFromNotification()` calls `NavidromeStars.rate` for them instead of `YtMusicRepository.rate` |
 | `playback/PlaybackService.kt` (ListenBrainz) | First line of `submitListenBrainzFinished` / `submitListenBrainzPlayingNow`: `NavidromeScrobble.finished/nowPlaying` |
 | `data/AppUpdateChecker.kt` | `LATEST_RELEASE_URL` points at `ayhamo/BitChord`; the tag has `fork-` stripped before `v` |
-| `.github/workflows/fork-sync-release.yml` (new) | Daily: merge upstream's latest release, fork tests, signed `assembleDevRelease`, certificate check, attestation, `fork-v<version>` release; on failure an issue + GitHub's failure email |
+| `.github/workflows/fork-sync-release.yml` (new) | Daily: merge upstream's latest release, fork tests, `assembleProdRelease` signed with the fork's release key, certificate check, attestation, `fork-v<version>` release; on failure an issue + GitHub's failure email |
 | `res/xml/backup_rules.xml`, `res/xml/data_extraction_rules.xml` | Exclude `bitchord_navidrome.xml` and `bitchord_navidrome_plain.xml`, next to the `bitchord_sources` lines |
+| `data/settings/AppSettings.kt`, `ui/screens/DetailScreen.kt`, `MainActivity.kt` | `SongSort.REVERSED` ("Reverse order", psysonic's reverse #): enum value after DEFAULT, `asReversed()` in `sortedForDetail`, label in `localizedLabel` |
+| `sharedUi/…/ui/components/Common.kt` | Track number `Text`: `softWrap = false` + `wrapContentWidth(unbounded = true)` (+ import), so 3-digit numbers aren't cut to 2 |
+| `ui/MainViewModel.kt` (albums) | `localPageState()`: `NavidromeAlbums.pageState(…)` after the playlists line; `openDetail()`: after `localPageState`, `NavidromeAlbums.header(browseId)` sets `artwork`/`credit` |
+| `data/canvas/CanvasRepository.kt` (no Spotify) | `canvasFor()`: both accept lambdas reject `SPOTIFY` for Navidrome songs (+ `isNavidrome` import); `canvasForAlbum()` takes `noSpotify` (in its cache key, accept lambdas) |
+| `ui/screens/DetailScreen.kt` | Album header canvas: `noSpotify` for Navidrome album pages |
+| `shared/…/data/canvas/CanvasArtwork.kt` | `sleeveUrl` field (a backdrop's cover clip) |
+| `sharedUi/…/NowPlayingScreen.kt` (sleeve) | `rememberCanvasArtwork(song).forkInSleeve(playerFillsWindow(windowWidth))`; `ForkPausedCover(…)` now takes the canvas: always over a Navidrome backdrop (with the cover clip playing in it), paused-only over Spotify Canvas |
+| `shared/…/data/SongInfoRepository.kt` | First line of `load()`: `ForkSongInfo.provider` |
+| `MainActivity.kt` (video) | `onToggleVersion`: not offered for Navidrome ids ("Convert to video") |
 
 ## Gotchas
 

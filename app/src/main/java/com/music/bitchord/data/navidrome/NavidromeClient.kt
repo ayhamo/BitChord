@@ -87,7 +87,6 @@ class NavidromeClient(
     /** One album card: [name] is the album tag the library's own album pages group by. */
     data class AlbumRow(val id: String, val name: String, val artist: String?, val coverArt: String?)
 
-    /** `getAlbumList2` of [type] (`newest`, `recent`, `frequent`, `random`, …). */
     /** Star (the app's heart) or unstar a song. */
     suspend fun setStarred(id: String, starred: Boolean) {
         call(if (starred) "star" else "unstar", "id" to id)
@@ -115,17 +114,72 @@ class NavidromeClient(
         return songRows(result["playlist"]?.jsonObject?.get("entry"))
     }
 
+    /** `getAlbumList2` of [type] (`newest`, `recent`, `frequent`, `random`, …). */
     suspend fun albums(type: String, size: Int): List<AlbumRow> {
         val result = call("getAlbumList2", "type" to type, "size" to size.toString())
-        return asList(result["albumList2"]?.jsonObject?.get("album")).mapNotNull { element ->
-            val o = element as? JsonObject ?: return@mapNotNull null
-            AlbumRow(
-                id = o.string("id") ?: return@mapNotNull null,
-                name = o.string("name") ?: return@mapNotNull null,
-                artist = o.string("artist"),
-                coverArt = o.string("coverArt"),
-            )
+        return asList(result["albumList2"]?.jsonObject?.get("album")).mapNotNull { it.toAlbumRow() }
+    }
+
+    /** Albums whose name matches [query] (`search3`, albums only). */
+    suspend fun searchAlbums(query: String, count: Int = 20): List<AlbumRow> {
+        val result = call(
+            "search3",
+            "query" to query,
+            "albumCount" to count.toString(),
+            "songCount" to "0",
+            "artistCount" to "0",
+        )
+        return asList(result["searchResult3"]?.jsonObject?.get("album")).mapNotNull { it.toAlbumRow() }
+    }
+
+    /** One album: its card and its songs in the server's order (disc, then track). */
+    suspend fun album(id: String): Pair<AlbumRow?, List<SongRow>> {
+        val album = call("getAlbum", "id" to id)["album"]
+        return album?.toAlbumRow() to songRows((album as? JsonObject)?.get("song"))
+    }
+
+    /** A song's details for Song Info: plays, year, rating, genre. */
+    data class SongDetails(
+        val playCount: Int?,
+        val year: Int?,
+        val releaseDate: String?,
+        val genre: String?,
+        val userRating: Int?,
+        val starred: Boolean,
+        val bitRate: Int?,
+        val suffix: String?,
+    )
+
+    suspend fun songDetails(id: String): SongDetails {
+        val o = call("getSong", "id" to id)["song"]?.jsonObject ?: throw IOException("No such song")
+        // OpenSubsonic: {"year":2014,"month":11,"day":3}; any part may be missing.
+        val date = (o["originalReleaseDate"] as? JsonObject)?.takeIf { it.int("year") != null }
+            ?: (o["releaseDate"] as? JsonObject)?.takeIf { it.int("year") != null }
+        val releaseDate = date?.let { d ->
+            listOfNotNull(d.int("year"), d.int("month"), d.int("day"))
+                .mapIndexed { i, part -> if (i == 0) part.toString() else "%02d".format(part) }
+                .joinToString("-")
         }
+        return SongDetails(
+            playCount = o.int("playCount"),
+            year = o.int("year"),
+            releaseDate = releaseDate,
+            genre = o.string("genre"),
+            userRating = o.int("userRating"),
+            starred = o.string("starred") != null,
+            bitRate = o.int("bitRate"),
+            suffix = o.string("suffix"),
+        )
+    }
+
+    private fun JsonElement.toAlbumRow(): AlbumRow? {
+        val o = this as? JsonObject ?: return null
+        return AlbumRow(
+            id = o.string("id") ?: return null,
+            name = o.string("name") ?: return null,
+            artist = o.string("artist"),
+            coverArt = o.string("coverArt"),
+        )
     }
 
     private fun songRows(element: JsonElement?): List<SongRow> = asList(element).mapNotNull { it.toSongRow() }

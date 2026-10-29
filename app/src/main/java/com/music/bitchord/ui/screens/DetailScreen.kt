@@ -476,7 +476,7 @@ fun DetailScreen(
         // As on the player: the credit fills in once the tracks load, so this
         // can run twice. Keep a clip that is already playing if the second
         // pass comes back empty.
-        canvas = CanvasRepository.canvasForAlbum(page.title, credit) ?: canvas
+        canvas = CanvasRepository.canvasForAlbum(page.title, credit, noSpotify = page.browseId.startsWith(com.music.bitchord.data.navidrome.NavidromeAlbums.PREFIX)) ?: canvas // fork: noSpotify
     }
     // An artist's clip comes with the same Apple lookup as its photograph.
     val artistVideo = appleArt?.videoUrl
@@ -1181,6 +1181,7 @@ private fun DetailSearchField(
 
 internal fun List<Song>.sortedForDetail(sort: SongSort): List<Song> = when (sort) {
     SongSort.DEFAULT -> this
+    SongSort.REVERSED -> asReversed() // fork
     SongSort.TITLE_ASC -> sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title })
     SongSort.TITLE_DESC -> sortedWith(compareByDescending(String.CASE_INSENSITIVE_ORDER) { it.title })
     // A catalogue row carries no added date, so its place in the running

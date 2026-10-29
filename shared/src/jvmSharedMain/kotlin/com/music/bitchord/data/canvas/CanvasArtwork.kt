@@ -39,6 +39,8 @@ data class CanvasArtwork(
     val artist: String? = null,
     val album: String? = null,
     val source: CanvasSource = CanvasSource.OTHER,
+    /** fork: for a [CanvasSource.BACKDROP], the clip the cover square plays where the backdrop can't fill the screen (null = the still cover). */
+    val sleeveUrl: String? = null,
 ) {
     /**
      * Whether this clip really belongs to the track we asked about.
