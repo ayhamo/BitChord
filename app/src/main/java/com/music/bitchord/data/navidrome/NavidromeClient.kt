@@ -7,34 +7,33 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 import java.io.IOException
 import java.security.MessageDigest
-import java.security.SecureRandom
 
 /**
  * A small Subsonic / OpenSubsonic client for one Navidrome server (fork-only).
  *
  * Every request carries token auth (`t` = md5(password + salt), `s` = salt)
- * rather than the password. The salt is made once per client, so the stream
- * and cover URLs it hands out stay valid for as long as the password does —
- * they end up stored in the queue, and Subsonic tokens don't expire.
+ * rather than the password. The library is read with the saved salt
+ * ([NavidromeSettings.salt]), so the stream and cover URLs it hands out stay
+ * the same across app starts — the image and audio caches are keyed by URL —
+ * and valid for as long as the password is; Subsonic tokens don't expire.
  */
 class NavidromeClient(
     baseUrl: String,
     private val username: String,
     password: String,
+    private val salt: String = NavidromeSettings.newSalt(),
 ) {
     private val base: HttpUrl = NavidromeSettings.normalizeUrl(baseUrl).toHttpUrlOrNull()
         ?: throw IllegalArgumentException("Not a server address")
-    private val salt: String = ByteArray(8).also(SecureRandom()::nextBytes).toHex()
     private val token: String = md5(password + salt)
 
     /** One page of the library's songs, from `search3` with an empty query (Navidrome lists everything). */
@@ -133,10 +132,10 @@ class NavidromeClient(
     }
 
     private fun JsonObject.string(key: String): String? =
-        (get(key) as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+        (get(key) as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
 
     private fun JsonObject.int(key: String): Int? =
-        (get(key) as? kotlinx.serialization.json.JsonPrimitive)?.intOrNull
+        (get(key) as? JsonPrimitive)?.intOrNull
 
     private companion object {
         val json = Json { ignoreUnknownKeys = true; isLenient = true }

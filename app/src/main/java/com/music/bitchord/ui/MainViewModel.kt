@@ -1467,6 +1467,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 reloadRemoteDetail(com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID)
             }
         }
+        viewModelScope.launch { // fork: the Navidrome page follows its server settings
+            combine(
+                com.music.bitchord.data.navidrome.NavidromeSettings.url,
+                com.music.bitchord.data.navidrome.NavidromeSettings.username,
+                com.music.bitchord.data.navidrome.NavidromeSettings.password,
+            ) { url, user, password -> Triple(url, user, password) }.drop(1).collect {
+                reloadRemoteDetail(com.music.bitchord.data.navidrome.NavidromeSettings.BROWSE_ID)
+            }
+        }
         viewModelScope.launch {
             combine(
                 AppSettings.smbHost,

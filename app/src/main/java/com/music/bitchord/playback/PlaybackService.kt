@@ -3236,10 +3236,11 @@ class PlaybackService : MediaLibraryService() {
         // that callback is driven explicitly instead. Without this the crossfade
         // would silently stop scrobbling, stop writing history, stop honouring
         // "sleep after this song" and stop reading ahead.
+        val skipBlend = crossfade?.isSkipBlend() == true // fork: a skip that crossfaded didn't end the song
         onTrackBecameCurrent(
             incoming.currentMediaItem,
-            previousEnded = true,
-            reason = Player.MEDIA_ITEM_TRANSITION_REASON_AUTO,
+            previousEnded = !skipBlend, // fork
+            reason = if (skipBlend) Player.MEDIA_ITEM_TRANSITION_REASON_SEEK else Player.MEDIA_ITEM_TRANSITION_REASON_AUTO, // fork
             alreadyAudible = true,
         )
 
@@ -7709,8 +7710,17 @@ class PlaybackService : MediaLibraryService() {
                 castPrevious()
                 return
             }
+            if (crossfade.crossfadeSkip(forkPreviousTarget())) return // fork
             super.seekToPrevious()
         }
+
+        /** fork: the item Previous goes to, or unset when it only restarts this one (Media3's 3 s rule). */
+        private fun forkPreviousTarget(): Int =
+            if (wrappedPlayer.currentPosition <= wrappedPlayer.maxSeekToPreviousPosition) {
+                wrappedPlayer.previousMediaItemIndex
+            } else {
+                C.INDEX_UNSET
+            }
 
         override fun seekToDefaultPosition() {
             if (locked()) return
@@ -7847,6 +7857,7 @@ class PlaybackService : MediaLibraryService() {
         override fun seekToPreviousMediaItem() {
             if (locked()) return
             onUserIntent()
+            if (!cast.active && crossfade.crossfadeSkip(forkPreviousTarget())) return // fork
             crossfade.onSkipRequested()
             if (cast.active) {
                 castPrevious()
@@ -7858,6 +7869,7 @@ class PlaybackService : MediaLibraryService() {
         override fun seekToNextMediaItem() {
             if (locked()) return
             onUserIntent()
+            if (!cast.active && crossfade.crossfadeSkip(wrappedPlayer.nextMediaItemIndex)) return // fork
             crossfade.onSkipRequested()
             wrappedPlayer.seekToNextMediaItem()
         }
@@ -7865,6 +7877,7 @@ class PlaybackService : MediaLibraryService() {
         override fun seekToNext() {
             if (locked()) return
             onUserIntent()
+            if (!cast.active && crossfade.crossfadeSkip(wrappedPlayer.nextMediaItemIndex)) return // fork
             crossfade.onSkipRequested()
             wrappedPlayer.seekToNext()
         }

@@ -3,6 +3,7 @@ package com.music.bitchord.data.navidrome
 import android.content.Context
 import android.content.SharedPreferences
 import com.music.bitchord.auth.EncryptedPrefs
+import com.music.bitchord.data.webdav.WebDavConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,11 +31,20 @@ object NavidromeSettings {
     val username: StateFlow<String> = _username.asStateFlow()
     val password: StateFlow<String> = _password.asStateFlow()
 
+    /**
+     * The Subsonic token salt, kept for as long as the login is. A fresh salt
+     * per session would change every stream and cover URL on each start, and
+     * the image and audio caches are keyed by URL.
+     */
+    var salt: String = ""
+        private set
+
     fun init(context: Context) {
         prefs = EncryptedPrefs.open(context, "bitchord_navidrome", "bitchord_navidrome_plain")
         _url.value = prefs.getString(KEY_URL, "").orEmpty()
         _username.value = prefs.getString(KEY_USERNAME, "").orEmpty()
         _password.value = prefs.getString(KEY_PASSWORD, "").orEmpty()
+        salt = prefs.getString(KEY_SALT, null) ?: newSalt().also { prefs.edit().putString(KEY_SALT, it).apply() }
     }
 
     fun isConfigured(): Boolean = isConfigured(_url.value, _username.value)
@@ -46,27 +56,27 @@ object NavidromeSettings {
         _url.value = normalizeUrl(url)
         _username.value = username.trim()
         _password.value = password
+        salt = newSalt()
         prefs.edit()
             .putString(KEY_URL, _url.value)
             .putString(KEY_USERNAME, _username.value)
             .putString(KEY_PASSWORD, password)
+            .putString(KEY_SALT, salt)
             .apply()
         NavidromeRepository.invalidate()
     }
 
     fun clear() = save("", "", "")
 
-    /** `music.example.com/` → `https://music.example.com`; blank stays blank. */
-    fun normalizeUrl(raw: String): String {
-        val trimmed = raw.trim().trimEnd('/')
-        if (trimmed.isEmpty()) return ""
-        val withScheme = if (trimmed.startsWith("http://", ignoreCase = true) ||
-            trimmed.startsWith("https://", ignoreCase = true)
-        ) trimmed else "https://$trimmed"
-        return withScheme.takeIf { runCatching { java.net.URI(it).host }.getOrNull() != null }.orEmpty()
-    }
+    /** `music.example.com/` → `https://music.example.com`; anything without a host reads as blank. */
+    fun normalizeUrl(raw: String): String =
+        WebDavConfig.normalizeUrl(raw).takeIf(WebDavConfig::isConfigured).orEmpty()
+
+    fun newSalt(): String =
+        ByteArray(8).also(java.security.SecureRandom()::nextBytes).joinToString("") { "%02x".format(it) }
 
     private const val KEY_URL = "url"
     private const val KEY_USERNAME = "username"
     private const val KEY_PASSWORD = "password"
+    private const val KEY_SALT = "salt"
 }

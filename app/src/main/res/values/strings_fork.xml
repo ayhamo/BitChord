@@ -5,7 +5,9 @@
     <string name="navidrome_subtitle">Your Navidrome library</string>
     <string name="navidrome_not_configured">Connect your server here</string>
     <string name="navidrome_empty">No songs found on the Navidrome server. Check the server in Sources.</string>
-    <string name="navidrome_description">Play your Navidrome (or any Subsonic) server: albums and artists from your tags, each song\'s own cover, and the original files.</string>
+    <string name="navidrome_description">Play your Navidrome server: albums and artists from your tags, each song\'s own cover, and the original files.</string>
     <string name="navidrome_server_url_hint">https://music.example.com</string>
     <string name="navidrome_test_failed">Couldn’t reach it: %1$s</string>
+    <string name="fork_crossfade_on_skip">Crossfade on skip</string>
+    <string name="fork_crossfade_on_skip_subtitle">Next and Previous blend into the new track too</string>
 </resources>

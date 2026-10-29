@@ -649,6 +649,19 @@ fun SettingsScreen(
                         steps = 11,
                     )
                 }
+                // fork: Next / Previous blend too
+                if (crossfade > 0) {
+                    val crossfadeOnSkipTitle = stringResource(R.string.fork_crossfade_on_skip)
+                    row(crossfadeOnSkipTitle, "fade", "skip", "next", "previous") {
+                        val crossfadeOnSkip by com.music.bitchord.fork.ForkSettings.crossfadeOnSkip.collectAsStateWithLifecycle()
+                        SettingsSubRow(
+                            title = crossfadeOnSkipTitle,
+                            subtitle = stringResource(R.string.fork_crossfade_on_skip_subtitle),
+                            checked = crossfadeOnSkip,
+                            onCheckedChange = com.music.bitchord.fork.ForkSettings::setCrossfadeOnSkip,
+                        )
+                    }
+                }
             }
             val automixTitle = stringResource(R.string.automix)
             row(automixTitle, "crossfade", "smart fade", "mix") {

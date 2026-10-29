@@ -620,10 +620,17 @@ class CrossfadeController(
             // The listener moving the playhead is something no half-finished
             // crossfade should survive. Nothing this class does registers here
             // any more: the handoff is a role swap, not a seek.
-            if (reason == Player.DISCONTINUITY_REASON_SEEK) bail()
+            if (reason == Player.DISCONTINUITY_REASON_SEEK) {
+                skipTarget = C.INDEX_UNSET // fork: the listener's own seek replaces a pending skip
+                bail()
+            }
         }
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            // fork: a new queue or a jump replaces a pending skip
+            if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED ||
+                reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK
+            ) skipTarget = C.INDEX_UNSET
             when (reason) {
                 // Something replaced the queue out from under the fade — a new
                 // album, a new search result — so the tail still playing is a
@@ -727,7 +734,59 @@ class CrossfadeController(
      * player this class has finished with.
      */
     fun onSkipRequested() {
+        skipTarget = C.INDEX_UNSET // fork: whatever asked for this replaces a pending skip
         if (phase != Phase.IDLE) bail()
+    }
+
+    // fork: crossfade on manual skip ------------------------------------------
+
+    /**
+     * Where a manual skip is headed while [crossfadeSkip] arms it, or
+     * [C.INDEX_UNSET]. A skip that never becomes audible — the incoming track
+     * not ready in time, a pause, an error — still has to happen, so [bail]
+     * carries it out plainly.
+     */
+    private var skipTarget = C.INDEX_UNSET
+
+    /**
+     * Whether the blend in flight was started by Next / Previous rather than a
+     * track running out. Read by the service at the handoff, so a skipped song
+     * is not booked as finished (scrobbles, "sleep after this song").
+     */
+    fun isSkipBlend(): Boolean = skipTarget != C.INDEX_UNSET
+
+    /**
+     * Next / Previous as a blend into [toIndex] rather than a cut (fork-only).
+     *
+     * Only in classic crossfade mode: a length set and Automix off, nothing in
+     * flight, playing, no party, no version swap. The fade runs the same arm →
+     * blend → handoff as a track running out, except it is cued now: [begin]
+     * loads [toIndex] instead of the next item and the fade point is "as soon
+     * as the incoming track is ready". Returns false when it didn't take the
+     * skip; the caller then skips the upstream way.
+     */
+    fun crossfadeSkip(toIndex: Int): Boolean {
+        // A second press while the first skip is still arming: carry the first
+        // one out now (see [bail]) and let the caller skip on from there plainly.
+        // [toIndex] was read before that seek, so it is stale.
+        if (phase == Phase.ARMING && skipTarget != C.INDEX_UNSET) {
+            bail()
+            return false
+        }
+        if (!com.music.bitchord.fork.ForkSettings.crossfadeOnSkip.value) return false
+        if (phase != Phase.IDLE || AppSettings.smartFadeEnabled.value) return false
+        if (versionSwapActive() || ListenTogether.state.value.inParty) return false
+        val out = active()
+        if (!out.isPlaying || toIndex == out.currentMediaItemIndex) return false
+        if (toIndex !in 0 until out.mediaItemCount) return false
+        val fade = configuredFadeMs()
+        if (fade <= 0L) return false
+        skipTarget = toIndex
+        if (!begin(fade, endMs = 0L, smart = false, targetIndex = toIndex)) {
+            skipTarget = C.INDEX_UNSET
+            return false
+        }
+        return true
     }
 
     // ---- Ticker -------------------------------------------------------------
@@ -1195,11 +1254,12 @@ class CrossfadeController(
         outgoingRate: Double = 1.0,
         beatMs: Long = 0L,
         renderStyle: Render = Render(),
+        targetIndex: Int = C.INDEX_UNSET, // fork: crossfadeSkip
     ): Boolean {
         val out = active()
         val into = standby()
         if (out === into) return false
-        val nextIndex = out.nextMediaItemIndex
+        val nextIndex = if (targetIndex != C.INDEX_UNSET) targetIndex else out.nextMediaItemIndex // fork
         if (nextIndex == C.INDEX_UNSET) return false
         // The last blend's stretch, if it is somehow still easing off: this
         // player is about to be the outgoing side of a new one.
@@ -1796,7 +1856,10 @@ class CrossfadeController(
         AppSettings.smartMixBlend.value = null
         if (!handedOff && phase != Phase.FADING) {
             // Nothing was ever audible; no ramp to run.
+            val skip = skipTarget // fork: a manual skip that never got to blend still happens
+            val out = outgoing
             finish()
+            if (skip != C.INDEX_UNSET && out != null && skip in 0 until out.mediaItemCount) out.seekTo(skip, 0L) // fork
             return
         }
         // Glided open rather than snapped: both tracks are audible here, and
@@ -1874,6 +1937,7 @@ class CrossfadeController(
         outgoing = null
         incoming = null
         handedOff = false
+        skipTarget = C.INDEX_UNSET // fork
         outgoingItemIndex = C.INDEX_UNSET
         queuedItemCount = 0
         incomingCueTimeMs = 0L
@@ -1889,7 +1953,8 @@ class CrossfadeController(
     /** Still a next track, still playing, still switched on — by whichever setting armed this one. */
     private fun stillWorthFading(): Boolean {
         val stillOn = if (smartFadeActive) AppSettings.smartFadeEnabled.value else configuredFadeMs() > 0L
-        return stillOn && (outgoing ?: active()).hasNextMediaItem()
+        // fork: a manual skip may be headed backwards, or away from the last item
+        return stillOn && (skipTarget != C.INDEX_UNSET || (outgoing ?: active()).hasNextMediaItem())
     }
 
     /**

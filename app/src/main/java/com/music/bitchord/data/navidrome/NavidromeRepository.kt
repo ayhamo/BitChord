@@ -11,29 +11,38 @@ import kotlinx.coroutines.sync.withLock
  *
  * Unlike those, everything comes from the server's tags: title, artist, album,
  * track and disc numbers, and each song's **own** cover (`mf-…`), not its
- * album's. The listing is kept in memory until the settings change or the page
- * is refreshed, because a large library is several requests.
+ * album's. A large library is several requests, so the listing is kept in
+ * memory for [CACHE_MS] (the page, its refresh and the queue all read it) and
+ * dropped at once when the settings change.
  */
 object NavidromeRepository {
 
     private const val PAGE = 500
+    private const val CACHE_MS = 2 * 60 * 1000L
 
     private val lock = Mutex()
     @Volatile private var cached: List<Song>? = null
+    @Volatile private var cachedAt = 0L
+
+    /** Bumped by [invalidate]; a listing started under an older value is not kept. */
+    @Volatile private var generation = 0
 
     fun isConfigured(): Boolean = NavidromeSettings.isConfigured()
 
     fun invalidate() {
+        generation++
         cached = null
     }
 
     suspend fun getSongs(): List<Song> = lock.withLock {
-        cached?.let { return@withLock it }
+        cached?.takeIf { android.os.SystemClock.elapsedRealtime() - cachedAt < CACHE_MS }?.let { return@withLock it }
         if (!isConfigured()) return@withLock emptyList()
+        val startedAt = generation
         val client = NavidromeClient(
             NavidromeSettings.url.value,
             NavidromeSettings.username.value,
             NavidromeSettings.password.value,
+            NavidromeSettings.salt,
         )
         val songs = buildList {
             var offset = 0
@@ -44,7 +53,11 @@ object NavidromeRepository {
                 offset += PAGE
             }
         }
-        cached = songs
+        // The settings changed while this was paging: it describes the old server.
+        if (startedAt == generation) {
+            cached = songs
+            cachedAt = android.os.SystemClock.elapsedRealtime()
+        }
         songs
     }
 
