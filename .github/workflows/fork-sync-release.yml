@@ -1,0 +1,179 @@
+# Fork-only workflow. Once a day it checks upstream BitChord's latest release.
+# When upstream has a release this fork has not released yet, it merges that
+# release into this fork's main (in the runner only, nothing is pushed), runs
+# the fork's tests, builds the dev release APKs signed with the fork's key,
+# checks the signing certificate and publishes `fork-v<version>` with the APKs,
+# their SHA-256 sums and a build attestation. The app's updater (pointed at
+# this fork) then offers it.
+#
+# If the merge conflicts, or the tests or the build fail, nothing is published:
+# the run fails (GitHub emails the failure) and an issue is opened here, so the
+# merge can be done by hand.
+name: Fork sync and release
+
+on:
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Rebuild and replace the release even if this version exists"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fork-sync-release
+  cancel-in-progress: false
+
+env:
+  UPSTREAM: kushagrasinghx/BitChord
+  # The fork's signing certificate (the key the dev builds are signed with, so a
+  # release installs as an update over them). A build signed with anything else fails.
+  EXPECTED_CERT_SHA256: 67d0062c006e35b7a3b7233fc9885a79ce7c876d80468ed5d2e123165f2a225a
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.ver.outputs.tag }}
+      version: ${{ steps.ver.outputs.version }}
+      build: ${{ steps.ver.outputs.build }}
+    steps:
+      - name: compare upstream's latest release with the fork's releases
+        id: ver
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          tag=$(gh release view -R "$UPSTREAM" --json tagName -q .tagName)
+          version=${tag#v}
+          echo "upstream release: $tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if gh release view "fork-v$version" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1 && [ "$FORCE" != "true" ]; then
+            echo "fork-v$version already released, nothing to do"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write      # create the release
+      issues: write        # open an issue when the run fails
+      id-token: write      # sign the attestation
+      attestations: write  # store the attestation
+    env:
+      TAG: ${{ needs.check.outputs.tag }}
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: merge upstream's release into the fork
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git remote add upstream "https://github.com/$UPSTREAM.git"
+          git fetch --no-tags upstream "refs/tags/$TAG:refs/tags/$TAG"
+          git merge --no-edit "refs/tags/$TAG"
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Android SDK packages
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "platforms;android-37.0" \
+            "build-tools;35.0.0" "ndk;27.0.12077973" "cmake;3.22.1" > /dev/null
+
+      - name: fork tests
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon -Pbitchord.bundleWear=false \
+            :app:testDevDebugUnitTest --tests 'com.music.bitchord.Navidrome*' \
+            :shared:jvmTest --tests 'com.music.bitchord.data.model.ModelsTest'
+
+      - name: signed dev release build
+        env:
+          FORK_KEYSTORE_BASE64: ${{ secrets.FORK_KEYSTORE_BASE64 }}
+          FORK_KEYSTORE_PASSWORD: ${{ secrets.FORK_KEYSTORE_PASSWORD }}
+          FORK_KEY_ALIAS: ${{ secrets.FORK_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          echo "$FORK_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/fork.keystore"
+          {
+            echo "storeFile=$RUNNER_TEMP/fork.keystore"
+            echo "storePassword=$FORK_KEYSTORE_PASSWORD"
+            echo "keyAlias=$FORK_KEY_ALIAS"
+            echo "keyPassword=$FORK_KEYSTORE_PASSWORD"
+          } > keystore.properties
+          ./gradlew --no-daemon -Pbitchord.bundleWear=false :app:assembleDevRelease
+          rm -f keystore.properties "$RUNNER_TEMP/fork.keystore"
+
+      - name: check the signatures and name the APKs
+        run: |
+          set -euo pipefail
+          apksigner=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          mkdir out
+          for apk in app/build/outputs/apk/dev/release/*.apk; do
+            "$apksigner" verify --print-certs "$apk" | tee certs.txt
+            grep -q "SHA-256 digest: $EXPECTED_CERT_SHA256" certs.txt
+            # app-dev-universal-release.apk -> BitChord-v1.8.1.apk, app-dev-arm64-v8a-release.apk -> BitChord-v1.8.1_arm64-v8a.apk
+            abi=$(basename "$apk" .apk | sed -e 's/^app-dev-//' -e 's/-release$//')
+            if [ "$abi" = "universal" ]; then name="BitChord-v$VERSION.apk"; else name="BitChord-v${VERSION}_$abi.apk"; fi
+            cp "$apk" "out/$name"
+          done
+          (cd out && sha256sum *.apk > SHA256SUMS.txt)
+          cat out/SHA256SUMS.txt
+
+      - name: attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: out/*.apk
+
+      - name: publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          release="fork-v$VERSION"
+          if [ "$FORCE" = "true" ] && gh release view "$release" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release delete "$release" -R "$GITHUB_REPOSITORY" --yes --cleanup-tag
+          fi
+          {
+            echo "BitChord $VERSION with this fork's changes (Navidrome library, lyrics, clips, stars, playlists, crossfade on skip; see FORK.md)."
+            echo
+            echo "Upstream release: https://github.com/$UPSTREAM/releases/tag/$TAG"
+            echo "Fork commit before the merge: $GITHUB_SHA"
+            echo
+            echo "Signing certificate SHA-256: $EXPECTED_CERT_SHA256"
+            echo "Verify: \`gh attestation verify <apk> -R $GITHUB_REPOSITORY\`, or compare with SHA256SUMS.txt."
+            echo
+            gh release view "$TAG" -R "$UPSTREAM" --json body -q .body || true
+          } > notes.md
+          gh release create "$release" out/* --target "$GITHUB_SHA" --title "BitChord $VERSION (my fork)" --notes-file notes.md
+
+      - name: open an issue when the run fails
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create -R "$GITHUB_REPOSITORY" \
+            --title "Fork sync failed for upstream $TAG" \
+            --body "Merging or building upstream $TAG failed: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID. Nothing was published. Merge it by hand (see FORK.md), push, and run the workflow again."

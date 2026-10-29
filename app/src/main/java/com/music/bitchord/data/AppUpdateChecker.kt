@@ -43,7 +43,7 @@ object AppUpdateChecker {
     private const val CACHE_SUBDIR = "updates"
 
     private const val LATEST_RELEASE_URL =
-        "https://api.github.com/repos/kushagrasinghx/BitChord/releases/latest"
+        "https://api.github.com/repos/ayhamo/BitChord/releases/latest" // fork: this fork's releases (fork-v<version>)
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -76,7 +76,7 @@ object AppUpdateChecker {
             val url = release["html_url"]?.jsonPrimitive?.contentOrNull ?: return@runCatching
             val apkUrl = apkAssetUrl(release)
             val notes = release["body"]?.jsonPrimitive?.contentOrNull
-            val latest = tag.removePrefix("v")
+            val latest = tag.removePrefix("fork-").removePrefix("v") // fork: tags are fork-v<version>
             if (isNewer(latest, BuildConfig.VERSION_NAME)) {
                 _available.value = UpdateInfo(latest, url, apkUrl, notes)
             }

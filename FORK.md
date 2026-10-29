@@ -50,6 +50,8 @@ Everything this fork adds lives in new files where possible. This file lists eve
 | `sharedUi/…/NowPlayingScreen.kt`, `LandscapePlayer.kt` | The star's gate `signedIn && song.localUri == null` also lets `song.isNavidrome` through (+ import) |
 | `playback/PlaybackService.kt` (stars) | `canLike()` also true for Navidrome ids; `toggleFavoriteFromNotification()` calls `NavidromeStars.rate` for them instead of `YtMusicRepository.rate` |
 | `playback/PlaybackService.kt` (ListenBrainz) | First line of `submitListenBrainzFinished` / `submitListenBrainzPlayingNow`: `NavidromeScrobble.finished/nowPlaying` |
+| `data/AppUpdateChecker.kt` | `LATEST_RELEASE_URL` points at `ayhamo/BitChord`; the tag has `fork-` stripped before `v` |
+| `.github/workflows/fork-sync-release.yml` (new) | Daily: merge upstream's latest release, fork tests, signed `assembleDevRelease`, certificate check, attestation, `fork-v<version>` release; on failure an issue + GitHub's failure email |
 | `res/xml/backup_rules.xml`, `res/xml/data_extraction_rules.xml` | Exclude `bitchord_navidrome.xml` and `bitchord_navidrome_plain.xml`, next to the `bitchord_sources` lines |
 
 ## Gotchas
