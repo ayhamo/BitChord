@@ -40,13 +40,13 @@ object CanvasCache {
      */
     private const val CACHE_LIMIT_BYTES = 150L * 1024 * 1024
 
-    private lateinit var cache: SimpleCache
+    internal lateinit var cache: SimpleCache // fork: internal, for ForkClipCache
 
     /** Opened once per process, alongside [com.music.bitchord.playback.AudioCache.init]. */
     fun init(context: Context) {
         cache = SimpleCache(
             File(context.cacheDir, "canvas"),
-            LeastRecentlyUsedCacheEvictor(CACHE_LIMIT_BYTES),
+            com.music.bitchord.fork.ForkClipCache.evictor, // fork: adjustable (was LeastRecentlyUsedCacheEvictor(CACHE_LIMIT_BYTES))
             StandaloneDatabaseProvider(context),
         )
     }

@@ -6,7 +6,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.Radio // fork
 import androidx.compose.material.icons.rounded.Lan
+import androidx.compose.material.icons.rounded.LibraryMusic // fork
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -44,6 +46,7 @@ fun libraryLinks(): List<LibraryLink> {
     val showCacheFolder by AppSettings.showCacheFolder.collectAsStateWithLifecycle()
     val navidromeUrl by com.music.bitchord.data.navidrome.NavidromeSettings.url.collectAsStateWithLifecycle() // fork
     val navidromeUser by com.music.bitchord.data.navidrome.NavidromeSettings.username.collectAsStateWithLifecycle() // fork
+    val forkOffline by ForkLibraryPlaylists.offlineMode.collectAsStateWithLifecycle() // fork: radio needs the network
     val spotifyConnected by AppSettings.spotifySpdcToken.collectAsStateWithLifecycle()
     fun link(title: String, subtitle: String, browseId: String, icon: ImageVector = deviceFolderIcon(browseId) ?: Icons.Rounded.Cloud) = LibraryLink(
         item = ShelfItem(
@@ -89,6 +92,12 @@ fun libraryLinks(): List<LibraryLink> {
             stringResource(R.string.navidrome_subtitle),
             com.music.bitchord.data.navidrome.NavidromeSettings.BROWSE_ID,
         ).takeIf { navidromeUser.isNotBlank() && navidromeUrl.isNotBlank() },
+        link( // fork: the server's internet radio stations
+            stringResource(R.string.fork_radio),
+            stringResource(R.string.fork_radio_subtitle),
+            com.music.bitchord.data.navidrome.NavidromeRadio.PAGE_ID,
+            Icons.Rounded.Radio,
+        ).takeIf { navidromeUser.isNotBlank() && navidromeUrl.isNotBlank() && !forkOffline },
         // Only while signed in to Spotify in Settings → Accounts; it opens that
         // account's playlists rather than a browse page.
         link(
@@ -136,7 +145,7 @@ fun deviceFolderIcon(browseId: String): ImageVector? = when (browseId) {
     CACHE_FOLDER_BROWSE_ID -> Icons.Rounded.Storage
     com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID -> Icons.Rounded.Cloud
     com.music.bitchord.data.smb.SmbConfig.BROWSE_ID -> Icons.Rounded.Lan
-    com.music.bitchord.data.navidrome.NavidromeSettings.BROWSE_ID -> Icons.Rounded.Cloud // fork
+    com.music.bitchord.data.navidrome.NavidromeSettings.BROWSE_ID -> Icons.Rounded.LibraryMusic // fork
     else -> null
 }
 

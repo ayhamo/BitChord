@@ -25,6 +25,7 @@ object NavidromePlaylists {
     suspend fun pageState(browseId: String, emptyText: () -> String): UiState<List<Song>>? {
         if (!browseId.startsWith(PREFIX)) return null
         val id = browseId.removePrefix(PREFIX)
+        if (com.music.bitchord.fork.ForkNetwork.offline.value) return NavidromeOffline.pageState(browseId) ?: UiState.Error(emptyText())
         return runCatching {
             val client = NavidromeRepository.client()
             val rows = client.playlistSongs(id)
@@ -32,7 +33,8 @@ object NavidromePlaylists {
             with(NavidromeRepository) { rows.map { it.toSong(client) } }
         }.fold(
             onSuccess = { songs -> if (songs.isEmpty()) UiState.Error(emptyText()) else UiState.Success(songs) },
-            onFailure = { UiState.Error(it.message ?: emptyText()) },
+            // No server (offline, unreachable): the kept copy, if the page is kept.
+            onFailure = { NavidromeOffline.pageState(browseId) ?: UiState.Error(it.message ?: emptyText()) },
         )
     }
 }

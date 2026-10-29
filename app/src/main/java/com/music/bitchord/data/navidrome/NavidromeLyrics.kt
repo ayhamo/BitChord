@@ -1,12 +1,20 @@
 package com.music.bitchord.data.navidrome
 
+import android.content.Context
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.lyrics.LrcLib
 import com.music.bitchord.data.lyrics.LyricLine
+import com.music.bitchord.data.lyrics.toEnhancedLrc
 import com.music.bitchord.data.lyrics.withBackgroundVocals
+import com.music.bitchord.data.model.Song
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import java.io.File
 import java.util.Collections
 import java.util.Locale
 
@@ -23,13 +31,23 @@ import java.util.Locale
  *
  * Only **timed** lyrics are returned. Plain text from the server is a null, so
  * the online sources still get the chance to find a synced copy.
+ *
+ * Asked before the server, so they show with no network:
+ * - a kept song's lyrics (`NavidromeOffline`, written when the page was kept);
+ * - the lyrics cache: whatever timed lyrics a Navidrome song showed last time,
+ *   the server's or an online source's ([remember]), in `cache/navidrome_lyrics`
+ *   ("Clear lyrics cache" in Settings empties it).
  */
 object NavidromeLyrics {
 
     private const val TAG = "BitChordNavidrome"
     private const val REMEMBERED = 64
 
+    /** Past this many files the oldest quarter goes; a song's lyrics are a few KB. */
+    private const val CACHE_FILES = 4000
+
     private val lock = Mutex()
+    private var cacheDir: File? = null
 
     /**
      * Answers already fetched, by song id; an empty list is a remembered miss.
@@ -42,8 +60,17 @@ object NavidromeLyrics {
         },
     )
 
-    /** The song id when [uri] is a stream URL on the configured server, else null. */
+    fun init(context: Context) {
+        cacheDir = File(context.cacheDir, "navidrome_lyrics").apply { mkdirs() }
+    }
+
+    /**
+     * The song id when [uri] is a stream URL on the configured server, or a
+     * kept file with kept lyrics, else null (a kept file without them is read
+     * for its own tags, as any file).
+     */
     fun songIdFor(uri: String): String? {
+        NavidromeOffline.songIdForFile(uri)?.let { id -> return id.takeIf { NavidromeOffline.lyricsFile(it) != null } }
         if (!NavidromeSettings.isConfigured()) return null
         val url = uri.toHttpUrlOrNull() ?: return null
         val base = NavidromeSettings.url.value.toHttpUrlOrNull() ?: return null
@@ -56,6 +83,12 @@ object NavidromeLyrics {
     suspend fun forSong(songId: String): List<LyricLine>? = lock.withLock {
         // Under the lock, so the second of two callers for one song gets the first one's answer.
         answers[songId]?.let { return@withLock it.ifEmpty { null } }
+        (NavidromeOffline.lyricsFile(songId) ?: cacheFile(songId))?.let { file ->
+            parse(runCatching { file.readText() }.getOrNull())?.let { lines ->
+                answers[songId] = lines
+                return@withLock lines
+            }
+        }
         val rows = runCatching { NavidromeRepository.client().lyricsBySongId(songId) }
             .onFailure { Log.d(TAG, "lyrics for $songId: ${it.message}") }
             // Not remembered: a dropped connection isn't an answer.
@@ -65,8 +98,56 @@ object NavidromeLyrics {
             Log.d(TAG, "no timed lyrics for $songId: " + rows.joinToString { "synced=${it.synced} lines=${it.lines.size}" })
         }
         answers[songId] = lines.orEmpty()
+        lines?.let { write(songId, it) }
         lines
     }
+
+    /**
+     * Keeps what the player showed for a Navidrome song (an online source's
+     * answer, the server having none), so it shows again with no network.
+     * Called by the view model with whatever it settled on.
+     */
+    fun remember(videoId: String, lines: List<LyricLine>?) {
+        if (!NavidromeSettings.isNavidromeId(videoId) || lines.isNullOrEmpty() || lines.none { it.timeMs > 0 }) return
+        val songId = videoId.removePrefix(NavidromeSettings.ID_PREFIX)
+        // Called on the main thread; the checks and the write are disk work.
+        scope.launch {
+            if (cacheFile(songId) != null || NavidromeOffline.lyricsFile(songId) != null) return@launch
+            write(songId, lines)
+        }
+    }
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** LRC for keeping [song] offline: the server's timed lyrics, else the online sources', as a download embeds them. */
+    internal suspend fun lrcFor(songId: String, song: Song): String? =
+        forSong(songId)?.toEnhancedLrc()?.takeIf { it.isNotBlank() }
+            ?: com.music.bitchord.download.LyricsTag.forTrack(song)?.let { it.enhanced ?: it.plain }
+
+    /** Bytes the lyrics cache takes. */
+    fun cacheBytes(): Long = cacheDir?.listFiles()?.sumOf { it.length() } ?: 0L
+
+    fun clearCache() {
+        cacheDir?.listFiles()?.forEach { it.delete() }
+        answers.clear()
+    }
+
+    private fun cacheFile(songId: String): File? = cacheDir?.let { File(it, "$songId.lrc") }?.takeIf { it.isFile }
+
+    private fun write(songId: String, lines: List<LyricLine>) {
+        val dir = cacheDir ?: return
+        runCatching {
+            File(dir, "$songId.lrc").writeText(lines.toEnhancedLrc())
+            val files = dir.listFiles() ?: return@runCatching
+            if (files.size > CACHE_FILES) files.sortedBy { it.lastModified() }.take(CACHE_FILES / 4).forEach { it.delete() }
+        }.onFailure { Log.d(TAG, "lyrics cache $songId: ${it.message}") }
+    }
+
+    private fun parse(lrc: String?): List<LyricLine>? =
+        lrc?.takeIf { it.isNotBlank() }
+            ?.let { LrcLib.parseLrc(it) }
+            ?.takeIf { parsed -> parsed.any { it.text.isNotBlank() } }
+            ?.withBackgroundVocals()
 
     /** The first timed entry as player lines, or null when the server only had plain text (or nothing). */
     internal fun linesFrom(rows: List<NavidromeClient.LyricsRow>): List<LyricLine>? =

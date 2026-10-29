@@ -1383,6 +1383,7 @@ private fun BitChordApp(
             // Start playback in the mini-player; the user opens the full view by tapping it.
         }
     }
+    com.music.bitchord.fork.ForkQueues.bind(controller, scope) { songs, index, source -> playFrom(songs, index, source) } // fork: saved queues
     // Kept for entry points whose rows already carry their origin (notably a
     // collection action fetched before this callback). The explicit wrappers
     // below are preferred because a track's album is not necessarily where it
@@ -2853,7 +2854,9 @@ private fun BitChordApp(
                                     if (isDownloads) Downloads.collectionsAmong(folderSongs) else emptyList()
                                 }
                                 LocalFolder(
-                                    state = localFolderStates.getOrPut(page.browseId) { LocalFolderState() },
+                                    state = localFolderStates.getOrPut(page.browseId) {
+                                        LocalFolderState().also { if (page.browseId == com.music.bitchord.data.navidrome.NavidromeSettings.BROWSE_ID) it.tab = com.music.bitchord.ui.screens.LocalFolderTab.ALBUMS } // fork: Navidrome opens on Albums
+                                    },
                                     sort = folderSortOf(page.browseId),
                                     viewType = folderViewTypeOf(page.browseId),
                                     collections = downloadCollections,
@@ -2936,10 +2939,13 @@ private fun BitChordApp(
                                 } else {
                                     null
                                 }
+                                val forkSort = detailSongSorts[page.browseId]?.takeIf { it != SongSort.DEFAULT } // fork
                                 val latestSongs = latestPage
                                     ?.let { (it.songs as? UiState.Success)?.data.orEmpty() }
                                     ?.map(withAlbum)
                                     ?.takeIf { it.isNotEmpty() }
+                                    // fork (fixes upstream): Next follows the page's sort (upstream queued the running order whatever the sort)
+                                    ?.let { list -> forkSort?.let(list::sortedForDetail) ?: list }
                                 val queue = latestSongs ?: songs.map(withAlbum)
                                 if (queue.isEmpty()) return
                                 val queueIndex = selected?.let { tapped ->
@@ -2950,7 +2956,8 @@ private fun BitChordApp(
                                     queueIndex.coerceIn(queue.indices),
                                     source,
                                     boundedContext = useBounded,
-                                    continuationToken = latestPage?.continuation ?: page.continuation,
+                                    // fork: a sorted page has no "next page" to continue into (it would follow in the running order)
+                                    continuationToken = (latestPage?.continuation ?: page.continuation).takeUnless { forkSort != null },
                                 )
                             }
                             // This page's songs being rearranged, drawn in place of its list.
@@ -3827,6 +3834,7 @@ private fun BitChordApp(
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     QueueActionNoticeHost(queueNotice)
+                    com.music.bitchord.ui.components.ForkOfflineBanner() // fork: offline mode strip
                     player.song?.let { song ->
                         MiniPlayer(
                             song = song,

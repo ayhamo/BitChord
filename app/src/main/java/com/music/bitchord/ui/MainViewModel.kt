@@ -430,6 +430,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 },
                 onSourceCancelled = { source -> providerCancelled(generation, source) },
             )
+            com.music.bitchord.data.navidrome.NavidromeLyrics.remember(videoId, found?.lines) // fork: shown again with no network
             val selected = selectedLyricsSource?.let(lyricsProviderResults::get) ?: found
             _lyrics.value = selected?.lines
             _lyricsSource.value = selected?.source
@@ -1640,6 +1641,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun openMoodGenre(item: MoodGenre) {
+        if (com.music.bitchord.data.navidrome.NavidromeGenres.isGenre(item.browseId)) { // fork: a Navidrome genre tile opens its songs
+            openDetail(item.browseId, item.title, "Navidrome", item.thumbnailUrl, BrowseType.PLAYLIST)
+            return
+        }
         _selectedMoodGenre.value = item
         _moodGenreShelves.value = UiState.Loading
         viewModelScope.launch {
@@ -2087,6 +2092,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     onFailure = { UiState.Error(text(R.string.no_local_audio_found)) },
                 )
             }
+            _librarySongs.value = com.music.bitchord.data.navidrome.NavidromeSearch.withLibrary(_librarySongs.value) // fork: Navidrome songs searchable too
         }
     }
 
@@ -2846,6 +2852,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         com.music.bitchord.data.navidrome.NavidromePlaylists.pageState(browseId) { text(R.string.navidrome_playlist_empty) } // fork
             ?.let { return it }
         com.music.bitchord.data.navidrome.NavidromeAlbums.pageState(browseId) { text(R.string.no_tracks_here) } // fork
+            ?.let { return it }
+        com.music.bitchord.data.navidrome.NavidromeArtists.pageState(browseId) { text(R.string.no_tracks_here) } // fork
+            ?.let { return it }
+        com.music.bitchord.data.navidrome.NavidromeGenres.pageState(browseId) { text(R.string.no_tracks_here) } // fork
+            ?.let { return it }
+        com.music.bitchord.data.navidrome.NavidromeRadio.pageState(browseId) { text(R.string.fork_radio_empty) } // fork
             ?.let { return it }
         remoteLibrary(browseId)?.let { return remoteSongsState(it) }
         LocalGroups.folderOf(browseId)?.let { folderId ->

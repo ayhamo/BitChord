@@ -121,6 +121,9 @@ android {
         create("prod") {
             dimension = "env"
             // Matches defaultConfig — this is the package already shipped/installed.
+            // fork: its own package and name, so the fork installs beside the official app
+            applicationId = "com.ayhamo.bitchord"
+            resValue("string", "app_name", "BitChord Fork")
         }
     }
 

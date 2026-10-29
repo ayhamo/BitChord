@@ -7,6 +7,7 @@ import com.music.bitchord.data.LocalGroups
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.UiState
+import com.music.bitchord.ui.screens.ForkLibraryPlaylists
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -37,6 +38,9 @@ object NavidromeHome {
     private const val TAG = "BitChordNavidrome"
     private const val PER_SHELF = 20
 
+    /** Subsonic's largest `getAlbumList2` page. */
+    private const val ALL_ALBUMS = 500
+
     /** `getAlbumList2` types, in the order they are shown, with their headings. */
     private val SHELVES = listOf(
         "newest" to R.string.navidrome_home_newest,
@@ -55,6 +59,8 @@ object NavidromeHome {
     suspend fun load(context: Context) = lock.withLock {
         if (!NavidromeSettings.isConfigured()) {
             shelves.value = emptyList()
+            ForkLibraryPlaylists.shelves.value = emptyList()
+            NavidromeGenres.clear()
             return@withLock
         }
         val client = NavidromeRepository.client()
@@ -67,15 +73,32 @@ object NavidromeHome {
                 val playlists = async {
                     HomeShelf(context.getString(R.string.navidrome_home_playlists), client.playlists().map { it.toItem(client, context) }, label)
                 }
+                // Every album, A to Z, for the Library's albums row (not shown on Home).
+                val allAlbums = async {
+                    HomeShelf(
+                        context.getString(R.string.fork_library_navidrome_albums),
+                        client.albums("alphabeticalByName", ALL_ALBUMS).map { it.toItem(client) },
+                        label,
+                    )
+                }
                 // Playlists second: after what is new, before what is played most.
                 val loaded = albums.awaitAll()
-                listOf(loaded.first(), playlists.await()) + loaded.drop(1)
+                val playlistShelf = playlists.await()
+                // The albums and the same playlists as Library rows.
+                ForkLibraryPlaylists.shelves.value = listOf(
+                    allAlbums.await(),
+                    playlistShelf.copy(title = context.getString(R.string.fork_library_navidrome_playlists)),
+                )
+                listOf(loaded.first(), playlistShelf) + loaded.drop(1)
             }.filter { it.items.isNotEmpty() }
         } catch (e: IOException) {
             Log.d(TAG, "home shelves: ${e.message}")
         } catch (e: IllegalArgumentException) {
             Log.d(TAG, "home shelves: ${e.message}")
         }
+        // The Explore panel's genres, after the shelves are up (a failure there leaves them alone).
+        runCatching { NavidromeGenres.load(client) }.onFailure { Log.d(TAG, "genres: ${it.message}") }
+        NavidromeOffline.syncPlaylists() // kept playlists follow the server
     }
 
     /** [youtube]'s feed with these shelves in front of it. */
@@ -83,9 +106,17 @@ object NavidromeHome {
         youtube: StateFlow<UiState<List<HomeShelf>>>,
         scope: CoroutineScope,
     ): StateFlow<UiState<List<HomeShelf>>> =
-        combine(youtube, shelves) { feed, ours ->
+        combine(
+            youtube,
+            shelves,
+            com.music.bitchord.fork.ForkSettings.navidromeHomeShelves,
+            com.music.bitchord.fork.ForkNetwork.offline,
+            ForkLibraryPlaylists.offline,
+        ) { feed, server, shown, offline, kept ->
+            // Offline mode: what is kept on the phone, in place of the server's shelves.
+            val ours = if (offline) listOfNotNull(kept?.takeIf { it.items.isNotEmpty() }) else server
             when {
-                ours.isEmpty() -> feed
+                ours.isEmpty() || !shown -> feed
                 feed is UiState.Success -> UiState.Success(ours + feed.data)
                 // Loading or failed: the library is still worth showing meanwhile.
                 else -> UiState.Success(ours)

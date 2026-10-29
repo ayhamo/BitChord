@@ -90,8 +90,32 @@ Later in this phase, if wanted: `NavidromeSource : MusicSource` so Navidrome res
 - `AppUpdateChecker` → `ayhamo/BitChord` releases.
 - GitHub workflow: daily merge of upstream `main` (or its releases), build, sign with secrets, publish `fork-vX.Y.Z`. Reuse the psysonic fork workflow's approach. On conflict: fail and tell me, I fix it with Claude.
 
-## Open questions for tomorrow
+- Done: own package `com.ayhamo.bitchord` ("BitChord Fork"), own release key; the workflow builds `assembleProdRelease`. Push / first release only when I say so.
 
-1. Package id for my builds: keep `com.music.bitchord` (can't update an upstream install anyway, signatures differ) or use my own id so both can sit side by side?
-2. Follow upstream `main` daily, or only upstream **releases** (calmer)?
-3. Is the `x-clip` server route done, or still pending (decides when Phase 5 starts)?
+## Phase 8: offline, caches, YouTube
+
+- Done: "Available offline" for Navidrome albums and playlists (whole pages, original files in `files/navidrome_offline`, never evicted, play and open with no server; Library row).
+- Done: Navidrome audio stays in the song cache after play (it was never dropped: only addon audio is); clip cache size + "clear backdrops" / "clear cover clips"; upstream already has the song cache size and "clear image cache".
+- Done and tested: Navidrome plays into the YouTube Music history ("Navidrome plays in YouTube history", off by default, needs a YouTube sign-in). Strict match per song, then upstream's PlaybackTracker.
+- Done and tested: offline downloads in a foreground service with a notification (2 files at a time), Wi-Fi always used, "Download over mobile data" switch (also for pre-loading).
+- Done and tested: offline pages keep covers (1200 px) and timed lyrics (server's, else online) on disk; clips are kept too (not yet tried on an album that has clips). Size shown before keeping ("803 MB to download") and after ("Kept · 145 MB").
+- Done: lyrics cache for Navidrome songs (what showed last time, server's or online) + "Clear lyrics cache".
+- Done and tested: "Pre-load next songs" (Off/1/2/3/5, Navidrome only); seen completing the next FLAC song in Youtube FLAC.
+- Done and tested: "Offline mode" (switch, or no network): Library, Home, search, artist/album pages show only kept music; server rows, Explore genres and Internet radio hidden; a strip above the mini player says so, with "Go online".
+- Done and tested: "Available offline storage" in Settings: total size, list with Remove / Remove all.
+- Done: the full-screen clip waits 2.5 s on a new track, then fades in over 1.2 s.
+- Next ideas:
+  - Done: kept playlists follow the server when Home loads (changed: kept again with the new songs, dropped songs deleted; deleted on the server: kept, marked "Deleted on server" until removed; tested with a simulated deleted playlist, the "changed" path not yet). Starred songs are not auto-kept (not wanted).
+  - Dropped: promoting cached songs into offline (cache and offline stay separate).
+  - Not wanted: smaller offline copies (offline stays original).
+
+## Later
+
+- Done: Explore panels (YouTube / Navidrome genres). Left: WebDAV/SMB songs' wasted YouTube lookups.
+- Done and tested: Internet radio (the server's stations) as a Library link; Next/Previous move between stations; never cached.
+- Play-queue sync with the server (`savePlayQueue` / `getPlayQueue`): stop on the phone, continue in psysonic on the PC.
+- Done and tested (try-out): saved queues in the player menu (save, play back from the same song and second, delete).
+- Not wanted: listening stats page (BitChord's cards are enough), waveform seek bar.
+- Maybe: bookmarks (resume long tracks where they were left).
+- Downloads (single songs) for Navidrome, if offline pages aren't enough.
+- Then: BitChord settings / custom changes.

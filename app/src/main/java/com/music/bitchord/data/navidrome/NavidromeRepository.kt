@@ -30,6 +30,11 @@ object NavidromeRepository {
 
     fun isConfigured(): Boolean = NavidromeSettings.isConfigured()
 
+    /** Drops the cached listing only (a kept file changes how a song plays); the server answers the same. */
+    fun invalidateListing() {
+        cached = null
+    }
+
     fun invalidate() {
         generation++
         cached = null
@@ -37,6 +42,8 @@ object NavidromeRepository {
     }
 
     suspend fun getSongs(): List<Song> = lock.withLock {
+        // Offline mode (the switch, or no network): the songs kept on the phone, so the library pages and search show only those.
+        if (com.music.bitchord.fork.ForkNetwork.offline.value) return@withLock NavidromeOffline.keptSongs()
         cached?.takeIf { android.os.SystemClock.elapsedRealtime() - cachedAt < CACHE_MS }?.let { return@withLock it }
         if (!isConfigured()) return@withLock emptyList()
         val startedAt = generation
@@ -98,6 +105,7 @@ object NavidromeRepository {
      */
     internal fun NavidromeClient.SongRow.toSong(client: NavidromeClient): Song {
         NavidromeAlbums.remember(album, albumId) // so its album page opens with one request
+        sizeBytes?.let { NavidromeOffline.noteSize(id, it) } // so "Available offline" can say how much a page takes
         val lossless = suffix?.lowercase() in LOSSLESS_SUFFIXES
         val artistName = artist ?: "Unknown Artist"
         return Song(
@@ -109,14 +117,15 @@ object NavidromeRepository {
             thumbnailUrl = coverArt?.let { client.coverUrl(it) },
             durationText = durationSec?.takeIf { it > 0 }?.let { "%d:%02d".format(it / 60, it % 60) },
             albumName = album,
-            localUri = client.streamUrl(id),
+            // A song kept offline plays from its file (NavidromeOffline).
+            localUri = NavidromeOffline.localFile(id)?.let { android.net.Uri.fromFile(it).toString() } ?: client.streamUrl(id),
             trackNumber = track,
             sourceQuality = if (lossless) "LOSSLESS" else null,
             sourceHiRes = lossless && ((bitDepth ?: 0) > 16 || (samplingRate ?: 0) > 48_000),
             playbackSource = "Navidrome",
             playbackSourceType = PlaybackSourceType.BROWSE,
             playbackSourceId = NavidromeSettings.BROWSE_ID,
-        )
+        ).also(com.music.bitchord.fork.ForkYouTubeHistory::remember) // title/artist/length for the YouTube history match
     }
 
     private val LOSSLESS_SUFFIXES = setOf("flac", "alac", "wav", "aiff", "aif", "ape", "wv", "dsf", "dff")

@@ -1,7 +1,7 @@
 # Fork-only workflow. Once a day it checks upstream BitChord's latest release.
 # When upstream has a release this fork has not released yet, it merges that
 # release into this fork's main (in the runner only, nothing is pushed), runs
-# the fork's tests, builds the prod release APKs (com.music.bitchord) signed with the fork's key,
+# the fork's tests, builds the prod release APKs (com.ayhamo.bitchord, "BitChord Fork") signed with the fork's key,
 # checks the signing certificate and publishes `fork-v<version>` with the APKs,
 # their SHA-256 sums and a build attestation. The app's updater (pointed at
 # this fork) then offers it.

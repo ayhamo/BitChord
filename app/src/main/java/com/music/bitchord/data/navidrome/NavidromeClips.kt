@@ -72,7 +72,8 @@ object NavidromeClips {
     fun init(context: Context) {
         // Plain prefs: only "no clip for this song" notes, nothing secret.
         prefs = context.getSharedPreferences("bitchord_navidrome_clips", Context.MODE_PRIVATE)
-        Http.forkInterceptor = interceptor
+        // Kept covers and clips (NavidromeOffline) are answered from the phone before anything goes out.
+        Http.forkInterceptor = Interceptor { chain -> NavidromeOffline.serve(chain.request()) ?: interceptor.intercept(chain) }
     }
 
     /** The settings changed: a different server or account answers differently. */
@@ -91,7 +92,9 @@ object NavidromeClips {
         // paused); without one, the cover clip plays over the sleeve. One clip plays at a time.
         // The cover clip is also looked up next to a backdrop: where the backdrop can't fill the
         // screen (wide window, landscape) the cover square plays the cover clip, never the backdrop.
-        val backdrop = if (ForkSettings.backdropClips.value) clip(id, Kind.BACKDROP) else null
+        // Looked up whatever the backdrop switch says: the player applies the switch live
+        // (ForkCanvasSwitch), falling back to the cover clip, so flipping it needs no new lookup.
+        val backdrop = clip(id, Kind.BACKDROP)
         val cover = if (ForkSettings.coverClips.value) clip(id, Kind.COVER) else null
         val url = backdrop ?: cover ?: return@withContext null
         CanvasArtwork(
@@ -104,7 +107,11 @@ object NavidromeClips {
         )
     }
 
+    /** The song's clip of [kind], kept or looked up; for "Available offline". */
+    internal fun find(id: String, kind: Kind): String? = clip(id, kind)
+
     private fun clip(id: String, kind: Kind): String? {
+        NavidromeOffline.clipUrl(id, kind)?.let { return it }
         val key = "$id|${kind.name}"
         found[key]?.let { return it }
         if (System.currentTimeMillis() - prefs.getLong(key, 0L) < MISS_MS) return null
@@ -207,6 +214,11 @@ object NavidromeClips {
                 }
             }
         } catch (e: java.io.IOException) {
+            Log.d(TAG, "login: ${e.message}")
+            null
+        } catch (e: IllegalArgumentException) {
+            // Not JSON (a proxy's HTML page): inside an interceptor anything but an IOException
+            // escapes OkHttp's handling, so it is a failed login like any other.
             Log.d(TAG, "login: ${e.message}")
             null
         }

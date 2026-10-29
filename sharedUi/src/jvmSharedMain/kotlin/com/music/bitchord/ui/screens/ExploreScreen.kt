@@ -77,6 +77,7 @@ fun ExploreScreen(
     ) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val columns = moodColumns(maxWidth)
+            val fork = rememberForkExplore() // fork: YouTube and Navidrome panels
             LazyColumn(
                 state = listState,
                 contentPadding = contentPadding,
@@ -99,7 +100,8 @@ fun ExploreScreen(
                         )
                     }
                 }
-                when (state) {
+                forkYouTubeHeading(fork) // fork
+                if (!fork.panels || fork.youtubeOpen) when (state) { // fork: was `when (state) {`
                     UiState.Loading -> item { ExploreSkeletonRows(columns) }
                     is UiState.Error -> item {
                         MessageState(state.message, actionLabel = stringResource(Res.string.retry), onAction = onRetry)
@@ -115,6 +117,7 @@ fun ExploreScreen(
                         }
                     }
                 }
+                forkNavidromePanel(fork, columns) { row -> MoodGenreRow(row = row, columns = columns, onCategoryClick = onCategoryClick) } // fork
             }
         }
     }

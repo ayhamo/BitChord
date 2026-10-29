@@ -751,6 +751,7 @@ fun NowPlayingScreen(
     // every surface below reads the same value rather than each triggering
     // its own extraction.
     val remoteArt = rememberRemoteArtworkUrl(song)
+    ForkPreloadCovers(queue, song) // fork: next covers warmed, no black player at a track change
     // This is produced by the palette's existing 128 px decode and cache. It
     // samples the upper band rather than the whole sleeve because that is what
     // lies beneath the status bar when the player expands to full bleed.
@@ -807,7 +808,7 @@ fun NowPlayingScreen(
     // track" check lives.
     val spotifyCanvasAutoHide by PlayerSettings.spotifyCanvasAutoHide.collectAsStateWithLifecycle()
     val mixing by PlayerSettings.smartMixInProgress.collectAsStateWithLifecycle()
-    val canvas = rememberCanvasArtwork(song).forkInSleeve(playerFillsWindow(windowWidth)) // fork: no backdrop in the sleeve
+    val canvas = forkCanvas(rememberCanvasArtwork(song), playerFillsWindow(windowWidth), windowWidth, windowHeight) // fork: backdrop switch, no backdrop in the sleeve
     var canvasAspect by remember(canvas) { mutableFloatStateOf(0f) }
     // Whether the clip actually has a frame on screen right now, and one of
     // them — used to blow the sleeve out to the full-bleed hero treatment and
@@ -1222,7 +1223,7 @@ fun NowPlayingScreen(
     // clip running the full screen. CanvasArtworkPlayer masks itself on every
     // API level now, and both layers answer to this.
     val spotifyCanvasOnPhone = canvas?.source?.fillsPhone == true && // fork: was == SPOTIFY
-        playerFillsWindow(windowWidth)
+        forkFillsScreen(canvas, playerFillsWindow(windowWidth), windowWidth, windowHeight) // fork: was playerFillsWindow(windowWidth)
     // Spotify Canvas is the player background on a phone, independent of the
     // still-art full-bleed preference. Other providers and static artwork keep
     // answering to that preference exactly as before.
@@ -1296,6 +1297,7 @@ fun NowPlayingScreen(
     }
     val clipFullscreen = spotifyCanvasOnPhone &&
         heroClipMounted?.source?.fillsPhone == true // fork: was == SPOTIFY
+    val forkIntro = rememberForkBackdropIntro(heroClipMounted?.url, clipFullscreen) // fork
     val clipPortrait = !clipFullscreen &&
         heroClipMounted != null && canvasAspect > 0f && canvasAspect < 1f
 
@@ -2142,8 +2144,8 @@ fun NowPlayingScreen(
                             // And with the rest of the player as it docks: a
                             // TextureView doesn't reliably take the fade from a
                             // Compose layer around it.
-                            presentationAlpha = { (1f - 2f * p()).coerceIn(0f, 1f) * dockFade() },
-                            onRenderedChanged = { canvasRendered = it },
+                            presentationAlpha = { (1f - 2f * p()).coerceIn(0f, 1f) * dockFade() * forkIntro.alpha }, // fork: * forkIntro.alpha
+                            onRenderedChanged = { forkIntro.rendered(it) { r -> canvasRendered = r } }, // fork: was { canvasRendered = it }
                             onFrameCaptured = {
                                 if (!clipFullscreen && !tabletArtworkBackdrop &&
                                     !lyricsOpen && !queueOpen && !queueDragging
@@ -2242,7 +2244,7 @@ fun NowPlayingScreen(
                         modifier = Modifier
                             .fillMaxSize()
                             .then(
-                                if (reduceDynamicBlur || !renderEffectBlurSupported) {
+                                if (true || reduceDynamicBlur || !renderEffectBlurSupported) { // fork: the video stays sharp under the controls (gradient only, no glass blur)
                                     // A real backdrop RenderEffect is unavailable on
                                     // older Android versions and intentionally skipped
                                     // when dynamic blur is reduced. Retain the deck's
@@ -2299,7 +2301,7 @@ fun NowPlayingScreen(
                 // under it: the deck's blur samples the video layer itself, so a dim
                 // beneath it never reached the glass and the deck stayed bright.
                 val spotifyCanvasDim = animateFloatAsState(
-                    targetValue = if (spotifyCanvasPresentation && spotifyCanvasControlsOpen) 0.5f else 0f,
+                    targetValue = 0f, // fork: no dim over the video while the controls are up (was 0.5f with them open)
                     animationSpec = tween(SPOTIFY_CANVAS_CONTROLS_ANIMATION_MS),
                     label = "spotifyCanvasDim",
                 )
@@ -2311,8 +2313,8 @@ fun NowPlayingScreen(
                             .background(Color.Black),
                     )
                 }
-                // fork: the cover over a full-screen clip (always over a Navidrome backdrop, paused over Spotify Canvas)
-                ForkPausedCover(spotifyCanvasPresentation, canvas, isPlaying, panelOpen = lyricsOpen || queueOpen, artUrl = remoteArt)
+                // fork: paused, the cover comes back over the full-screen clip
+                ForkPausedCover(visible = spotifyCanvasPresentation && !isPlaying && !lyricsOpen && !queueOpen, artUrl = remoteArt)
 
                 Column(
                     modifier = Modifier

@@ -111,6 +111,7 @@ object PlaybackTracker {
      * a pause/resume does not register a second play.
      */
     fun onPlaying(videoId: String) {
+        if (com.music.bitchord.fork.ForkYouTubeHistory.intercept(videoId)) return // fork: a Navidrome song, matched to YouTube there
         if (!VIDEO_ID.matches(videoId)) return
         if (Innertube.cookie == null) return
         // A downloaded track plays perfectly well with the radio off — the
@@ -155,6 +156,7 @@ object PlaybackTracker {
      * [REPORT_INTERVAL_SECONDS] of new audio.
      */
     fun onProgress(videoId: String, positionSeconds: Long) {
+        com.music.bitchord.fork.ForkYouTubeHistory.mapped(videoId)?.let { return onProgress(it, positionSeconds) } // fork
         val current = session ?: return
         if (current.videoId != videoId) return
         if (!current.atrSent && positionSeconds >= current.tracking.atrAfterSeconds) {

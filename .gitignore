@@ -50,3 +50,8 @@ AGENTS.md
 
 # Claude Code session files (launch configs, worktrees)
 .claude/
+
+# Fork: local tooling and build output (never on GitHub)
+CLAUDE.md
+graphify-out/
+/out/

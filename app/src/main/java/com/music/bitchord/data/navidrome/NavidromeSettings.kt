@@ -53,6 +53,9 @@ object NavidromeSettings {
         salt = prefs.getString(KEY_SALT, null) ?: newSalt().also { prefs.edit().putString(KEY_SALT, it).apply() }
         NavidromeClips.init(context)
         NavidromeSongInfo.init()
+        NavidromeOffline.init(context)
+        NavidromeLyrics.init(context)
+        NavidromeRadio.init(context)
     }
 
     fun isConfigured(): Boolean = isConfigured(_url.value, _username.value)

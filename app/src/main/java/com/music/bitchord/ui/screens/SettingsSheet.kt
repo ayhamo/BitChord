@@ -425,6 +425,12 @@ fun SettingsScreen(
             // fork: plays reported to the Navidrome server
             val navidromeScrobbleTitle = stringResource(R.string.fork_navidrome_scrobble)
             row(navidromeScrobbleTitle, "navidrome", "scrobbling", "now playing") { ForkNavidromeScrobbleRow() }
+            row(stringResource(R.string.fork_navidrome_home_shelves), "navidrome", "home", "shelves") { ForkNavidromeHomeShelvesRow() } // fork
+            row(stringResource(R.string.fork_navidrome_yt_history), "navidrome", "youtube", "history") { ForkNavidromeYouTubeHistoryRow() } // fork
+            row(stringResource(R.string.fork_offline_mode), "navidrome", "offline") { ForkOfflineModeRow() } // fork
+            row(stringResource(R.string.fork_offline_storage), "navidrome", "offline", "storage", "downloads") { ForkOfflineStorageRow() } // fork
+            row(stringResource(R.string.fork_download_mobile), "navidrome", "offline", "mobile", "metered", "download") { ForkDownloadOnMobileRow() } // fork
+            row(stringResource(R.string.fork_preload), "navidrome", "preload", "cache", "next") { ForkPreloadRow() } // fork
             // Sits with the account rather than with Playback: a party is up to
             // five signed-in people, and being signed in is the whole of what
             // the row needs before it will do anything.
@@ -1267,6 +1273,11 @@ fun SettingsScreen(
                     },
                 )
             }
+            // fork: the video clip cache's size and its two clear buttons
+            row(stringResource(R.string.fork_clip_cache_size), "cache", "video", "clips", "canvas") { ForkClipCacheSizeRow() }
+            row(stringResource(R.string.fork_clear_backdrops), "cache", "backdrop", "video", "free space") { ForkClearBackdropsRow() }
+            row(stringResource(R.string.fork_clear_cover_clips), "cache", "cover", "video", "free space") { ForkClearCoverClipsRow() }
+            row(stringResource(R.string.fork_clear_lyrics), "cache", "lyrics", "free space") { ForkClearLyricsRow() } // fork
         }
 
         // Only in a build that carries the watch app — see app/build.gradle.kts.
@@ -1493,6 +1504,16 @@ fun SettingsScreen(
             row(stringResource(R.string.fork_cover_clips), "fork", "navidrome", "cover", "video") { ForkCoverClipsRow() }
             row(stringResource(R.string.fork_backdrop_clips), "fork", "navidrome", "backdrop", "video") { ForkBackdropClipsRow() }
             row(stringResource(R.string.fork_navidrome_scrobble), "fork", "navidrome", "scrobbling") { ForkNavidromeScrobbleRow() }
+            row(stringResource(R.string.fork_navidrome_home_shelves), "fork", "navidrome", "home", "shelves") { ForkNavidromeHomeShelvesRow() }
+            row(stringResource(R.string.fork_navidrome_yt_history), "fork", "navidrome", "youtube", "history") { ForkNavidromeYouTubeHistoryRow() }
+            row(stringResource(R.string.fork_clip_cache_size), "fork", "cache", "video", "clips") { ForkClipCacheSizeRow() }
+            row(stringResource(R.string.fork_clear_backdrops), "fork", "cache", "backdrop") { ForkClearBackdropsRow() }
+            row(stringResource(R.string.fork_clear_cover_clips), "fork", "cache", "cover") { ForkClearCoverClipsRow() }
+            row(stringResource(R.string.fork_clear_lyrics), "fork", "cache", "lyrics") { ForkClearLyricsRow() }
+            row(stringResource(R.string.fork_offline_mode), "fork", "navidrome", "offline") { ForkOfflineModeRow() }
+            row(stringResource(R.string.fork_offline_storage), "fork", "navidrome", "offline", "storage") { ForkOfflineStorageRow() }
+            row(stringResource(R.string.fork_download_mobile), "fork", "offline", "mobile") { ForkDownloadOnMobileRow() }
+            row(stringResource(R.string.fork_preload), "fork", "navidrome", "preload") { ForkPreloadRow() }
         }
 
         SearchableSettingsGroup(search, header = stringResource(R.string.advanced_options)) {

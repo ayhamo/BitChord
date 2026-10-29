@@ -784,6 +784,7 @@ object StreamResolver {
      */
     suspend fun signatureTimestamp(videoId: String): Int? {
         cachedSignatureTimestamp?.let { return it }
+        init // fork: NewPipe isn't set up yet when no YouTube stream was resolved (only Navidrome songs played)
         return runCatching {
             jsPlayerManager { YoutubeJavaScriptPlayerManager.getSignatureTimestamp(videoId) }
         }

@@ -265,6 +265,7 @@ fun BrowseActionsSheet(
                     onClick = download,
                 )
             }
+            ForkOfflineRow(target, MaterialTheme.colorScheme.primary) // fork: Navidrome "Available offline"
             onOpen?.let {
                 ActionRow(
                     BitChordIcons.ChevronRight,

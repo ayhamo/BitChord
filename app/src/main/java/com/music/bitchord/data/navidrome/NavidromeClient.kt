@@ -55,6 +55,8 @@ class NavidromeClient(
         val samplingRate: Int?,
         /** Starred on the server (Subsonic sends the date it was starred, or nothing). */
         val starred: Boolean = false,
+        /** The file's size in bytes, for "Available offline" to say what a page will take. */
+        val sizeBytes: Long? = null,
     )
 
     suspend fun ping() {
@@ -95,6 +97,22 @@ class NavidromeClient(
     /** One playlist on the server, for a Home card. */
     data class PlaylistRow(val id: String, val name: String, val songCount: Int?, val coverArt: String?)
 
+    /** An internet radio station the server lists (`getInternetRadioStations`). */
+    data class RadioRow(val id: String, val name: String, val streamUrl: String, val homePageUrl: String?)
+
+    suspend fun radioStations(): List<RadioRow> {
+        val result = call("getInternetRadioStations")
+        return asList(result["internetRadioStations"]?.jsonObject?.get("internetRadioStation")).mapNotNull { element ->
+            val o = element as? JsonObject ?: return@mapNotNull null
+            RadioRow(
+                id = o.string("id") ?: return@mapNotNull null,
+                name = o.string("name") ?: return@mapNotNull null,
+                streamUrl = o.string("streamUrl") ?: return@mapNotNull null,
+                homePageUrl = o.string("homePageUrl"),
+            )
+        }
+    }
+
     suspend fun playlists(): List<PlaylistRow> {
         val result = call("getPlaylists")
         return asList(result["playlists"]?.jsonObject?.get("playlist")).mapNotNull { element ->
@@ -117,6 +135,42 @@ class NavidromeClient(
     /** `getAlbumList2` of [type] (`newest`, `recent`, `frequent`, `random`, …). */
     suspend fun albums(type: String, size: Int): List<AlbumRow> {
         val result = call("getAlbumList2", "type" to type, "size" to size.toString())
+        return asList(result["albumList2"]?.jsonObject?.get("album")).mapNotNull { it.toAlbumRow() }
+    }
+
+    /** Songs matching [query] (`search3`, songs only), one page of [count] from [offset]. */
+    suspend fun searchSongs(query: String, count: Int, offset: Int = 0): List<SongRow> {
+        val result = call(
+            "search3",
+            "query" to query,
+            "songCount" to count.toString(),
+            "songOffset" to offset.toString(),
+            "albumCount" to "0",
+            "artistCount" to "0",
+        )
+        return songRows(result["searchResult3"]?.jsonObject?.get("song"))
+    }
+
+    /** One genre and how many songs it has. */
+    data class GenreRow(val name: String, val songCount: Int)
+
+    suspend fun genres(): List<GenreRow> {
+        val result = call("getGenres")
+        return asList(result["genres"]?.jsonObject?.get("genre")).mapNotNull { element ->
+            val o = element as? JsonObject ?: return@mapNotNull null
+            GenreRow(name = o.string("value") ?: return@mapNotNull null, songCount = o.int("songCount") ?: 0)
+        }
+    }
+
+    /** A genre's songs, one page of [count] from [offset]. */
+    suspend fun songsByGenre(genre: String, count: Int, offset: Int = 0): List<SongRow> {
+        val result = call("getSongsByGenre", "genre" to genre, "count" to count.toString(), "offset" to offset.toString())
+        return songRows(result["songsByGenre"]?.jsonObject?.get("song"))
+    }
+
+    /** Albums of a genre (`getAlbumList2` byGenre), for a genre tile's cover. */
+    suspend fun albumsByGenre(genre: String, size: Int): List<AlbumRow> {
+        val result = call("getAlbumList2", "type" to "byGenre", "genre" to genre, "size" to size.toString())
         return asList(result["albumList2"]?.jsonObject?.get("album")).mapNotNull { it.toAlbumRow() }
     }
 
@@ -149,6 +203,9 @@ class NavidromeClient(
         val bitRate: Int?,
         val suffix: String?,
     )
+
+    /** One song by id (`getSong`), or null when the server has none. */
+    suspend fun song(id: String): SongRow? = call("getSong", "id" to id)["song"]?.toSongRow()
 
     suspend fun songDetails(id: String): SongDetails {
         val o = call("getSong", "id" to id)["song"]?.jsonObject ?: throw IOException("No such song")
@@ -278,6 +335,7 @@ class NavidromeClient(
             bitDepth = o.int("bitDepth"),
             samplingRate = o.int("samplingRate"),
             starred = o.string("starred") != null,
+            sizeBytes = (o["size"] as? JsonPrimitive)?.longOrNull,
         )
     }
 

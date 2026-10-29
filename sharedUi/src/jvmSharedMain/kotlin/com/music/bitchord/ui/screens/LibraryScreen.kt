@@ -155,6 +155,7 @@ fun LibraryScreen(
                     )
                 }
             }
+            item(key = "shelf:navidrome-playlists") { ForkLibraryPlaylistsRow(onShelfItemClick, onShowAll) } // fork
             if (!signedIn) {
                 item(key = "shelf:$PLAYLISTS") {
                     val emptyPlaylists = HomeShelf(PLAYLISTS, emptyList())

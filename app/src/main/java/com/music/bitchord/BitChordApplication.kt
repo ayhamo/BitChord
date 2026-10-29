@@ -184,6 +184,7 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
      */
     private val coilHttpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
+            .addInterceptor { chain -> com.music.bitchord.data.Http.forkInterceptor?.intercept(chain) ?: chain.proceed(chain.request()) } // fork: kept Navidrome covers
             .addInterceptor { chain ->
                 chain.proceed(
                     chain.request().newBuilder()

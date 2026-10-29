@@ -756,6 +756,14 @@ class CrossfadeController(
     fun isSkipBlend(): Boolean = skipTarget != C.INDEX_UNSET
 
     /**
+     * The song a manual skip is headed to while it is still arming (its track loading, the session
+     * still on the old player), else [C.INDEX_UNSET]. The session reports it as current meanwhile:
+     * Media3's controller shows the next song the moment Next is pressed, and a session still
+     * answering with the old one flipped the screen back until the handoff (fork).
+     */
+    fun pendingSkipIndex(): Int = if (!handedOff && phase != Phase.IDLE) skipTarget else C.INDEX_UNSET
+
+    /**
      * Next / Previous as a blend into [toIndex] rather than a cut (fork-only).
      *
      * Only in classic crossfade mode: a length set and Automix off, nothing in
@@ -1445,6 +1453,9 @@ class CrossfadeController(
         // a prepared decoder open against a stopped player is worse than arming
         // again when playback resumes.
         if (!out.playWhenReady) return bail()
+        // fork: a standby whose stream failed will never get ready; bail now rather than hold the
+        // old song (and, on a skip, the new title at 0:00) for the whole arm timeout
+        if (into.playerError != null) return bail()
 
         val expired = SystemClock.elapsedRealtime() > armDeadline
         val ready = into.playbackState == Player.STATE_READY
@@ -1665,7 +1676,9 @@ class CrossfadeController(
         // from under it: until the handoff its queue still runs on past the
         // track, and reaching the end would start the next item — the very
         // song fading in — a second time on the player that is leaving.
-        if (!handedOff && (progress >= render.handoffAt || (outRemaining != null && outRemaining <= HANDOFF_GUARD_MS))) {
+        // fork: a manual skip hands over at once, so the screen shows the chosen song as soon as it
+        // plays (its audio still blends). Safe: mid-song, the outgoing player isn't reading the next file.
+        if (!handedOff && (isSkipBlend() || progress >= render.handoffAt || (outRemaining != null && outRemaining <= HANDOFF_GUARD_MS))) {
             handOff(out, player)
         }
         publishBlend(out, player)

@@ -40,6 +40,8 @@ object NavidromeAlbums {
     /** The album's songs, or null when [browseId] isn't a Navidrome album page or the server has no such album (the library listing answers then). */
     suspend fun pageState(browseId: String, emptyText: () -> String): UiState<List<Song>>? {
         if (!browseId.startsWith(PREFIX) || !NavidromeSettings.isConfigured()) return null
+        // Offline mode: the kept copy, or the library listing (the kept songs) groups the album.
+        if (com.music.bitchord.fork.ForkNetwork.offline.value) return NavidromeOffline.pageState(browseId)
         val name = browseId.removePrefix(PREFIX)
         return runCatching {
             val client = NavidromeRepository.client()
@@ -57,7 +59,8 @@ object NavidromeAlbums {
             with(NavidromeRepository) { rows.map { it.toSong(client) } }
         }.fold(
             onSuccess = { songs -> if (songs.isEmpty()) UiState.Error(emptyText()) else UiState.Success(songs) },
-            onFailure = { UiState.Error(it.message ?: emptyText()) },
+            // No server (offline, unreachable): the kept copy, if the page is kept.
+            onFailure = { NavidromeOffline.pageState(browseId) ?: UiState.Error(it.message ?: emptyText()) },
         )
     }
 

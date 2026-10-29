@@ -6007,6 +6007,7 @@ class PlaybackService : MediaLibraryService() {
      * tracks is more than it does anything with, but it decides that, not this.
      */
     private fun prefetchAround(player: ExoPlayer) {
+        com.music.bitchord.fork.ForkPreload.around(player) // fork: "Pre-load next songs" for Navidrome
         val nextIndex = player.nextMediaItemIndex
         val upcomingSongs = if (nextIndex != C.INDEX_UNSET) {
             val end = (nextIndex + AudioCache.QUEUE_DEPTH - 1).coerceAtMost(player.mediaItemCount - 1)
@@ -7490,20 +7491,20 @@ class PlaybackService : MediaLibraryService() {
 
         override fun getPlaybackState() = if (cast.active) cast.playbackState else super.getPlaybackState()
 
-        override fun getCurrentPosition() = if (cast.active) cast.positionMs else super.getCurrentPosition()
+        override fun getCurrentPosition() = if (cast.active) cast.positionMs else if (forkSkipIndex() != C.INDEX_UNSET) 0L else super.getCurrentPosition() // fork: skip arming
 
-        override fun getContentPosition() = if (cast.active) cast.positionMs else super.getContentPosition()
+        override fun getContentPosition() = if (cast.active) cast.positionMs else if (forkSkipIndex() != C.INDEX_UNSET) 0L else super.getContentPosition() // fork: skip arming
 
-        override fun getBufferedPosition() = if (cast.active) cast.positionMs else super.getBufferedPosition()
+        override fun getBufferedPosition() = if (cast.active) cast.positionMs else if (forkSkipIndex() != C.INDEX_UNSET) 0L else super.getBufferedPosition() // fork: skip arming
 
         override fun getContentBufferedPosition() =
             if (cast.active) cast.positionMs else super.getContentBufferedPosition()
 
         override fun getDuration(): Long =
-            if (cast.active && cast.durationMs != C.TIME_UNSET) cast.durationMs else super.getDuration()
+            if (cast.active && cast.durationMs != C.TIME_UNSET) cast.durationMs else if (forkSkipIndex() != C.INDEX_UNSET) C.TIME_UNSET else super.getDuration() // fork: skip arming
 
         override fun getContentDuration(): Long =
-            if (cast.active && cast.durationMs != C.TIME_UNSET) cast.durationMs else super.getContentDuration()
+            if (cast.active && cast.durationMs != C.TIME_UNSET) cast.durationMs else if (forkSkipIndex() != C.INDEX_UNSET) C.TIME_UNSET else super.getContentDuration() // fork: skip arming
 
         // The receiver is a remote output with a volume of its own, which is
         // what makes the hardware keys move it instead of the phone's.
@@ -7827,8 +7828,24 @@ class PlaybackService : MediaLibraryService() {
             super.clearMediaItems()
         }
 
+        // fork: while a crossfade skip arms, the chosen song is reported as current (see
+        // CrossfadeController.pendingSkipIndex), so the screen doesn't flip back to the old one.
+        private fun forkSkipIndex(): Int = crossfade.pendingSkipIndex()
+            .takeIf { it in 0 until wrappedPlayer.mediaItemCount } ?: C.INDEX_UNSET
+
+        override fun getCurrentMediaItemIndex(): Int =
+            forkSkipIndex().takeIf { it != C.INDEX_UNSET } ?: super.getCurrentMediaItemIndex()
+
+        override fun getCurrentPeriodIndex(): Int =
+            forkSkipIndex().takeIf { it != C.INDEX_UNSET } ?: super.getCurrentPeriodIndex()
+
+        override fun getCurrentMediaItem(): MediaItem? =
+            forkSkipIndex().takeIf { it != C.INDEX_UNSET }?.let { wrappedPlayer.getMediaItemAt(it) }
+                ?: super.getCurrentMediaItem()
+
         override fun getMediaMetadata(): MediaMetadata {
-            val base = wrappedPlayer.mediaMetadata
+            val base = forkSkipIndex().takeIf { it != C.INDEX_UNSET } // fork
+                ?.let { wrappedPlayer.getMediaItemAt(it).mediaMetadata } ?: wrappedPlayer.mediaMetadata
             val subtitle = getSubtitle()
             return if (!subtitle.isNullOrBlank()) {
                 base.buildUpon().setSubtitle(subtitle).build()

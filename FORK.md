@@ -10,24 +10,42 @@ Everything this fork adds lives in new files where possible. This file lists eve
 | `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeSettings.kt` | Server URL, username, password in their own encrypted prefs (`bitchord_navidrome`) |
 | `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeClient.kt` | Subsonic client: token auth, `search3` paging, raw stream and cover URLs |
 | `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeRepository.kt` | The library as `Song` rows (tags, per-song covers), cached in memory |
-| `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeLyrics.kt` | Timed lyrics from `getLyricsBySongId` for Navidrome stream URLs, remembered per song |
+| `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeLyrics.kt` | Timed lyrics for Navidrome songs: a kept song's `.lrc`, then the lyrics cache (`cache/navidrome_lyrics`: what showed last time, server's or online), then `getLyricsBySongId`; `clearCache()` for Settings |
 | `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeClips.kt` | x-clip cover clips: real path from `/api/song/<id>`, `/rest/x-clip/<folder>/<stem>.cover.mp4` played in the cover square, `.background.mp4` backdrops (with the cover clip as `sleeveUrl`), Navidrome login (`/auth/login`) added by an interceptor, 7-day "no clip" notes (`bitchord_navidrome_clips` prefs). |
 | `app/src/test/java/com/music/bitchord/NavidromeClipsTest.kt` | Clip URL from a song path |
 | `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeHome.kt` | Album shelves (recently added / recent / most played / random) laid over the top of Home |
 | `app/src/test/java/com/music/bitchord/NavidromeLyricsTest.kt` | Lyrics answer → player lines (offset, word stamps, plain text ignored) |
 | `app/src/main/res/values/strings_fork.xml` | Fork strings |
-| `app/src/main/java/com/music/bitchord/fork/ForkSettings.kt` | Fork switches (`bitchord_fork` prefs): crossfade on skip, Navidrome cover clips, backdrop clips, report plays to Navidrome |
+| `app/src/main/java/com/music/bitchord/fork/ForkSettings.kt` | Fork switches (`bitchord_fork` prefs): crossfade on skip, Navidrome cover clips, backdrop clips, report plays to Navidrome, Navidrome on Home |
 | `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeStars.kt` | The heart/star for Navidrome songs as the server's star (`star`/`unstar`), seeded from the songs' `starred` |
 | `app/src/main/java/com/music/bitchord/data/navidrome/NavidromePlaylists.kt` | Server playlists as pages (`local:group:playlist:navidrome:<id>`), reached from the Home "Playlists" shelf |
 | `shared/src/commonMain/kotlin/com/music/bitchord/data/model/ForkSong.kt` | `NAVIDROME_ID_PREFIX`, `Song.isNavidrome` (readable from the shared UI) |
 | `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeScrobble.kt` | "Now playing" and finished plays sent to Navidrome (`scrobble`, submission false/true) |
 | `app/src/main/java/com/music/bitchord/ui/screens/ForkSettingsRows.kt` | The fork switches as full settings rows, for the "Fork settings" group |
 | `sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/ForkPausedCover.kt` | The cover drawn back over a full-screen clip while paused |
+| (ForkSleeveClip.kt) | `ForkCanvasSwitch.backdrops`: the backdrop switch as a flow the player reads (ForkSettings persists it); `forkCanvas()` applies it live |
 | `app/src/main/java/com/music/bitchord/fork/PlayerDecoderNames.kt` | The decoder each ExoPlayer last stood up, so a crossfade handoff can publish it (the Audio Pipeline showed "—" after every crossfade) |
 | `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeAlbums.kt` | Navidrome album pages (`local:group:album:navidrome:<name>`) from `getAlbum` (album id remembered from songs/Home cards, else `search3`) instead of the whole library; the album's own cover and artist for the header |
 | `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeSongInfo.kt` | Song Info for Navidrome songs from `getSong`: release date, your plays, rating/star |
 | `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/ForkSongInfo.kt` | Provider slot the app fills, asked first by `SongInfoRepository.load` |
-| `sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/ForkSleeveClip.kt` | `forkInSleeve()`: where a backdrop can't fill the screen, the sleeve plays the cover clip (`sleeveUrl`) or the still cover, never the backdrop |
+| `sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/ForkSleeveClip.kt` | `forkInSleeve()`: where a backdrop can't fill the screen, the sleeve plays the cover clip (`sleeveUrl`) or the still cover, never the backdrop; `forkFillsScreen()`: a backdrop also fills any portrait window, not only phone width |
+| `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeSearch.kt` | The Search tab's "Library" source gets the Navidrome songs after the device's |
+| `sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/ForkPreloadCovers.kt` | The next two songs' covers fetched at player size ahead of time (no black player at a crossfade/skip) |
+| `sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/screens/ForkLibraryPlaylists.kt` | "Navidrome albums" (all, A–Z) and "Navidrome playlists" Library rows (filled by `NavidromeHome.load`) |
+| `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeOffline.kt` | "Available offline": whole albums/playlists kept in `files/navidrome_offline` (original files, covers at 1200 px, backdrops and cover clips with `clips.json`, timed lyrics as `.lrc`), never evicted; two files at a time, waiting for a network the "Download over" switches allow; covers and clips answered from disk by `serve()` in the HTTP clients; sizes before and after keeping; `offline.json` list; offline-mode listing (`keptSongs`); Library "Available offline" row |
+| `app/src/main/java/com/music/bitchord/fork/ForkYouTubeHistory.kt` | Navidrome plays into the YouTube Music history: strict YouTube match (title, artists, length ±5 s), then upstream's `PlaybackTracker` with that id (switch, off by default) |
+| `app/src/main/java/com/music/bitchord/fork/ForkClipCache.kt` | Clip cache size (adjustable evictor) and clearing backdrops / cover clips by kind |
+| `app/src/main/java/com/music/bitchord/ui/components/ForkMenuRows.kt` | "Backdrop videos" row in the player's song menu; "Available offline" row in an album/playlist sheet |
+| `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeArtists.kt` | Navidrome artist pages from one paged `search3` (exact artist tag), not the whole library |
+| `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeGenres.kt` | The server's genres as Explore tiles (`getGenres`, a `byGenre` album cover each) and genre pages (`getSongsByGenre`, id `local:group:genre:navidrome:<genre>`) |
+| `sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/screens/ForkExplore.kt` | Explore's "YouTube" and "Navidrome" panels, each collapsible |
+| `sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/ForkBackdropIntro.kt` | A full-screen clip waits 2.5 s on a new track (the cover is seen first) and then fades in over 1.2 s; not again for the same track |
+| `app/src/main/java/com/music/bitchord/fork/ForkNetwork.kt` | The network for the offline features: Wi-Fi (unmetered) always, mobile data only with "Download over mobile data"; offline mode (switch, or no network) |
+| `app/src/main/java/com/music/bitchord/fork/ForkOfflineService.kt` | Foreground service (dataSync) keeping "Available offline" downloads going in the background, with a progress notification and Cancel |
+| `app/src/main/java/com/music/bitchord/fork/ForkPreload.kt` | "Pre-load next songs": the next N Navidrome songs read whole into the song cache (upstream's read-ahead writer), on allowed networks |
+| `app/src/main/java/com/music/bitchord/ui/components/ForkOfflineBanner.kt` | Strip above the mini player in offline mode ("Go online" when switched on by hand; "No network" otherwise) |
+| `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeRadio.kt` | The server's internet radio stations (`getInternetRadioStations`) as the Library "Internet radio" page; `.pls`/`.m3u` resolved to the stream; a `#bitchord-radio` mark keeps streams out of the song cache; logos: the server's `ra-<id>` cover (what psysonic uploads), else radio-browser.info, kept a week (`bitchord_radio_logos` prefs) |
+| `app/src/main/java/com/music/bitchord/fork/ForkQueues.kt` | Saved queues (try-out): the queue, its song and second, saved under a name in `files/fork_queues.json` (max 20), played back from there |
 | `docker/keys/release/` (gitignored) | The fork's release key `bitchord-release.jks` + `keystore.properties` (random password). Back it up: without it no update installs over a release |
 
 ## Hooks in upstream files
@@ -64,12 +82,55 @@ Everything this fork adds lives in new files where possible. This file lists eve
 | `data/canvas/CanvasRepository.kt` (no Spotify) | `canvasFor()`: both accept lambdas reject `SPOTIFY` for Navidrome songs (+ `isNavidrome` import); `canvasForAlbum()` takes `noSpotify` (in its cache key, accept lambdas) |
 | `ui/screens/DetailScreen.kt` | Album header canvas: `noSpotify` for Navidrome album pages |
 | `shared/…/data/canvas/CanvasArtwork.kt` | `sleeveUrl` field (a backdrop's cover clip) |
-| `sharedUi/…/NowPlayingScreen.kt` (sleeve) | `rememberCanvasArtwork(song).forkInSleeve(playerFillsWindow(windowWidth))`; `ForkPausedCover(…)` now takes the canvas: always over a Navidrome backdrop (with the cover clip playing in it), paused-only over Spotify Canvas |
+| `sharedUi/…/NowPlayingScreen.kt` (sleeve) | `rememberCanvasArtwork(song).forkInSleeve(playerFillsWindow(windowWidth))`; `ForkPausedCover(…)`: the cover back over the full-screen clip while paused |
 | `shared/…/data/SongInfoRepository.kt` | First line of `load()`: `ForkSongInfo.provider` |
 | `MainActivity.kt` (video) | `onToggleVersion`: not offered for Navidrome ids ("Convert to video") |
+| `sharedUi/…/NowPlayingScreen.kt` (preload) | `ForkPreloadCovers(queue, song)` right after `remoteArt` |
+| `ui/MainViewModel.kt` (search) | `loadLibrarySongs()`: last line `NavidromeSearch.withLibrary(…)` |
+| `sharedUi/…/ui/screens/LibraryScreen.kt` | `item(key = "shelf:navidrome-playlists") { ForkLibraryPlaylistsRow(…) }` after the on-device row |
+| `MainActivity.kt` (Library page) | `localFolderStates.getOrPut`: the Navidrome page's `LocalFolderState` starts on `ALBUMS` |
+| `playback/CrossfadeController.kt` (skip handoff) | `pendingSkipIndex()` next to `isSkipBlend()`; `driveFade()`: a skip blend hands over on its first tick (`isSkipBlend() \|\|` in the handoff condition) |
+| `playback/PlaybackService.kt` (skip masking) | `SessionPlayer`: `forkSkipIndex()`, `getCurrentMediaItemIndex`/`getCurrentPeriodIndex`/`getCurrentMediaItem` overrides, `getMediaMetadata` base, and position 0 / duration unset in the position and duration overrides while a skip arms (Media3's controller showed the next song, then flipped back) |
+| `sharedUi/…/NowPlayingScreen.kt` (backdrop width) | `spotifyCanvasOnPhone` and the `canvas` line use `forkFillsScreen(…)` instead of `playerFillsWindow(windowWidth)` |
+| `app/build.gradle.kts` | `prod` flavor: `applicationId = "com.ayhamo.bitchord"`, `app_name` "BitChord Fork" |
+| `ui/screens/LibraryPhoneParts.kt` (icon) | Navidrome's folder icon is `LibraryMusic` (+ import) |
+| `sharedUi/…/NowPlayingScreen.kt` (sharp video) | Canvas deck: `if (true \|\| reduceDynamicBlur …)` (gradient, no glass blur) and the controls dim's target `0f` (was 0.5f); the `canvas` line is `forkCanvas(…)` (backdrop switch read live) |
+| `ui/components/SongActionsSheet.kt` | `ForkBackdropMenuRow(…)` after the sleep timer, player menu + Navidrome songs only |
+| `ui/components/BrowseActionsSheet.kt` | `ForkOfflineRow(target, …)` before the Open row |
+| `data/canvas/CanvasCache.kt` | `cache` is `internal`; evictor is `ForkClipCache.evictor` |
+| `data/innertube/PlaybackTracker.kt` | First line of `onPlaying`: `ForkYouTubeHistory.intercept`; first line of `onProgress`: maps a Navidrome id to its YouTube match |
+| `ui/screens/SettingsSheet.kt` (caches, history) | Clip cache size + clear backdrops + clear cover clips rows after "Clear image cache"; "Navidrome plays in YouTube history" after "Navidrome on Home"; all again in Fork settings |
+| `ui/MainViewModel.kt` (artists, genres) | `localPageState()`: `NavidromeArtists.pageState` and `NavidromeGenres.pageState` after the albums line; `openMoodGenre()`: first block opens a Navidrome genre tile as a page |
+| `sharedUi/…/ui/screens/ExploreScreen.kt` | `val fork = rememberForkExplore()`; `forkYouTubeHeading(fork)` and `if (!fork.panels \|\| fork.youtubeOpen)` before `when (state)`; `forkNavidromePanel(…)` after it (reusing `MoodGenreRow`) |
+| `shared/…/data/innertube/StreamResolver.kt` | `signatureTimestamp()`: `init` (NewPipe) before use; upstream relied on a YouTube stream having been resolved first, so with only Navidrome songs played the YouTube history could never register (upstream bug, worth sending upstream) |
+| `ui/screens/SettingsSheet.kt` (shelves) | "Navidrome on Home" row after "Report plays to Navidrome", and again in Fork settings |
+| `sharedUi/…/NowPlayingScreen.kt` (backdrop intro) | `val forkIntro = rememberForkBackdropIntro(…)` after `clipFullscreen`; the hero clip's `presentationAlpha` is multiplied by `forkIntro.alpha` and its `onRenderedChanged` goes through `forkIntro.rendered(…)` |
+| `BitChordApplication.kt` (covers) | `coilHttpClient`: first interceptor runs `Http.forkInterceptor` (kept Navidrome covers come from disk) |
+| `AndroidManifest.xml` | `.fork.ForkOfflineService` (dataSync) after upstream's DownloadService |
+| `playback/AudioCache.kt` (pre-load) | `forkReadAhead()` after `setUpstream()`: the read-ahead cache source for `ForkPreload` |
+| `playback/PlaybackService.kt` (pre-load) | First line of `prefetchAround()`: `ForkPreload.around(player)` |
+| `ui/MainViewModel.kt` (lyrics cache) | Before `val selected = …` in the lyrics job: `NavidromeLyrics.remember(videoId, found?.lines)` |
+| `ui/screens/SettingsSheet.kt` (offline) | Offline mode, Available offline storage, Download over mobile data, Pre-load next songs after "Navidrome plays in YouTube history"; "Clear lyrics cache" after "Clear cover clips"; all again in Fork settings |
+| `MainActivity.kt` (sort skip) | `playDetailSongs()`: `forkSort` line; the page's playback context is sorted like the page (`sortedForDetail`) and no continuation token is passed for a sorted page. **Fixes upstream**: it queued the running order whatever the sort, so Next didn't follow A–Z, date or Reverse order |
+| `MainActivity.kt` (offline strip) | `ForkOfflineBanner()` after `QueueActionNoticeHost`, above the mini player (floating bars only, not liquid glass) |
+| `ui/MainViewModel.kt` (radio) | `localPageState()`: `NavidromeRadio.pageState` after the genres line |
+| `ui/screens/LibraryPhoneParts.kt` (radio) | `libraryLinks()`: a `forkOffline` line and an "Internet radio" link after Navidrome, hidden offline (+ `Radio` icon import) |
+| `playback/AudioCache.kt` (radio, shares) | `playbackFactory()`: a `#bitchord-radio` stream bypasses the cache like file/content URIs; `prefetchQueue()`: `radio:` ids filtered out of the YouTube read-ahead; WebDAV/SMB ids filtered out too (**fixes upstream**: they were warmed as YouTube ids) |
+| `playback/CrossfadeController.kt` (failed standby) | `driveArming()`: bails at once when the standby has a `playerError` (a skip onto a failing stream no longer holds the old song for the 12 s arm timeout) |
+| `MainActivity.kt` (saved queues) | `ForkQueues.bind(controller, scope) { … playFrom(…) }` right after `playFrom()` |
+| `ui/components/SongActionsSheet.kt` (saved queues) | `ForkSavedQueuesRow(…)` after the backdrop row, player menu only |
+| `ui/components/SongActionsSheet.kt` (radio) | "Start radio" hidden for a `radio:` station |
 
 ## Gotchas
 
 - Navidrome songs carry `albumId` / `artistId` set to the library's own album and artist pages (`LocalGroups` ids). That is what keeps the player from asking YouTube for "links" about a song it has never heard of, and it makes the player's album and artist taps open the library pages. No upstream hook needed.
 
 - Stream and cover URLs send Subsonic's `v` parameter as `%76`. The player treats any URI with a `v` query parameter as a YouTube watch link, so a literal `v=1.16.1` made every Navidrome song fail ("URL not accepted: https://www.youtube.com/watch?v=1.16.1"). Navidrome decodes the key and still reads it.
+
+## Upstream bugs the fork fixes
+
+Worth sending upstream, and worth checking at each merge whether upstream fixed them its own way (then drop the fork lines):
+
+- `MainActivity.playDetailSongs()`: tapping a song on an album/playlist page queued the page's running order whatever the sort (A–Z, date, …), so Next didn't follow what the page shows.
+- `AudioCache.prefetchQueue()`: WebDAV/SMB ids were warmed as YouTube ids (wasted lookups).
+- `StreamResolver.signatureTimestamp()`: NewPipe wasn't initialised when no YouTube stream had been resolved yet, so the YouTube history couldn't register.
