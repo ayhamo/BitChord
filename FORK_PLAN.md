@@ -54,6 +54,7 @@ Later in this phase, if wanted: `NavidromeSource : MusicSource` so Navidrome res
 ## Phase 3: lyrics from Navidrome
 
 - Add a Navidrome lyrics source: `getLyricsBySongId` (synced) when the server reports the `songLyrics` extension, else `getLyrics`. Tried first for Navidrome songs, then the existing chain.
+- Done: `NavidromeLyrics`, reached through `EmbeddedLyrics.forUri`. Only timed lyrics are used; plain text from the server (and `getLyrics`, which is plain only) falls through to the online sources so they can find a synced copy. My library's files carry plain lyrics at most (e.g. "Born to Rise": 98 unsynced lines), so on the device the online chain still answers.
 
 ## Phase 4: covers
 

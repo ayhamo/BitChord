@@ -8,9 +8,11 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.longOrNull
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
@@ -69,6 +71,18 @@ class NavidromeClient(
         val songs = result["searchResult3"]?.jsonObject?.get("song") ?: return emptyList()
         return (songs as? JsonArray ?: JsonArray(listOf(songs))).mapNotNull { it.toSongRow() }
     }
+
+    /** One `structuredLyrics` entry: a language's lines, timed or not ([offsetMs] already in the server's sign). */
+    data class LyricsRow(val synced: Boolean, val offsetMs: Long, val lines: List<Pair<Long?, String>>)
+
+    /**
+     * The song's lyrics as the server read them from the file (tags or a
+     * sidecar `.lrc`), via the OpenSubsonic `songLyrics` extension. A server
+     * without the extension answers with an error, which surfaces as an
+     * [IOException] like any other.
+     */
+    suspend fun lyricsBySongId(id: String): List<LyricsRow> =
+        parseLyrics(call("getLyricsBySongId", "id" to id))
 
     /** The original file, untouched (`format=raw`): FLAC stays FLAC, Opus stays Opus. */
     fun streamUrl(id: String): String = endpoint("stream", "id" to id, "format" to "raw").toString()
@@ -137,8 +151,30 @@ class NavidromeClient(
     private fun JsonObject.int(key: String): Int? =
         (get(key) as? JsonPrimitive)?.intOrNull
 
-    private companion object {
-        val json = Json { ignoreUnknownKeys = true; isLenient = true }
+    internal companion object {
+        private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+
+        /** `getLyricsBySongId`'s answer (the `subsonic-response` object); apart from [call] so it can be tested. */
+        internal fun parseLyrics(result: JsonObject): List<LyricsRow> {
+            val list = result["lyricsList"]?.jsonObject?.get("structuredLyrics") ?: return emptyList()
+            return (list as? JsonArray ?: JsonArray(listOf(list))).mapNotNull { entry ->
+                val o = entry as? JsonObject ?: return@mapNotNull null
+                val lines = when (val raw = o["line"]) {
+                    is JsonArray -> raw
+                    is JsonObject -> JsonArray(listOf(raw))
+                    else -> JsonArray(emptyList())
+                }.mapNotNull { line ->
+                    val l = line as? JsonObject ?: return@mapNotNull null
+                    (l["start"] as? JsonPrimitive)?.longOrNull to
+                        (l["value"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+                }
+                LyricsRow(
+                    synced = (o["synced"] as? JsonPrimitive)?.booleanOrNull == true,
+                    offsetMs = (o["offset"] as? JsonPrimitive)?.longOrNull ?: 0L,
+                    lines = lines,
+                )
+            }
+        }
 
         fun md5(text: String): String =
             MessageDigest.getInstance("MD5").digest(text.toByteArray(Charsets.UTF_8)).toHex()

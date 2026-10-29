@@ -67,6 +67,9 @@ object EmbeddedLyrics {
      */
     suspend fun forUri(context: Context, uriString: String): List<LyricLine>? =
         withContext(Dispatchers.IO) {
+            // fork: a Navidrome stream's embedded lyrics are read by the server, one request away
+            com.music.bitchord.data.navidrome.NavidromeLyrics.songIdFor(uriString)
+                ?.let { return@withContext com.music.bitchord.data.navidrome.NavidromeLyrics.forSong(it) }
             val raw = runCatching { read(context, Uri.parse(uriString)) }
                 .onFailure { Log.d(TAG, "no embedded lyrics in $uriString: ${it.message}") }
                 .getOrNull()
