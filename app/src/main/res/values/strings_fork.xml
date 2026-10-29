@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Strings added by the fork, kept out of strings.xml so upstream merges don't conflict. -->
+<resources>
+    <string name="navidrome">Navidrome</string>
+    <string name="navidrome_subtitle">Your Navidrome library</string>
+    <string name="navidrome_not_configured">Connect your server here</string>
+    <string name="navidrome_empty">No songs found on the Navidrome server. Check the server in Sources.</string>
+    <string name="navidrome_description">Play your Navidrome (or any Subsonic) server: albums and artists from your tags, each song\'s own cover, and the original files.</string>
+    <string name="navidrome_server_url_hint">https://music.example.com</string>
+    <string name="navidrome_test_failed">Couldn’t reach it: %1$s</string>
+</resources>

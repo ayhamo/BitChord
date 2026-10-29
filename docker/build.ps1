@@ -15,10 +15,13 @@ if (-not $NoImage) {
     Check 'docker build'
 }
 
-# gradlew is checked out with CRLF on Windows; strip it inside the container (git sees no change).
+# gradlew is checked out with CRLF on Windows; strip it for the build and put it back afterwards
+# (also on failure) so the working tree stays clean.
 $script = @"
 set -e
 sed -i 's/\r`$//' gradlew
+restore() { sed -i 's/`$/\r/' gradlew; }
+trap restore EXIT
 ./gradlew --no-daemon -Pbitchord.bundleWear=false $Task
 if ls app/build/outputs/apk/dev/debug/*.apk >/dev/null 2>&1; then cp app/build/outputs/apk/dev/debug/*.apk /out/; fi
 "@

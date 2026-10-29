@@ -587,6 +587,7 @@ private fun BitChordApp(
     var showLastfmLogin by remember { mutableStateOf(false) }
     var showWebDavEditor by remember { mutableStateOf(false) }
     var showSmbEditor by remember { mutableStateOf(false) }
+    var showNavidromeEditor by remember { mutableStateOf(false) } // fork
     /**
      * Whether the download manager is open.
      *
@@ -2784,6 +2785,7 @@ private fun BitChordApp(
                                 onEditSource = { editingSource = it },
                                 onEditWebDav = { showWebDavEditor = true },
                                 onEditSmb = { showSmbEditor = true },
+                                onEditNavidrome = { showNavidromeEditor = true }, // fork
                                 onConfirmJioSaavn = { confirmJioSaavn = true },
                             )
                         } else if (pageRoute == AppRoute.WearOs) {
@@ -5076,6 +5078,42 @@ private fun BitChordApp(
                     showWebDavEditor = false
                 },
                 onDismiss = { showWebDavEditor = false },
+            )
+        }
+
+        if (showNavidromeEditor) { // fork
+            BackHandler { showNavidromeEditor = false }
+            ServerEditorHost(
+                hazeState = hazeState,
+                title = stringResource(R.string.navidrome),
+                description = stringResource(R.string.navidrome_description),
+                fields = listOf(
+                    FieldConfig(
+                        initial = com.music.bitchord.data.navidrome.NavidromeSettings.url.value,
+                        placeholder = stringResource(R.string.navidrome_server_url_hint),
+                        keyboardType = KeyboardType.Uri,
+                    ),
+                    FieldConfig(
+                        initial = com.music.bitchord.data.navidrome.NavidromeSettings.username.value,
+                        placeholder = stringResource(R.string.username),
+                    ),
+                    FieldConfig(
+                        initial = com.music.bitchord.data.navidrome.NavidromeSettings.password.value,
+                        placeholder = stringResource(R.string.password),
+                        keyboardType = KeyboardType.Password,
+                        isPassword = true,
+                    ),
+                ),
+                canSubmit = { it[0].isNotBlank() && it[1].isNotBlank() },
+                testFailedRes = R.string.navidrome_test_failed,
+                onTest = { (url, username, password) ->
+                    com.music.bitchord.data.navidrome.NavidromeRepository.testConnection(url.trim(), username.trim(), password)
+                },
+                onSave = { (url, username, password) ->
+                    com.music.bitchord.data.navidrome.NavidromeSettings.save(url, username, password)
+                    showNavidromeEditor = false
+                },
+                onDismiss = { showNavidromeEditor = false },
             )
         }
 

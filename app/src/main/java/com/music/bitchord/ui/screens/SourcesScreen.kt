@@ -118,6 +118,8 @@ fun SourcesScreen(
     onEditWebDav: () -> Unit,
     /** As [onEditWebDav], for the SMB share editor. */
     onEditSmb: () -> Unit,
+    /** As [onEditWebDav], for the fork's Navidrome server editor. */
+    onEditNavidrome: () -> Unit = {},
     /** Opens the full-window warning before JioSaavn is opted into. */
     onConfirmJioSaavn: () -> Unit,
     modifier: Modifier = Modifier,
@@ -350,6 +352,34 @@ fun SourcesScreen(
                 )
             },
             onDisconnect = { AppSettings.clearSmb() },
+        )
+
+        // fork: the Navidrome server, as a third personal library.
+        val navidromeUrl by com.music.bitchord.data.navidrome.NavidromeSettings.url.collectAsStateWithLifecycle()
+        val navidromeUser by com.music.bitchord.data.navidrome.NavidromeSettings.username.collectAsStateWithLifecycle()
+        val navidromePassword by com.music.bitchord.data.navidrome.NavidromeSettings.password.collectAsStateWithLifecycle()
+        RemoteLibrarySection(
+            icon = Icons.Rounded.Cloud,
+            title = stringResource(R.string.navidrome),
+            description = stringResource(R.string.navidrome_description),
+            subtitle = if (navidromeUrl.isBlank()) {
+                stringResource(R.string.navidrome_not_configured)
+            } else {
+                "$navidromeUrl · $navidromeUser"
+            },
+            listSubtitle = stringResource(R.string.navidrome_subtitle),
+            disconnectTitle = stringResource(R.string.webdav_disconnect),
+            configured = navidromeUrl.isNotBlank(),
+            testFailedRes = R.string.navidrome_test_failed,
+            onEdit = onEditNavidrome,
+            onTest = {
+                com.music.bitchord.data.navidrome.NavidromeRepository.testConnection(
+                    navidromeUrl,
+                    navidromeUser,
+                    navidromePassword,
+                )
+            },
+            onDisconnect = { com.music.bitchord.data.navidrome.NavidromeSettings.clear() },
         )
 
         SettingsGroup(

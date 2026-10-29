@@ -42,6 +42,8 @@ fun libraryLinks(): List<LibraryLink> {
     val smbHost by AppSettings.smbHost.collectAsStateWithLifecycle()
     val smbShare by AppSettings.smbShare.collectAsStateWithLifecycle()
     val showCacheFolder by AppSettings.showCacheFolder.collectAsStateWithLifecycle()
+    val navidromeUrl by com.music.bitchord.data.navidrome.NavidromeSettings.url.collectAsStateWithLifecycle() // fork
+    val navidromeUser by com.music.bitchord.data.navidrome.NavidromeSettings.username.collectAsStateWithLifecycle() // fork
     val spotifyConnected by AppSettings.spotifySpdcToken.collectAsStateWithLifecycle()
     fun link(title: String, subtitle: String, browseId: String, icon: ImageVector = deviceFolderIcon(browseId) ?: Icons.Rounded.Cloud) = LibraryLink(
         item = ShelfItem(
@@ -82,6 +84,11 @@ fun libraryLinks(): List<LibraryLink> {
             stringResource(R.string.smb_subtitle),
             com.music.bitchord.data.smb.SmbConfig.BROWSE_ID,
         ).takeIf { smbHost.isNotBlank() && smbShare.isNotBlank() },
+        link( // fork
+            stringResource(R.string.navidrome),
+            stringResource(R.string.navidrome_subtitle),
+            com.music.bitchord.data.navidrome.NavidromeSettings.BROWSE_ID,
+        ).takeIf { navidromeUser.isNotBlank() && navidromeUrl.isNotBlank() },
         // Only while signed in to Spotify in Settings → Accounts; it opens that
         // account's playlists rather than a browse page.
         link(
@@ -129,6 +136,7 @@ fun deviceFolderIcon(browseId: String): ImageVector? = when (browseId) {
     CACHE_FOLDER_BROWSE_ID -> Icons.Rounded.Storage
     com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID -> Icons.Rounded.Cloud
     com.music.bitchord.data.smb.SmbConfig.BROWSE_ID -> Icons.Rounded.Lan
+    com.music.bitchord.data.navidrome.NavidromeSettings.BROWSE_ID -> Icons.Rounded.Cloud // fork
     else -> null
 }
 

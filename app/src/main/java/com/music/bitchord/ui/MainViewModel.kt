@@ -2503,6 +2503,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 R.string.smb_empty,
                 com.music.bitchord.data.smb.SmbRepository::getSongs,
             )
+        com.music.bitchord.data.navidrome.NavidromeSettings.BROWSE_ID -> // fork
+            RemoteLibrary(R.string.navidrome_empty, com.music.bitchord.data.navidrome.NavidromeRepository::getSongs)
         else -> null
     }
 
