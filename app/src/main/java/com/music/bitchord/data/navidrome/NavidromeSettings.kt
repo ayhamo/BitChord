@@ -21,6 +21,12 @@ object NavidromeSettings {
 
     const val BROWSE_ID = "local:navidrome"
 
+    /** Every Navidrome [com.music.bitchord.data.model.Song.videoId] starts with this, then the server's song id. */
+    const val ID_PREFIX = "navidrome:"
+
+    /** A Navidrome song, which YouTube has never heard of: nothing YouTube-side should be asked about it. */
+    fun isNavidromeId(videoId: String?): Boolean = videoId?.startsWith(ID_PREFIX) == true
+
     private lateinit var prefs: SharedPreferences
 
     private val _url = MutableStateFlow("")

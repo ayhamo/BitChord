@@ -1,5 +1,6 @@
 package com.music.bitchord.data.navidrome
 
+import com.music.bitchord.data.LocalGroups
 import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.Song
 import kotlinx.coroutines.sync.Mutex
@@ -38,12 +39,7 @@ object NavidromeRepository {
         cached?.takeIf { android.os.SystemClock.elapsedRealtime() - cachedAt < CACHE_MS }?.let { return@withLock it }
         if (!isConfigured()) return@withLock emptyList()
         val startedAt = generation
-        val client = NavidromeClient(
-            NavidromeSettings.url.value,
-            NavidromeSettings.username.value,
-            NavidromeSettings.password.value,
-            NavidromeSettings.salt,
-        )
+        val client = client()
         val songs = buildList {
             var offset = 0
             while (true) {
@@ -61,15 +57,48 @@ object NavidromeRepository {
         songs
     }
 
+    /** A client for the saved server, with the saved salt so its URLs stay the same across starts. */
+    internal fun client() = NavidromeClient(
+        NavidromeSettings.url.value,
+        NavidromeSettings.username.value,
+        NavidromeSettings.password.value,
+        NavidromeSettings.salt,
+    )
+
+    /**
+     * What AutoPlay queues after [seed]: the server's similar songs, or random
+     * ones from the library when it has no agent (Last.fm etc.) to say what is
+     * similar. Always this library, never a YouTube radio.
+     */
+    suspend fun related(seed: Song, count: Int = 50): Result<List<Song>> = runCatching {
+        val client = client()
+        val id = seed.videoId.removePrefix(NavidromeSettings.ID_PREFIX)
+        val similar = try {
+            client.similarSongs(id, count)
+        } catch (e: java.io.IOException) {
+            emptyList()
+        }
+        similar.ifEmpty { client.randomSongs(count) }.map { it.toSong(client) }
+    }
+
     suspend fun testConnection(url: String, username: String, password: String): Result<Unit> =
         runCatching { NavidromeClient(url, username, password).ping() }
 
-    private fun NavidromeClient.SongRow.toSong(client: NavidromeClient): Song {
+    /**
+     * [Song.albumId] and [Song.artistId] are the library's own album and artist
+     * pages (the ones its Albums and Artists tabs open), so the player's album
+     * and artist links lead there, and the player doesn't ask YouTube to fill
+     * them in for a song it has never heard of.
+     */
+    internal fun NavidromeClient.SongRow.toSong(client: NavidromeClient): Song {
         val lossless = suffix?.lowercase() in LOSSLESS_SUFFIXES
+        val artistName = artist ?: "Unknown Artist"
         return Song(
-            videoId = "navidrome:$id",
+            videoId = NavidromeSettings.ID_PREFIX + id,
             title = title,
-            artist = artist ?: "Unknown Artist",
+            artist = artistName,
+            artistId = LocalGroups.artistPageId(NavidromeSettings.BROWSE_ID, artistName),
+            albumId = album?.let { LocalGroups.albumPageId(NavidromeSettings.BROWSE_ID, it) },
             thumbnailUrl = coverArt?.let { client.coverUrl(it) },
             durationText = durationSec?.takeIf { it > 0 }?.let { "%d:%02d".format(it / 60, it % 60) },
             albumName = album,

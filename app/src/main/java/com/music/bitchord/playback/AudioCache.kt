@@ -1220,6 +1220,7 @@ object AudioCache {
         // typically a good deal closer than googlevideo anyway.
         //
         val videoIds = mediaIds.filter { SourceRegistry.parseTrackKey(it) == null }
+            .filterNot(com.music.bitchord.data.navidrome.NavidromeSettings::isNavidromeId) // fork: streams from its own server
             // A track already on disk needs no reading ahead, and read-ahead
             // speaks only to googlevideo: warming one would spend mobile data
             // fetching a second copy of a file the listener deliberately saved,

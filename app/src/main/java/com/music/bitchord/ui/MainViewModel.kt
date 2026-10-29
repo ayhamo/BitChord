@@ -112,7 +112,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val signedIn: StateFlow<Boolean> = _signedIn.asStateFlow()
 
     private val _home = MutableStateFlow<UiState<List<HomeShelf>>>(UiState.Loading)
-    val home: StateFlow<UiState<List<HomeShelf>>> = _home.asStateFlow()
+    // fork: Navidrome album shelves above YouTube's feed
+    val home: StateFlow<UiState<List<HomeShelf>>> =
+        com.music.bitchord.data.navidrome.NavidromeHome.onTop(_home, viewModelScope)
 
     /**
      * Token for the next page of Home shelves; null once there's nothing
@@ -1467,13 +1469,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 reloadRemoteDetail(com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID)
             }
         }
-        viewModelScope.launch { // fork: the Navidrome page follows its server settings
+        viewModelScope.launch { // fork: the Navidrome page and Home shelves follow its server settings
             combine(
                 com.music.bitchord.data.navidrome.NavidromeSettings.url,
                 com.music.bitchord.data.navidrome.NavidromeSettings.username,
                 com.music.bitchord.data.navidrome.NavidromeSettings.password,
             ) { url, user, password -> Triple(url, user, password) }.drop(1).collect {
                 reloadRemoteDetail(com.music.bitchord.data.navidrome.NavidromeSettings.BROWSE_ID)
+                launch { com.music.bitchord.data.navidrome.NavidromeHome.load(getApplication()) }
             }
         }
         viewModelScope.launch {
@@ -1665,6 +1668,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // one at the tail.
         _homePendingShelves.value = 1 + YtMusicRepository.HOME_SUPPLEMENT_BROWSE_IDS.size
         viewModelScope.launch {
+            launch { com.music.bitchord.data.navidrome.NavidromeHome.load(getApplication()) } // fork
             launch {
                 try {
                     YtMusicRepository.home()
@@ -1741,6 +1745,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Refreshes the core feed without blanking the current Play page first. */
     private suspend fun refreshHome(identity: String?) = coroutineScope {
+        launch { com.music.bitchord.data.navidrome.NavidromeHome.load(getApplication()) } // fork
         val recent = if (_signedIn.value) async { YtMusicRepository.homeRecentlyPlayed() } else null
         YtMusicRepository.home().onSuccess { feed ->
             if (identity != listenerKey()) return@onSuccess

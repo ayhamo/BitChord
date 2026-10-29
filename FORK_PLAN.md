@@ -56,6 +56,12 @@ Later in this phase, if wanted: `NavidromeSource : MusicSource` so Navidrome res
 - Add a Navidrome lyrics source: `getLyricsBySongId` (synced) when the server reports the `songLyrics` extension, else `getLyrics`. Tried first for Navidrome songs, then the existing chain.
 - Done: `NavidromeLyrics`, reached through `EmbeddedLyrics.forUri`. Only timed lyrics are used; plain text from the server (and `getLyrics`, which is plain only) falls through to the online sources so they can find a synced copy. My library's files carry plain lyrics at most (e.g. "Born to Rise": 98 unsynced lines), so on the device the online chain still answers.
 
+## Phase 3b: Navidrome without YouTube side effects, Home shelves
+
+- Done: no YouTube read-ahead, links or radio for Navidrome songs; AutoPlay after one comes from the library (`getSimilarSongs2`, else `getRandomSongs`).
+- Done: Navidrome album shelves on top of Home, YouTube's feed below. Not done: a setting to hide them.
+- Later (YouTube side, after Navidrome is solid): Explore, and the same fixes for WebDAV/SMB songs if wanted.
+
 ## Phase 4: covers
 
 - Animated covers: add Coil's animated decoder (`coil-gif`, `AnimatedImageDecoder` on API 28+, minSdk is 26). Animate at player sizes only; keep list thumbnails still.

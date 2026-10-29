@@ -8,6 +8,10 @@
     <string name="navidrome_description">Play your Navidrome server: albums and artists from your tags, each song\'s own cover, and the original files.</string>
     <string name="navidrome_server_url_hint">https://music.example.com</string>
     <string name="navidrome_test_failed">Couldn’t reach it: %1$s</string>
+    <string name="navidrome_home_newest">Recently added</string>
+    <string name="navidrome_home_recent">Recently played</string>
+    <string name="navidrome_home_frequent">Most played</string>
+    <string name="navidrome_home_random">Random albums</string>
     <string name="fork_crossfade_on_skip">Crossfade on skip</string>
     <string name="fork_crossfade_on_skip_subtitle">Next and Previous blend into the new track too</string>
 </resources>

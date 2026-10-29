@@ -56,13 +56,7 @@ object NavidromeLyrics {
     suspend fun forSong(songId: String): List<LyricLine>? = lock.withLock {
         // Under the lock, so the second of two callers for one song gets the first one's answer.
         answers[songId]?.let { return@withLock it.ifEmpty { null } }
-        val client = NavidromeClient(
-            NavidromeSettings.url.value,
-            NavidromeSettings.username.value,
-            NavidromeSettings.password.value,
-            NavidromeSettings.salt,
-        )
-        val rows = runCatching { client.lyricsBySongId(songId) }
+        val rows = runCatching { NavidromeRepository.client().lyricsBySongId(songId) }
             .onFailure { Log.d(TAG, "lyrics for $songId: ${it.message}") }
             // Not remembered: a dropped connection isn't an answer.
             .getOrElse { return@withLock null }

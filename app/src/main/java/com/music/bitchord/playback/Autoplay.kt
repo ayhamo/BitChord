@@ -101,8 +101,13 @@ suspend fun loadAutoplayTracks(
     seedSong: Song,
     limit: Int = MAX_QUEUED_AUTOPLAY,
 ): Result<List<Song>> {
-    val seed = youtubeSeedFor(seedSong) ?: return Result.success(emptyList())
-    val related = YtMusicRepository.radio(seed).getOrElse { return Result.failure(it) }
+    // fork: a Navidrome song's AutoPlay comes from the same library, not a YouTube radio
+    val related = if (com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(seedSong.videoId)) {
+        com.music.bitchord.data.navidrome.NavidromeRepository.related(seedSong).getOrElse { return Result.failure(it) }
+    } else {
+        val seed = youtubeSeedFor(seedSong) ?: return Result.success(emptyList())
+        YtMusicRepository.radio(seed).getOrElse { return Result.failure(it) }
+    }
     val extra = QueueBuilder.extend(existing, related, limit)
     if (extra.isEmpty()) return Result.success(emptyList())
 

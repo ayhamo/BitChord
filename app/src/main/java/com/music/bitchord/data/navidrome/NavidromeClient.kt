@@ -68,8 +68,44 @@ class NavidromeClient(
             "artistCount" to "0",
             "albumCount" to "0",
         )
-        val songs = result["searchResult3"]?.jsonObject?.get("song") ?: return emptyList()
-        return (songs as? JsonArray ?: JsonArray(listOf(songs))).mapNotNull { it.toSongRow() }
+        return songRows(result["searchResult3"]?.jsonObject?.get("song"))
+    }
+
+    /** Songs the server's agents (Last.fm and the like) call similar; empty when it has none configured. */
+    suspend fun similarSongs(id: String, count: Int): List<SongRow> {
+        val result = call("getSimilarSongs2", "id" to id, "count" to count.toString())
+        return songRows(result["similarSongs2"]?.jsonObject?.get("song"))
+    }
+
+    suspend fun randomSongs(count: Int): List<SongRow> {
+        val result = call("getRandomSongs", "size" to count.toString())
+        return songRows(result["randomSongs"]?.jsonObject?.get("song"))
+    }
+
+    /** One album card: [name] is the album tag the library's own album pages group by. */
+    data class AlbumRow(val id: String, val name: String, val artist: String?, val coverArt: String?)
+
+    /** `getAlbumList2` of [type] (`newest`, `recent`, `frequent`, `random`, …). */
+    suspend fun albums(type: String, size: Int): List<AlbumRow> {
+        val result = call("getAlbumList2", "type" to type, "size" to size.toString())
+        return asList(result["albumList2"]?.jsonObject?.get("album")).mapNotNull { element ->
+            val o = element as? JsonObject ?: return@mapNotNull null
+            AlbumRow(
+                id = o.string("id") ?: return@mapNotNull null,
+                name = o.string("name") ?: return@mapNotNull null,
+                artist = o.string("artist"),
+                coverArt = o.string("coverArt"),
+            )
+        }
+    }
+
+    private fun songRows(element: JsonElement?): List<SongRow> = asList(element).mapNotNull { it.toSongRow() }
+
+    /** Subsonic JSON writes a one-item list as the bare object; null or missing is empty. */
+    private fun asList(element: JsonElement?): List<JsonElement> = when (element) {
+        null -> emptyList()
+        is JsonArray -> element
+        else -> listOf(element)
     }
 
     /** One `structuredLyrics` entry: a language's lines, timed or not ([offsetMs] already in the server's sign). */
