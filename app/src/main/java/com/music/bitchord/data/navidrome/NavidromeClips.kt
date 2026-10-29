@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.canvas.CanvasArtwork
+import com.music.bitchord.data.canvas.CanvasSource
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.fork.ForkSettings
 import kotlinx.coroutines.Dispatchers
@@ -31,9 +32,11 @@ import java.util.concurrent.ConcurrentHashMap
  * at `/rest/x-clip/<folder>/<clip name>` behind Navidrome's own login
  * (`X-ND-Authorization: Bearer <token>`).
  *
- * BitChord has one place for a clip: the canvas, which plays over the sleeve.
- * So the cover clip is tried first (it is made for that square), then the
- * backdrop, each behind its own switch ([ForkSettings][com.music.bitchord.fork.ForkSettings]).
+ * BitChord plays one clip at a time, the canvas. A backdrop (9:16, made as a
+ * phone background) is handed over as [CanvasSource.BACKDROP], which the player
+ * presents like Spotify's Canvas: full screen, the cover back on top while
+ * paused. Without one, the cover clip plays over the sleeve. Each has its own
+ * switch ([ForkSettings][com.music.bitchord.fork.ForkSettings]).
  * The clip is handed to the player as an ordinary canvas ([CanvasArtwork]),
  * tried before the catalogue searches, so it plays through BitChord's canvas
  * player (the still cover first, the clip fading in once it draws, paused in
@@ -84,9 +87,18 @@ object NavidromeClips {
     suspend fun canvasFor(song: Song): CanvasArtwork? = withContext(Dispatchers.IO) {
         if (!NavidromeSettings.isNavidromeId(song.videoId) || !NavidromeSettings.isConfigured()) return@withContext null
         val id = song.videoId.removePrefix(NavidromeSettings.ID_PREFIX)
-        if (!ForkSettings.coverClips.value) return@withContext null
-        val url = clip(id, Kind.COVER) ?: return@withContext null
-        CanvasArtwork(url = url, title = song.title, artist = song.artist, album = song.albumName)
+        // A backdrop takes the whole phone (the Canvas presentation, cover back on top while
+        // paused); without one, the cover clip plays over the sleeve. One clip plays at a time.
+        val backdrop = if (ForkSettings.backdropClips.value) clip(id, Kind.BACKDROP) else null
+        val url = backdrop ?: (if (ForkSettings.coverClips.value) clip(id, Kind.COVER) else null)
+            ?: return@withContext null
+        CanvasArtwork(
+            url = url,
+            title = song.title,
+            artist = song.artist,
+            album = song.albumName,
+            source = if (backdrop != null) CanvasSource.BACKDROP else CanvasSource.OTHER,
+        )
     }
 
     private fun clip(id: String, kind: Kind): String? {

@@ -1220,7 +1220,7 @@ fun NowPlayingScreen(
     // ignored [fullBleedArt] entirely, so turning the setting off still left a
     // clip running the full screen. CanvasArtworkPlayer masks itself on every
     // API level now, and both layers answer to this.
-    val spotifyCanvasOnPhone = canvas?.source == CanvasSource.SPOTIFY &&
+    val spotifyCanvasOnPhone = canvas?.source?.fillsPhone == true && // fork: was == SPOTIFY
         playerFillsWindow(windowWidth)
     // Spotify Canvas is the player background on a phone, independent of the
     // still-art full-bleed preference. Other providers and static artwork keep
@@ -1272,7 +1272,7 @@ fun NowPlayingScreen(
     // clip goes, rather than a frame later with no artwork anywhere.
     val heroClip = canvas?.takeIf { heroMode && !collapsePastHalf }
     val spotifyCanvasFullscreen = spotifyCanvasOnPhone &&
-        heroClip?.source == CanvasSource.SPOTIFY
+        heroClip?.source?.fillsPhone == true // fork: was == SPOTIFY
     val spotifyCanvasPresentation = spotifyCanvasFullscreen && canvasRendered
     val canvasFirstPortrait = !spotifyCanvasFullscreen &&
         heroClip != null && canvasAspect > 0f && canvasAspect < 1f
@@ -1294,7 +1294,7 @@ fun NowPlayingScreen(
         heroMode && (!(lyricsOpen || queueOpen) || !collapseDone)
     }
     val clipFullscreen = spotifyCanvasOnPhone &&
-        heroClipMounted?.source == CanvasSource.SPOTIFY
+        heroClipMounted?.source?.fillsPhone == true // fork: was == SPOTIFY
     val clipPortrait = !clipFullscreen &&
         heroClipMounted != null && canvasAspect > 0f && canvasAspect < 1f
 
@@ -2310,6 +2310,8 @@ fun NowPlayingScreen(
                             .background(Color.Black),
                     )
                 }
+                // fork: paused, the cover comes back over the full-screen clip
+                ForkPausedCover(visible = spotifyCanvasPresentation && !isPlaying && !lyricsOpen && !queueOpen, artUrl = remoteArt)
 
                 Column(
                     modifier = Modifier

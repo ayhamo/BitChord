@@ -16,7 +16,10 @@ Everything this fork adds lives in new files where possible. This file lists eve
 | `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeHome.kt` | Album shelves (recently added / recent / most played / random) laid over the top of Home |
 | `app/src/test/java/com/music/bitchord/NavidromeLyricsTest.kt` | Lyrics answer → player lines (offset, word stamps, plain text ignored) |
 | `app/src/main/res/values/strings_fork.xml` | Fork strings |
-| `app/src/main/java/com/music/bitchord/fork/ForkSettings.kt` | Fork switches (`bitchord_fork` prefs): crossfade on skip, Navidrome cover clips |
+| `app/src/main/java/com/music/bitchord/fork/ForkSettings.kt` | Fork switches (`bitchord_fork` prefs): crossfade on skip, Navidrome cover clips, backdrop clips, report plays to Navidrome |
+| `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeScrobble.kt` | "Now playing" and finished plays sent to Navidrome (`scrobble`, submission false/true) |
+| `app/src/main/java/com/music/bitchord/ui/screens/ForkSettingsRows.kt` | The fork switches as full settings rows, for the "Fork settings" group |
+| `sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/ForkPausedCover.kt` | The cover drawn back over a full-screen clip while paused |
 | `app/src/main/java/com/music/bitchord/fork/PlayerDecoderNames.kt` | The decoder each ExoPlayer last stood up, so a crossfade handoff can publish it (the Audio Pipeline showed "—" after every crossfade) |
 
 ## Hooks in upstream files
@@ -37,7 +40,10 @@ Everything this fork adds lives in new files where possible. This file lists eve
 | `shared/…/data/model/Models.kt` | `String.artworkAt()`: for a `/rest/getCoverArt` URL, `size=` is set to the asked px (`SUBSONIC_SIZE` regex next to `PARAM_SIZE_HINT`). Rows get small covers, the player a sharp 1200 px. Test in `ModelsTest.subsonicCoverArtTakesTheAskedSize` |
 | `shared/…/data/Http.kt` | `forkInterceptor` property (set by `NavidromeClips.init`) and one `.addInterceptor { … forkInterceptor … }` line after the WebDAV one |
 | `data/canvas/CanvasRepository.kt` | `canvasFor()`: `NavidromeClips.canvasFor(song)` tried first, right after the blank-id guard; no clip falls through to the catalogue searches as before |
-| `ui/screens/SettingsSheet.kt` | "Navidrome cover clips" sub-row (inside `if (animatedCanvas)`) right after the upstream "Animated cover art" (canvas video) row |
+| `ui/screens/SettingsSheet.kt` | "Navidrome cover clips" and "Navidrome backdrop clips" sub-rows (inside a fork `if (animatedCanvas)`) right after the upstream "Animated cover art" (canvas video) row; "Report plays to Navidrome" row after "Account & integrations"; a "Fork settings" `SearchableSettingsGroup` just before Advanced repeating all fork switches |
+| `shared/…/data/canvas/CanvasArtwork.kt` | `CanvasSource`: `BACKDROP` value and `fillsPhone` (SPOTIFY or BACKDROP) |
+| `sharedUi/…/ui/player/NowPlayingScreen.kt` | Three `== CanvasSource.SPOTIFY` checks (`spotifyCanvasOnPhone`, `spotifyCanvasFullscreen`, `clipFullscreen`) read `?.fillsPhone == true`, so a backdrop gets Spotify Canvas's full-screen presentation; `ForkPausedCover(…)` after the Canvas dim box |
+| `playback/PlaybackService.kt` (ListenBrainz) | First line of `submitListenBrainzFinished` / `submitListenBrainzPlayingNow`: `NavidromeScrobble.finished/nowPlaying` |
 | `res/xml/backup_rules.xml`, `res/xml/data_extraction_rules.xml` | Exclude `bitchord_navidrome.xml` and `bitchord_navidrome_plain.xml`, next to the `bitchord_sources` lines |
 
 ## Gotchas

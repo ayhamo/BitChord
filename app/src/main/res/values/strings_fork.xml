@@ -14,6 +14,11 @@
     <string name="navidrome_home_random">Random albums</string>
     <string name="fork_cover_clips">Navidrome cover clips</string>
     <string name="fork_cover_clips_subtitle">A song\'s own cover video from your server plays over its cover</string>
+    <string name="fork_backdrop_clips">Navidrome backdrop clips</string>
+    <string name="fork_backdrop_clips_subtitle">A song\'s backdrop video from your server fills the player; the cover comes back while paused</string>
+    <string name="fork_navidrome_scrobble">Report plays to Navidrome</string>
+    <string name="fork_navidrome_scrobble_subtitle">Your server shows what is playing, and counts songs played to the end</string>
+    <string name="fork_settings">Fork settings</string>
     <string name="fork_crossfade_on_skip">Crossfade on skip</string>
     <string name="fork_crossfade_on_skip_subtitle">Next and Previous blend into the new track too</string>
 </resources>

@@ -7149,6 +7149,7 @@ class PlaybackService : MediaLibraryService() {
      * stays a no-op whenever ListenBrainz is switched off.
      */
     private fun submitListenBrainzFinished(song: Song, startMs: Long, durationMs: Long?) {
+        com.music.bitchord.data.navidrome.NavidromeScrobble.finished(song, startMs, scope) // fork
         val lbEnabled = AppSettings.scrobblingAvailable && AppSettings.listenBrainzEnabled.value
         val lbToken = AppSettings.listenBrainzToken.value
         if (!lbEnabled || lbToken.isBlank()) return
@@ -7160,6 +7161,7 @@ class PlaybackService : MediaLibraryService() {
 
     /** Sends a ListenBrainz "now playing" update for the current track. */
     private fun submitListenBrainzPlayingNow(song: Song, positionMs: Long, durationMs: Long?) {
+        com.music.bitchord.data.navidrome.NavidromeScrobble.nowPlaying(song, scope) // fork
         val lbEnabled = AppSettings.scrobblingAvailable && AppSettings.listenBrainzEnabled.value
         val lbToken = AppSettings.listenBrainzToken.value
         if (!lbEnabled || lbToken.isBlank()) return

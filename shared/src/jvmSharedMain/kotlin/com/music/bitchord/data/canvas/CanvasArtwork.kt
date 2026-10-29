@@ -11,7 +11,16 @@ import java.util.Locale
  * call site for why Spotify's Canvas gets the periodic re-tint and the other
  * three don't.
  */
-enum class CanvasSource { SPOTIFY, OTHER }
+enum class CanvasSource {
+    SPOTIFY,
+    OTHER,
+    /** fork: a 9:16 backdrop from the owner's Navidrome server, presented full screen like [SPOTIFY]. */
+    BACKDROP,
+    ;
+
+    /** fork: drawn as the whole phone background (Spotify's Canvas presentation) rather than over the sleeve. */
+    val fillsPhone: Boolean get() = this == SPOTIFY || this == BACKDROP
+}
 
 /**
  * A looping video that stands in for a track's cover art — what Spotify calls

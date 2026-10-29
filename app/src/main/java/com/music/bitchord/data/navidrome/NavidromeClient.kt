@@ -120,6 +120,22 @@ class NavidromeClient(
     suspend fun lyricsBySongId(id: String): List<LyricsRow> =
         parseLyrics(call("getLyricsBySongId", "id" to id))
 
+    /**
+     * Subsonic `scrobble`: with [submission] false the song shows as playing
+     * now (Navidrome's "Now playing" list); true records a finished play
+     * started at [timeMs], which is what counts it and fills "recently played".
+     */
+    suspend fun scrobble(id: String, submission: Boolean, timeMs: Long? = null) {
+        call(
+            "scrobble",
+            *listOfNotNull(
+                "id" to id,
+                "submission" to submission.toString(),
+                timeMs?.let { "time" to it.toString() },
+            ).toTypedArray(),
+        )
+    }
+
     /** The original file, untouched (`format=raw`): FLAC stays FLAC, Opus stays Opus. */
     fun streamUrl(id: String): String = endpoint("stream", "id" to id, "format" to "raw").toString()
 

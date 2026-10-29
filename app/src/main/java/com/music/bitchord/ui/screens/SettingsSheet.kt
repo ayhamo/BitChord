@@ -422,6 +422,9 @@ fun SettingsScreen(
                     onClick = onAccountScrobbling,
                 )
             }
+            // fork: plays reported to the Navidrome server
+            val navidromeScrobbleTitle = stringResource(R.string.fork_navidrome_scrobble)
+            row(navidromeScrobbleTitle, "navidrome", "scrobbling", "now playing") { ForkNavidromeScrobbleRow() }
             // Sits with the account rather than with Playback: a party is up to
             // five signed-in people, and being signed in is the whole of what
             // the row needs before it will do anything.
@@ -924,6 +927,16 @@ fun SettingsScreen(
                         subtitle = stringResource(R.string.fork_cover_clips_subtitle),
                         checked = coverClips,
                         onCheckedChange = com.music.bitchord.fork.ForkSettings::setCoverClips,
+                    )
+                }
+                val backdropClipsTitle = stringResource(R.string.fork_backdrop_clips)
+                row(backdropClipsTitle, "canvas", "navidrome", "backdrop", "video", divided = false) {
+                    val backdropClips by com.music.bitchord.fork.ForkSettings.backdropClips.collectAsStateWithLifecycle()
+                    SettingsSubRow(
+                        title = backdropClipsTitle,
+                        subtitle = stringResource(R.string.fork_backdrop_clips_subtitle),
+                        checked = backdropClips,
+                        onCheckedChange = com.music.bitchord.fork.ForkSettings::setBackdropClips,
                     )
                 }
             }
@@ -1472,6 +1485,14 @@ fun SettingsScreen(
                     onClick = onAppLanguage,
                 )
             }
+        }
+
+        // fork: every fork switch again in one group (the same settings as their rows above, so they stay in sync)
+        SearchableSettingsGroup(search, header = stringResource(R.string.fork_settings)) {
+            row(stringResource(R.string.fork_crossfade_on_skip), "fork", "fade", "skip") { ForkCrossfadeOnSkipRow() }
+            row(stringResource(R.string.fork_cover_clips), "fork", "navidrome", "cover", "video") { ForkCoverClipsRow() }
+            row(stringResource(R.string.fork_backdrop_clips), "fork", "navidrome", "backdrop", "video") { ForkBackdropClipsRow() }
+            row(stringResource(R.string.fork_navidrome_scrobble), "fork", "navidrome", "scrobbling") { ForkNavidromeScrobbleRow() }
         }
 
         SearchableSettingsGroup(search, header = stringResource(R.string.advanced_options)) {

@@ -74,12 +74,13 @@ Later in this phase, if wanted: `NavidromeSource : MusicSource` so Navidrome res
 - `NavidromeClipCanvas`: first provider in `canvasFor()` for Navidrome songs. Fetches `/rest/x-clip/<folder>/<file>.background.mp4` with the `X-ND-Authorization` JWT (from Navidrome `/auth/login`).
 - Reuse BitChord's canvas cache and player instead of building our own.
 - `NavidromeClips` (login, path lookup, x-clip URLs, miss notes) is done and serves the cover clips.
-- Open: `.background.mp4` backdrops need their own layer behind the player (BitChord has none; its only full-screen video is Spotify's Canvas, which replaces the cover). Not started; approach to decide.
+- Done: `.background.mp4` backdrops (9:16) use upstream's Spotify Canvas presentation on phones (full screen, controls fade after 5 s), with the cover drawn back on top while paused. A song with a backdrop shows it instead of its cover clip (one clip plays at a time). On wide windows (tablets, the emulator at 320 dpi) upstream keeps clips in the sleeve.
 
 ## Phase 6: smaller extras
 
 - Reverse album order (`#` header, remembered per album).
 - Scrobble plays to Navidrome (`scrobble` endpoint), star/unstar sync, Navidrome playlists.
+- Done: scrobbling ("Report plays to Navidrome", on by default). All fork switches are also in a "Fork settings" group before Advanced.
 - Skipped: Discord covers (BitChord already has its own Discord presence; check later), "big albums open faster" (probably not needed on Android).
 
 ## Phase 7: updates + CI
