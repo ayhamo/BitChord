@@ -167,7 +167,8 @@ jobs:
             echo
             gh release view "$TAG" -R "$UPSTREAM" --json body -q .body || true
           } > notes.md
-          gh release create "$release" out/* --target "$GITHUB_SHA" --title "BitChord $VERSION (my fork)" --notes-file notes.md
+          # -R: on a fork gh defaults to the parent repository, which refuses (HTTP 403)
+          gh release create "$release" out/* -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "BitChord $VERSION (my fork)" --notes-file notes.md
 
       - name: open an issue when the run fails
         if: failure()
@@ -176,4 +177,5 @@ jobs:
         run: |
           gh issue create -R "$GITHUB_REPOSITORY" \
             --title "Fork sync failed for upstream $TAG" \
-            --body "Merging or building upstream $TAG failed: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID. Nothing was published. Merge it by hand (see FORK.md), push, and run the workflow again."
+            --body "Merging or building upstream $TAG failed: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID. Nothing was published. Merge it by hand (see FORK.md), push, and run the workflow again." \
+            || echo "No issue opened (issues are off on this repository); GitHub's failure email still goes out."
