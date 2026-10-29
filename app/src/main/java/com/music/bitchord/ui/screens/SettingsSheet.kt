@@ -925,6 +925,16 @@ fun SettingsScreen(
             }
             // fork: Navidrome cover clips, which play through the canvas switched on above
             if (animatedCanvas) {
+                val animatedCoversTitle = stringResource(R.string.fork_animated_covers)
+                row(animatedCoversTitle, "canvas", "apple", "animated", "cover", "video", divided = false) {
+                    val animatedCovers by com.music.bitchord.fork.ForkSettings.animatedCovers.collectAsStateWithLifecycle()
+                    SettingsSubRow(
+                        title = animatedCoversTitle,
+                        subtitle = stringResource(R.string.fork_animated_covers_subtitle),
+                        checked = animatedCovers,
+                        onCheckedChange = com.music.bitchord.fork.ForkSettings::setAnimatedCovers,
+                    )
+                }
                 val coverClipsTitle = stringResource(R.string.fork_cover_clips)
                 row(coverClipsTitle, "canvas", "navidrome", "cover", "video", divided = false) {
                     val coverClips by com.music.bitchord.fork.ForkSettings.coverClips.collectAsStateWithLifecycle()
@@ -1501,6 +1511,7 @@ fun SettingsScreen(
         // fork: every fork switch again in one group (the same settings as their rows above, so they stay in sync)
         SearchableSettingsGroup(search, header = stringResource(R.string.fork_settings)) {
             row(stringResource(R.string.fork_crossfade_on_skip), "fork", "fade", "skip") { ForkCrossfadeOnSkipRow() }
+            row(stringResource(R.string.fork_animated_covers), "fork", "apple", "animated", "cover") { ForkAnimatedCoversRow() }
             row(stringResource(R.string.fork_cover_clips), "fork", "navidrome", "cover", "video") { ForkCoverClipsRow() }
             row(stringResource(R.string.fork_backdrop_clips), "fork", "navidrome", "backdrop", "video") { ForkBackdropClipsRow() }
             row(stringResource(R.string.fork_navidrome_scrobble), "fork", "navidrome", "scrobbling") { ForkNavidromeScrobbleRow() }

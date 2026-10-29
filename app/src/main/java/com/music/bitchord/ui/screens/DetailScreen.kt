@@ -459,7 +459,8 @@ fun DetailScreen(
     // Animated cover art on the header, the same feature the player has.
     // Albums only: a playlist's artwork is a collage and an artist page's is a
     // photograph, and neither is something a label publishes a canvas for.
-    val canvasEnabled by AppSettings.animatedCanvas.collectAsStateWithLifecycle()
+    val canvasEnabled = AppSettings.animatedCanvas.collectAsStateWithLifecycle().value &&
+        com.music.bitchord.ui.player.ForkCanvasSwitch.covers.collectAsStateWithLifecycle().value // fork: && "Animated covers" (Apple Music and the other services)
     val prioritizeSpotifyCanvas by AppSettings.prioritizeSpotifyCanvas.collectAsStateWithLifecycle()
     // The credit line the header shows is the artist as far as the catalogue
     // services are concerned. A browse card's subtitle sometimes omits it, in
@@ -476,7 +477,7 @@ fun DetailScreen(
         // As on the player: the credit fills in once the tracks load, so this
         // can run twice. Keep a clip that is already playing if the second
         // pass comes back empty.
-        canvas = CanvasRepository.canvasForAlbum(page.title, credit, noSpotify = page.browseId.startsWith(com.music.bitchord.data.navidrome.NavidromeAlbums.PREFIX)) ?: canvas // fork: noSpotify
+        canvas = CanvasRepository.canvasForAlbum(page.title, credit) ?: canvas
     }
     // An artist's clip comes with the same Apple lookup as its photograph.
     val artistVideo = appleArt?.videoUrl

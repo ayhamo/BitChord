@@ -307,3 +307,12 @@ private fun ForkOfflineStorageDialog(
         },
     )
 }
+
+@Composable
+internal fun ForkAnimatedCoversRow() = ForkSwitchRow(
+    icon = Icons.Rounded.Animation,
+    title = stringResource(R.string.fork_animated_covers),
+    subtitle = stringResource(R.string.fork_animated_covers_subtitle),
+    state = ForkSettings.animatedCovers,
+    onChange = ForkSettings::setAnimatedCovers,
+)

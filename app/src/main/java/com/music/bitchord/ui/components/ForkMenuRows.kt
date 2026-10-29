@@ -7,6 +7,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.rounded.Wallpaper
+import androidx.compose.material.icons.rounded.Animation
 import androidx.compose.material.icons.rounded.DownloadForOffline
 import androidx.compose.material.icons.rounded.Downloading
 import androidx.compose.material.icons.rounded.OfflinePin
@@ -187,4 +188,21 @@ private fun ForkSavedQueuesDialog(
             }
         },
     )
+}
+
+/**
+ * Fork: "Animated covers" in the player's song menu, the online services'
+ * moving cover art (Apple Music's tall full-picture ones among them), the
+ * same global [ForkSettings.animatedCovers] as the Settings rows. Off, songs
+ * show their still cover unless the server has a clip of its own.
+ */
+@Composable
+internal fun ForkAnimatedCoversMenuRow(accent: Color) {
+    val on by ForkSettings.animatedCovers.collectAsStateWithLifecycle()
+    ActionRow(
+        icon = Icons.Rounded.Animation,
+        label = stringResource(R.string.fork_animated_covers),
+        value = stringResource(if (on) R.string.fork_on else R.string.fork_off),
+        accent = accent,
+    ) { ForkSettings.setAnimatedCovers(!on) }
 }

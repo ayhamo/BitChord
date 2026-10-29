@@ -25,6 +25,7 @@ object ForkSettings {
 
     private val _coverClips = MutableStateFlow(true)
     private val _backdropClips = com.music.bitchord.ui.player.ForkCanvasSwitch.backdrops // the player reads it live
+    private val _animatedCovers = com.music.bitchord.ui.player.ForkCanvasSwitch.covers // the player and album pages read it live
     private val _navidromeScrobble = MutableStateFlow(true)
     private val _navidromeHomeShelves = MutableStateFlow(true)
     private val _clipCacheMb = MutableStateFlow(DEFAULT_CLIP_CACHE_MB)
@@ -38,6 +39,9 @@ object ForkSettings {
 
     /** A Navidrome song's `.background.mp4` plays full screen; see `NavidromeClips`. */
     val backdropClips: StateFlow<Boolean> = _backdropClips.asStateFlow()
+
+    /** Animated covers from the online services (Apple Music etc.); separate from the Navidrome backdrops. See `ForkCanvasSwitch.covers`. */
+    val animatedCovers: StateFlow<Boolean> = _animatedCovers.asStateFlow()
 
     /** "Now playing" and finished plays are reported to Navidrome; see `NavidromeScrobble`. */
     val navidromeScrobble: StateFlow<Boolean> = _navidromeScrobble.asStateFlow()
@@ -65,6 +69,7 @@ object ForkSettings {
         _crossfadeOnSkip.value = prefs.getBoolean(KEY_CROSSFADE_ON_SKIP, true)
         _coverClips.value = prefs.getBoolean(KEY_COVER_CLIPS, true)
         _backdropClips.value = prefs.getBoolean(KEY_BACKDROP_CLIPS, true)
+        _animatedCovers.value = prefs.getBoolean(KEY_ANIMATED_COVERS, true)
         _navidromeScrobble.value = prefs.getBoolean(KEY_NAVIDROME_SCROBBLE, true)
         _navidromeHomeShelves.value = prefs.getBoolean(KEY_NAVIDROME_HOME_SHELVES, true)
         _clipCacheMb.value = prefs.getInt(KEY_CLIP_CACHE_MB, DEFAULT_CLIP_CACHE_MB)
@@ -92,6 +97,11 @@ object ForkSettings {
     fun setBackdropClips(value: Boolean) {
         _backdropClips.value = value
         prefs.edit().putBoolean(KEY_BACKDROP_CLIPS, value).apply()
+    }
+
+    fun setAnimatedCovers(value: Boolean) {
+        _animatedCovers.value = value
+        prefs.edit().putBoolean(KEY_ANIMATED_COVERS, value).apply()
     }
 
     fun setNavidromeScrobble(value: Boolean) {
@@ -138,6 +148,7 @@ object ForkSettings {
     private const val KEY_CROSSFADE_ON_SKIP = "crossfade_on_skip"
     private const val KEY_COVER_CLIPS = "cover_clips"
     private const val KEY_BACKDROP_CLIPS = "backdrop_clips"
+    private const val KEY_ANIMATED_COVERS = "animated_covers"
     private const val KEY_NAVIDROME_SCROBBLE = "navidrome_scrobble"
     private const val KEY_NAVIDROME_HOME_SHELVES = "navidrome_home_shelves"
     private const val KEY_CANVAS_MANUAL_SET = "canvas_manual_set"

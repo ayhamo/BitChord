@@ -1641,6 +1641,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun openMoodGenre(item: MoodGenre) {
+        if (com.music.bitchord.fork.ForkSpotifyMixes.isMix(item.browseId)) { // fork: a Spotify mix tile opens as its playlist page
+            openDetail(item.browseId, item.title, "Spotify", item.thumbnailUrl, BrowseType.PLAYLIST)
+            return
+        }
         if (com.music.bitchord.data.navidrome.NavidromeGenres.isGenre(item.browseId)) { // fork: a Navidrome genre tile opens its songs
             openDetail(item.browseId, item.title, "Navidrome", item.thumbnailUrl, BrowseType.PLAYLIST)
             return

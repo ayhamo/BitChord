@@ -808,7 +808,9 @@ fun NowPlayingScreen(
     // track" check lives.
     val spotifyCanvasAutoHide by PlayerSettings.spotifyCanvasAutoHide.collectAsStateWithLifecycle()
     val mixing by PlayerSettings.smartMixInProgress.collectAsStateWithLifecycle()
-    val canvas = forkCanvas(rememberCanvasArtwork(song), playerFillsWindow(windowWidth), windowWidth, windowHeight) // fork: backdrop switch, no backdrop in the sleeve
+    val forkRawCanvas = rememberCanvasArtwork(song) // fork
+    val canvas = forkCanvas(forkRawCanvas, playerFillsWindow(windowWidth), windowWidth, windowHeight) // fork: backdrop switch, no backdrop in the sleeve
+    val forkLandscapeClip = forkLandscapeBackdrop(forkRawCanvas) // fork: landscape backdrop
     var canvasAspect by remember(canvas) { mutableFloatStateOf(0f) }
     // Whether the clip actually has a frame on screen right now, and one of
     // them — used to blow the sleeve out to the full-bleed hero treatment and
@@ -1800,13 +1802,14 @@ fun NowPlayingScreen(
                         // The whole screen is the sheets' frost source: there is
                         // no full-bleed banner here to be it instead.
                         fullArtworkBlurContent(backgroundModifier.hazeSource(playerHaze))
+                        forkLandscapeClip?.let { ForkLandscapeBackdrop(it, isPlaying, dockMoving, dimmed = lyricsOpen || queueOpen, modifier = backgroundModifier) } // fork
                     },
                     artwork = { artworkModifier ->
                         LandscapeArtwork(
                             artRequest = art.request,
                             artLoaded = art.loaded,
                             onArtState = art::onState,
-                            canvas = canvas,
+                            canvas = if (forkLandscapeClip != null) null else canvas, // fork: the still cover beside a landscape backdrop
                             canvasRendered = canvasRendered,
                             isPlaying = isPlaying,
                             onCanvasRenderedChange = { canvasRendered = it },

@@ -57,6 +57,9 @@ object NavidromeHome {
      * rather than blanking it; one that is no longer configured clears them.
      */
     suspend fun load(context: Context) = lock.withLock {
+        // The Spotify mixes load with Home too, server or not (they have their own section).
+        spotifyTitle = context.getString(R.string.fork_spotify_mixes)
+        runCatching { com.music.bitchord.fork.ForkSpotifyMixes.load() }.onFailure { Log.d(TAG, "spotify mixes: ${it.message}") }
         if (!NavidromeSettings.isConfigured()) {
             shelves.value = emptyList()
             ForkLibraryPlaylists.shelves.value = emptyList()
@@ -101,22 +104,30 @@ object NavidromeHome {
         NavidromeOffline.syncPlaylists() // kept playlists follow the server
     }
 
-    /** [youtube]'s feed with these shelves in front of it. */
+    /** Home's "Made for you" shelf title, set as Home loads. */
+    @Volatile private var spotifyTitle = "Made for you"
+
+    /** [youtube]'s feed with these shelves, then the Spotify mixes, in front of it. */
     fun onTop(
         youtube: StateFlow<UiState<List<HomeShelf>>>,
         scope: CoroutineScope,
     ): StateFlow<UiState<List<HomeShelf>>> =
         combine(
             youtube,
-            shelves,
+            combine(shelves, ForkLibraryPlaylists.offline, ::Pair),
             com.music.bitchord.fork.ForkSettings.navidromeHomeShelves,
             com.music.bitchord.fork.ForkNetwork.offline,
-            ForkLibraryPlaylists.offline,
-        ) { feed, server, shown, offline, kept ->
+            com.music.bitchord.fork.ForkSpotifyMixes.mixes,
+        ) { feed, (server, kept), shown, offline, _ ->
             // Offline mode: what is kept on the phone, in place of the server's shelves.
-            val ours = if (offline) listOfNotNull(kept?.takeIf { it.items.isNotEmpty() }) else server
+            val navidrome = if (!shown) emptyList() else if (offline) listOfNotNull(kept?.takeIf { it.items.isNotEmpty() }) else server
+            val spotify = if (offline) emptyList() else listOfNotNull(com.music.bitchord.fork.ForkSpotifyMixes.shelf(spotifyTitle))
+            val ours = navidrome + spotify
+            // Home's "Navidrome" and "Spotify" sections are the first this many shelves (ForkHome); none, no sections.
+            com.music.bitchord.ui.screens.ForkHome.navidromeShelves.value = navidrome.size
+            com.music.bitchord.ui.screens.ForkHome.spotifyShelves.value = spotify.size
             when {
-                ours.isEmpty() || !shown -> feed
+                ours.isEmpty() -> feed
                 feed is UiState.Success -> UiState.Success(ours + feed.data)
                 // Loading or failed: the library is still worth showing meanwhile.
                 else -> UiState.Success(ours)

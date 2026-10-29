@@ -38,7 +38,10 @@ Everything this fork adds lives in new files where possible. This file lists eve
 | `app/src/main/java/com/music/bitchord/ui/components/ForkMenuRows.kt` | "Backdrop videos" row in the player's song menu; "Available offline" row in an album/playlist sheet |
 | `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeArtists.kt` | Navidrome artist pages from one paged `search3` (exact artist tag), not the whole library |
 | `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeGenres.kt` | The server's genres as Explore tiles (`getGenres`, a `byGenre` album cover each) and genre pages (`getSongsByGenre`, id `local:group:genre:navidrome:<genre>`) |
-| `sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/screens/ForkExplore.kt` | Explore's "YouTube" and "Navidrome" panels, each collapsible |
+| `sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/screens/ForkExplore.kt` | Explore's "YouTube", "Navidrome" (server genres) and "Spotify" (mixes) panels, each collapsible |
+| `sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/screens/ForkHome.kt` | Home in collapsible "Navidrome", "Spotify" and "YouTube" sections (`NavidromeHome.onTop` says how many leading shelves are the server's and Spotify's) |
+| `app/src/main/java/com/music/bitchord/fork/ForkSpotifyMixes.kt` | The signed-in Spotify account's mixes ("Made For You" category via the Web API, plus Spotify-owned playlists in the library) as a Home shelf and Explore tiles; they open as upstream's Spotify playlist page (tracks matched to YouTube) |
+| `sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/ForkLandscapeBackdrop.kt` | Landscape backdrop: the clip on the right behind the controls, the screen a blur of it (frames read back once a second), the cover kept on the left; two layouts behind `FORK_LANDSCAPE_STYLE` (delete the unused branch once chosen) |
 | `sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/ForkBackdropIntro.kt` | A full-screen clip waits 2.5 s on a new track (the cover is seen first) and then fades in over 1.2 s; not again for the same track |
 | `app/src/main/java/com/music/bitchord/fork/ForkNetwork.kt` | The network for the offline features: Wi-Fi (unmetered) always, mobile data only with "Download over mobile data"; offline mode (switch, or no network) |
 | `app/src/main/java/com/music/bitchord/fork/ForkOfflineService.kt` | Foreground service (dataSync) keeping "Available offline" downloads going in the background, with a progress notification and Cancel |
@@ -79,8 +82,6 @@ Everything this fork adds lives in new files where possible. This file lists eve
 | `data/settings/AppSettings.kt`, `ui/screens/DetailScreen.kt`, `MainActivity.kt` | `SongSort.REVERSED` ("Reverse order", psysonic's reverse #): enum value after DEFAULT, `asReversed()` in `sortedForDetail`, label in `localizedLabel` |
 | `sharedUi/…/ui/components/Common.kt` | Track number `Text`: `softWrap = false` + `wrapContentWidth(unbounded = true)` (+ import), so 3-digit numbers aren't cut to 2 |
 | `ui/MainViewModel.kt` (albums) | `localPageState()`: `NavidromeAlbums.pageState(…)` after the playlists line; `openDetail()`: after `localPageState`, `NavidromeAlbums.header(browseId)` sets `artwork`/`credit` |
-| `data/canvas/CanvasRepository.kt` (no Spotify) | `canvasFor()`: both accept lambdas reject `SPOTIFY` for Navidrome songs (+ `isNavidrome` import); `canvasForAlbum()` takes `noSpotify` (in its cache key, accept lambdas) |
-| `ui/screens/DetailScreen.kt` | Album header canvas: `noSpotify` for Navidrome album pages |
 | `shared/…/data/canvas/CanvasArtwork.kt` | `sleeveUrl` field (a backdrop's cover clip) |
 | `sharedUi/…/NowPlayingScreen.kt` (sleeve) | `rememberCanvasArtwork(song).forkInSleeve(playerFillsWindow(windowWidth))`; `ForkPausedCover(…)`: the cover back over the full-screen clip while paused |
 | `shared/…/data/SongInfoRepository.kt` | First line of `load()`: `ForkSongInfo.provider` |
@@ -100,7 +101,7 @@ Everything this fork adds lives in new files where possible. This file lists eve
 | `data/canvas/CanvasCache.kt` | `cache` is `internal`; evictor is `ForkClipCache.evictor` |
 | `data/innertube/PlaybackTracker.kt` | First line of `onPlaying`: `ForkYouTubeHistory.intercept`; first line of `onProgress`: maps a Navidrome id to its YouTube match |
 | `ui/screens/SettingsSheet.kt` (caches, history) | Clip cache size + clear backdrops + clear cover clips rows after "Clear image cache"; "Navidrome plays in YouTube history" after "Navidrome on Home"; all again in Fork settings |
-| `ui/MainViewModel.kt` (artists, genres) | `localPageState()`: `NavidromeArtists.pageState` and `NavidromeGenres.pageState` after the albums line; `openMoodGenre()`: first block opens a Navidrome genre tile as a page |
+| `ui/MainViewModel.kt` (artists, genres, mixes) | `localPageState()`: `NavidromeArtists.pageState` and `NavidromeGenres.pageState` after the albums line; `openMoodGenre()`: first block opens a Navidrome genre tile as a page; `openMoodGenre()`: a Spotify mix tile opens as its playlist page |
 | `sharedUi/…/ui/screens/ExploreScreen.kt` | `val fork = rememberForkExplore()`; `forkYouTubeHeading(fork)` and `if (!fork.panels \|\| fork.youtubeOpen)` before `when (state)`; `forkNavidromePanel(…)` after it (reusing `MoodGenreRow`) |
 | `shared/…/data/innertube/StreamResolver.kt` | `signatureTimestamp()`: `init` (NewPipe) before use; upstream relied on a YouTube stream having been resolved first, so with only Navidrome songs played the YouTube history could never register (upstream bug, worth sending upstream) |
 | `ui/screens/SettingsSheet.kt` (shelves) | "Navidrome on Home" row after "Report plays to Navidrome", and again in Fork settings |
@@ -120,6 +121,13 @@ Everything this fork adds lives in new files where possible. This file lists eve
 | `MainActivity.kt` (saved queues) | `ForkQueues.bind(controller, scope) { … playFrom(…) }` right after `playFrom()` |
 | `ui/components/SongActionsSheet.kt` (saved queues) | `ForkSavedQueuesRow(…)` after the backdrop row, player menu only |
 | `ui/components/SongActionsSheet.kt` (radio) | "Start radio" hidden for a `radio:` station |
+| `ui/player/CanvasArtworkPlayer.kt` (pause) | `playWhenReady` also needs `isPlaying` (and it is a key of that `LaunchedEffect`): a clip freezes on its frame while the music is paused (upstream kept it looping). Album headers pass `true`, unaffected |
+| `ui/screens/DetailScreen.kt` (animated covers) | `canvasEnabled` is also gated on `ForkCanvasSwitch.covers` ("Animated covers"), for album and artist headers |
+| `ui/components/SongActionsSheet.kt` (animated covers) | `ForkAnimatedCoversMenuRow(…)` after the backdrop row, player menu, not for radio stations |
+| `ui/screens/SettingsSheet.kt` (animated covers) | "Animated covers" sub-row first under "Animated cover art", and again in Fork settings |
+| `sharedUi/…/ui/screens/HomeScreen.kt` | `forkHome = rememberForkHome()`; the shelf call wrapped in a local `shelves(…)` and drawn per `ForkHome` section; `itemsIndexedShelves` takes a `keyPrefix` (the sections share one list) |
+| `sharedUi/…/NowPlayingScreen.kt` (landscape backdrop) | `forkRawCanvas` line before `canvas`, and `forkLandscapeClip` after it; landscape `background` slot draws `ForkLandscapeBackdrop(…)` after the blur; landscape sleeve gets `null` for its clip while a backdrop plays beside it |
+| `README.md` | A "This fork" note and "What this fork adds" section above upstream's header (a likely but easy merge conflict when upstream edits its top) |
 
 ## Gotchas
 

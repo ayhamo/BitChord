@@ -364,6 +364,7 @@ fun SongActionsSheet(
             ) { pickingSleepTimer = true }
         }
         if (showSleepTimer && com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(song.videoId)) ForkBackdropMenuRow(palette.accent) // fork
+        if (showSleepTimer && !com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(song.videoId)) ForkAnimatedCoversMenuRow(palette.accent) // fork: online animated covers
         if (showSleepTimer) ForkSavedQueuesRow(palette.accent) // fork: saved queues
         // Deliberately outside the online-only block below. Local files and
         // completed downloads use the same player lyric clock (including

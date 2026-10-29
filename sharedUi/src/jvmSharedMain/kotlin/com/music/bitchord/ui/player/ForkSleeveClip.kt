@@ -15,6 +15,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
  */
 object ForkCanvasSwitch {
     val backdrops = MutableStateFlow(true)
+
+    /**
+     * "Animated covers": the animated art the online services have for a song
+     * or album (Apple Music's motion covers, some of them the tall full-picture
+     * kind, and Tidal's, the community's and Spotify's). Separate from
+     * [backdrops], which is the Navidrome server's own clips. `ForkSettings`
+     * persists it.
+     */
+    val covers = MutableStateFlow(true)
 }
 
 /**
@@ -24,14 +33,22 @@ object ForkCanvasSwitch {
  * plays only where it can fill the screen ([forkFillsScreen]) and while the
  * backdrop switch is on; otherwise the song's square cover clip plays in the
  * sleeve ([CanvasArtwork.sleeveUrl]), or, without one, the still cover. A
- * backdrop never plays cropped in the cover square. Read live, so flipping the
- * switch mid-song changes the player at once.
+ * backdrop never plays cropped in the cover square.
+ *
+ * A clip from an online service (anything not on the server's x-clip route)
+ * plays only while "Animated covers" is on. Both read live, so flipping either
+ * mid-song changes the player at once.
  */
 @Composable
 internal fun forkCanvas(raw: CanvasArtwork?, phoneWidth: Boolean, windowWidth: Dp, windowHeight: Dp): CanvasArtwork? {
     val backdrops by ForkCanvasSwitch.backdrops.collectAsStateWithLifecycle()
+    val covers by ForkCanvasSwitch.covers.collectAsStateWithLifecycle()
+    if (raw != null && !raw.isServerClip() && !covers) return null
     return raw.forkInSleeve(backdrops && forkFillsScreen(raw, phoneWidth, windowWidth, windowHeight))
 }
+
+/** A clip from the Navidrome server (its x-clip route; kept offline copies keep that address too). */
+private fun CanvasArtwork.isServerClip(): Boolean = "/rest/x-clip/" in url
 
 private fun CanvasArtwork?.forkInSleeve(backdropShown: Boolean): CanvasArtwork? = when {
     this == null || source != CanvasSource.BACKDROP || backdropShown -> this

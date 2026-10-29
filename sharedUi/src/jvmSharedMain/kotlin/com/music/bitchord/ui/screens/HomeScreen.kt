@@ -144,6 +144,7 @@ fun HomeScreen(
     isPlaying: Boolean = false,
 ) {
     val recentsViewType by AppUi.host.homeRecentsViewType.collectAsStateWithLifecycle()
+    val forkHome = rememberForkHome() // fork
 
     PullToRefresh(
         refreshing = refreshing,
@@ -195,13 +196,13 @@ fun HomeScreen(
                     // The loading skeleton already owns the hero slot. Until
                     // Recently Played lands, every real shelf must retain its
                     // compact-card layout instead of briefly becoming a hero.
-                    itemsIndexedShelves(
-                        shelves = state.data,
+                    fun shelves(list: List<HomeShelf>, firstIsHero: Boolean, keyPrefix: String = "") = itemsIndexedShelves( // fork: wrapped for ForkHome's sections
+                        shelves = list,
                         onItemClick = onItemClick,
                         onItemLongPress = onItemLongPress,
                         currentSong = currentSong,
                         isPlaying = isPlaying,
-                        firstIsHero = leadHero && !recentlyPlayedLoading,
+                        firstIsHero = firstIsHero,
                         recentsViewType = recentsViewType,
                         onRecentsViewTypeToggle = {
                             AppUi.host.setHomeRecentsViewType(
@@ -212,7 +213,19 @@ fun HomeScreen(
                                 },
                             )
                         },
+                        keyPrefix = keyPrefix,
                     )
+                    // fork: "Navidrome", "Spotify" and "YouTube" sections, each folding away (see ForkHome)
+                    val sections = forkHome.sections(state.data)
+                    if (sections == null) {
+                        shelves(state.data, leadHero && !recentlyPlayedLoading)
+                    } else {
+                        sections.forEachIndexed { index, section ->
+                            forkHomeHeading(section)
+                            // Only the first section leads with the big cards; the rest keep ordinary ones.
+                            if (section.open) shelves(section.shelves, index == 0 && leadHero && !recentlyPlayedLoading, section.key + ":")
+                        }
+                    }
                     if (loadingMore) feedMoreSkeleton()
                 }
             }
@@ -252,9 +265,10 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
     firstIsHero: Boolean = true,
     recentsViewType: LibraryViewType,
     onRecentsViewTypeToggle: () -> Unit,
+    keyPrefix: String = "", // fork: two sections of shelves in one list (ForkHome)
 ) {
     shelves.forEachIndexed { index, shelf ->
-        item(key = shelf.title + index) {
+        item(key = keyPrefix + shelf.title + index) { // fork: keyPrefix +
             val openItem: (ShelfItem) -> Unit = { item -> onItemClick(item, shelf.title) }
             if (index == 0 && shelf.title.equals(RECENTS_TITLE, ignoreCase = true)) {
                 RecentShelf(

@@ -9,7 +9,7 @@ Snapshot for picking the work up again. Plan: `FORK_PLAN.md`. Every touched upst
 - Phase 2: crossfade on Next/Previous (the blend lasts as long as the Crossfade slider; switch "Crossfade on skip").
 - Phase 3: timed lyrics from Navidrome first, then the online chain.
 - Phase 3b: no YouTube lookups for Navidrome songs; AutoPlay from the library (similar songs, else random); Navidrome shelves on top of Home (Recently added, Playlists, Recents, Most played, Random albums).
-- Phase 4: covers sized per surface; cover clips (`.cover.mp4`) in the cover square, else Apple/Tidal/Community motion art, else still cover. No Spotify Canvas for Navidrome songs or album pages.
+- Phase 4: covers sized per surface; cover clips (`.cover.mp4`) in the cover square, else Apple/Tidal/Community motion art, else still cover. Spotify Canvas applies to Navidrome songs too (the server's own clips are tried first).
 - Phase 5: backdrops (`.background.mp4`) like Spotify Canvas: full screen on any portrait screen, video sharp (no blur/dim under the controls), controls stay until tapped away (auto-hide off by default), cover back while paused. "Backdrop videos" in the player menu (same switch as Settings) flips video / cover at once. Landscape/wide: cover clip or still cover in the sleeve.
 - Phase 6: plays + "now playing" reported to Navidrome (switch); stars synced with the server; Navidrome playlists; "Reverse order" in every page's sort menu.
 - Album pages from Navidrome: one `getAlbum` instead of the whole library, with the album's own cover and artist (from Home, the library, the player and menus).

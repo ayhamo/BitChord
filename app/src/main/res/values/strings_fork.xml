@@ -33,6 +33,8 @@
     <string name="fork_library_navidrome_playlists">Navidrome playlists</string>
     <string name="fork_library_navidrome_albums">Navidrome albums</string>
     <string name="fork_backdrop_menu">Backdrop videos</string>
+    <string name="fork_animated_covers">Animated covers</string>
+    <string name="fork_animated_covers_subtitle">Moving cover art from Apple Music and other services, some of it the tall full-picture kind. Your server\'s backdrops have their own switch</string>
     <string name="fork_on">On</string>
     <string name="fork_off">Off</string>
     <string name="fork_clip_cache_size">Video clip cache</string>
@@ -74,6 +76,7 @@
     <string name="fork_clear_lyrics">Clear lyrics cache</string>
     <string name="fork_clear_lyrics_subtitle">Navidrome lyrics kept from earlier plays, so they show with no network (%1$s). Lyrics of kept albums stay</string>
     <string name="fork_offline_row">Available offline</string>
+    <string name="fork_spotify_mixes">Made for you</string>
     <string name="fork_queues">Saved queues</string>
     <string name="fork_queues_name">Name</string>
     <string name="fork_queues_save">Save this queue</string>
