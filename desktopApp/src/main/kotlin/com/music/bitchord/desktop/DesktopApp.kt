@@ -4287,13 +4287,13 @@ fun BitChordDesktopApp() {
                                         source = DesktopQueueSource(entity.title, PlaybackSourceType.SEARCH),
                                     )
                                     EntityType.ARTIST -> openArtist(entity.id, entity.title)
-                                    EntityType.ALBUM, EntityType.PLAYLIST -> openBrowseItem(
+                                    EntityType.ALBUM, EntityType.PLAYLIST, EntityType.OTHER -> openBrowseItem( // fork: OTHER, upstream's v1.9 added it
                                         BrowseItem(
                                             browseId = entity.id,
                                             title = entity.title,
                                             subtitle = entity.subtitle,
                                             thumbnailUrl = entity.artworkUrl,
-                                            type = if (entity.entityType == EntityType.ALBUM) BrowseType.ALBUM else BrowseType.PLAYLIST,
+                                            type = when (entity.entityType) { EntityType.ALBUM -> BrowseType.ALBUM; EntityType.PLAYLIST -> BrowseType.PLAYLIST; else -> BrowseType.OTHER }, // fork: was ALBUM or PLAYLIST
                                         ),
                                     )
                                 }
