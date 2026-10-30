@@ -1,11 +1,16 @@
 package com.music.bitchord.ui.player
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.unit.Dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.canvas.CanvasSource
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 
 /**
@@ -78,3 +83,21 @@ internal fun forkFillsScreen(canvas: CanvasArtwork?, phoneWidth: Boolean, window
  */
 internal fun forkBigArtFits(phoneWidth: Boolean, windowWidth: Dp, windowHeight: Dp): Boolean =
     phoneWidth || windowHeight >= windowWidth
+
+/** Longer than a track change or a short stall, which also read as not playing. */
+private const val FORK_ART_SHRINK_DELAY_MS = 1_000L
+
+/**
+ * Fork: "Fullscreen cover art" while playing, the small cover while paused, as a paused
+ * backdrop already brings the small cover back. Only a pause that lasts counts:
+ * `isPlaying` is also false while a song buffers, and the art shouldn't jump for that.
+ */
+@Composable
+internal fun rememberForkArtAwake(isPlaying: Boolean): Boolean {
+    var awake by remember { mutableStateOf(isPlaying) }
+    LaunchedEffect(isPlaying) {
+        if (!isPlaying) delay(FORK_ART_SHRINK_DELAY_MS)
+        awake = isPlaying
+    }
+    return awake
+}

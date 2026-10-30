@@ -1208,6 +1208,7 @@ fun NowPlayingScreen(
         }
     }
     val fullBleedArt by PlayerSettings.fullBleedArtwork.collectAsStateWithLifecycle()
+    val forkArtAwake = rememberForkArtAwake(isPlaying) // fork
     // Full-bleed is a phone idiom. What the width has to rule out is a player
     // running a foot wider than the column of controls under it — edge to edge
     // meaning "a picture, and separately some controls" rather than "the
@@ -1227,7 +1228,7 @@ fun NowPlayingScreen(
     // still-art full-bleed preference. Other providers and static artwork keep
     // answering to that preference exactly as before.
     val heroMode = spotifyCanvasOnPhone ||
-        (fullBleedArt && forkBigArtFits(playerFillsWindow(windowWidth), windowWidth, windowHeight)) // fork: was playerFillsWindow(windowWidth)
+        (fullBleedArt && forkBigArtFits(playerFillsWindow(windowWidth), windowWidth, windowHeight) && forkArtAwake) // fork: was playerFillsWindow(windowWidth); paused, the small cover
 
     // Whether there's a still image to blow out — a placeholder tile is a card
     // or it is nothing, and going full-bleed with one would just tint the top
@@ -2113,6 +2114,7 @@ fun NowPlayingScreen(
                 // invisible view to full-player bounds before its first frame is shown.
                 if (heroMode && heroHeight > 0.dp) {
                     heroClipMounted?.let { clip ->
+                        key(clip.url) { // fork: one player per clip. The view's callbacks hold the state of the clip it was made for, so a switch going straight from one clip to another left the new one hidden for good
                         CanvasArtworkPlayer(
                             canvas = clip,
                             isPlaying = isPlaying,
@@ -2178,6 +2180,7 @@ fun NowPlayingScreen(
                                 )
                                 .hazeSource(playerHaze),
                         )
+                        }
                     }
                 }
 
@@ -3025,6 +3028,7 @@ fun NowPlayingScreen(
                             // sleeve's corners, shadow and paused shrink for free.
                             if (!heroMode && canvas != null) {
                                 WhileShown({ !collapsePastHalf }) {
+                                    key(canvas.url) { // fork: one player per clip, see the banner's
                                     CanvasArtworkPlayer(
                                         canvas = canvas,
                                         isPlaying = isPlaying,
@@ -3044,6 +3048,7 @@ fun NowPlayingScreen(
                                         ) null else meshRefreshMs,
                                         modifier = Modifier.fillMaxSize(),
                                     )
+                                    }
                                 }
                             }
                         }
