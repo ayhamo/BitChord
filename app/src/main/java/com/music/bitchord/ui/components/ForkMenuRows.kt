@@ -22,9 +22,9 @@ import com.music.bitchord.R
 import com.music.bitchord.fork.ForkSettings
 
 /**
- * Fork: "Backdrop videos" in the player's song menu, flipping the global
- * Navidrome backdrop switch (the same [ForkSettings.backdropClips] as the rows
- * in Settings and Fork settings, so there is one setting, nothing to sync).
+ * Fork: "Backdrop videos" in the player's song menu, for any song: the server's
+ * backdrops and Spotify's Canvas alike. The same global [ForkSettings.backdropClips]
+ * as the rows in Settings and Fork settings, so there is one setting, nothing to sync.
  * Off, the player is back to the cover (or its cover clip).
  */
 @Composable
@@ -217,7 +217,9 @@ internal fun ForkAnimatedCoversMenuRow(accent: Color) {
 /** The fork's rows in the player's menu: the two video switches and saved queues. */
 @Composable
 internal fun ForkPlayerMenuRows(song: com.music.bitchord.data.model.Song, accent: Color) {
-    if (com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(song.videoId)) ForkBackdropMenuRow(accent)
-    if (!com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(song.videoId)) ForkAnimatedCoversMenuRow(accent)
+    if (!com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(song.videoId)) {
+        ForkBackdropMenuRow(accent)
+        ForkAnimatedCoversMenuRow(accent)
+    }
     ForkSavedQueuesRow(accent)
 }
