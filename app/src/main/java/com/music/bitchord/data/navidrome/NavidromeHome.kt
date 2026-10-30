@@ -13,10 +13,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.stateIn
@@ -43,6 +45,8 @@ object NavidromeHome {
 
     /** Subsonic's largest `getAlbumList2` page. */
     private const val ALL_ALBUMS = 500
+
+    private const val BACK_ONLINE_WAIT_MS = 2_000L
 
     /** `getAlbumList2` types, in the order they are shown, with their headings. */
     private val SHELVES = listOf(
@@ -140,12 +144,27 @@ object NavidromeHome {
         NavidromeOffline.syncPlaylists() // kept playlists follow the server
     }
 
-    /** The Navidrome page ([reload]) and Home shelves follow the server settings, once per save. */
-    fun follow(scope: CoroutineScope, context: Context, reload: () -> Unit) {
+    /**
+     * The Navidrome page ([reload]) and Home shelves follow the server settings, once per save.
+     * Back online (a launch with no network, a drop, offline mode off), the page and [backOnline]
+     * run once: nothing else asks again, and Home stayed without its Navidrome section until a
+     * relaunch. After a short wait, because a network that just came up can't always reach the
+     * server yet, and a flapping one should only count once.
+     */
+    fun follow(scope: CoroutineScope, context: Context, backOnline: () -> Unit, reload: () -> Unit) {
         scope.launch {
             NavidromeSettings.saved.drop(1).collect {
                 reload()
                 launch { load(context) }
+            }
+        }
+        scope.launch {
+            com.music.bitchord.fork.ForkNetwork.offline.drop(1).collectLatest { offline ->
+                if (!offline) {
+                    delay(BACK_ONLINE_WAIT_MS)
+                    reload()
+                    backOnline()
+                }
             }
         }
     }

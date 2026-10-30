@@ -1469,7 +1469,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 reloadRemoteDetail(com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID)
             }
         }
-        com.music.bitchord.data.navidrome.NavidromeHome.follow(viewModelScope, getApplication()) { reloadRemoteDetail(com.music.bitchord.data.navidrome.NavidromeSettings.BROWSE_ID) } // fork
+        com.music.bitchord.data.navidrome.NavidromeHome.follow(viewModelScope, getApplication(), ::forkBackOnline) { reloadRemoteDetail(com.music.bitchord.data.navidrome.NavidromeSettings.BROWSE_ID) } // fork
         viewModelScope.launch {
             combine(
                 AppSettings.smbHost,
@@ -1733,6 +1733,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val added = shelves.withoutRepeatsOf(existing)
             .filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) }
         if (added.isNotEmpty()) _home.value = UiState.Success(existing + added)
+    }
+
+    /** Fork: the network is back. Home loads what it couldn't, and a song left without lyrics asks again. */
+    private fun forkBackOnline() {
+        if (_home.value is UiState.Success) {
+            viewModelScope.launch { com.music.bitchord.data.navidrome.NavidromeHome.load(getApplication()) }
+        } else {
+            loadHome()
+        }
+        val request = currentLyricsRequest ?: return
+        if (_lyrics.value != null) return
+        lyricsFor = null
+        loadLyrics(request.videoId, request.title, request.artist, request.durationMs, request.album)
     }
 
     /** Refreshes the core feed without blanking the current Play page first. */
