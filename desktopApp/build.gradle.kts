@@ -227,6 +227,13 @@ fun findOnPath(tool: String): File? {
 
 fun cmakeBinary(): String = findOnPath("cmake")?.absolutePath ?: "cmake"
 
+/** A native build step's result. [providers.exec] keeps the tool's output to itself, so a failure has to print it to say anything. */
+fun ExecOutput.reportingFailure() {
+    if (result.get().exitValue != 0) {
+        error("native build failed:\n" + standardOutput.asText.get().takeLast(4_000) + "\n" + standardError.asText.get().takeLast(4_000))
+    }
+}
+
 val buildAnalysisNative by tasks.registering {
     val cmakeSource = project.file("native")
     val outputDir = analysisNativeDir.get().asFile
@@ -290,11 +297,13 @@ val buildAnalysisNative by tasks.registering {
                 },
             )
             environment("JAVA_HOME", javaHome)
-        }.result.get().assertNormalExitValue()
+            isIgnoreExitValue = true
+        }.reportingFailure()
         providers.exec {
             commandLine(cmakeBinary(), "--build", outputDir.absolutePath, "--config", "Release", "-j", "4")
             environment("JAVA_HOME", javaHome)
-        }.result.get().assertNormalExitValue()
+            isIgnoreExitValue = true
+        }.reportingFailure()
     }
 }
 
@@ -348,11 +357,13 @@ val buildWindowNative by tasks.registering {
                 },
             )
             environment("JAVA_HOME", javaHome)
-        }.result.get().assertNormalExitValue()
+            isIgnoreExitValue = true
+        }.reportingFailure()
         providers.exec {
             commandLine(cmakeBinary(), "--build", outputDir.absolutePath, "-j", "4")
             environment("JAVA_HOME", javaHome)
-        }.result.get().assertNormalExitValue()
+            isIgnoreExitValue = true
+        }.reportingFailure()
     }
 }
 

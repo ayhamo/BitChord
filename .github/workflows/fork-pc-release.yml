@@ -49,6 +49,9 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           # No Android SDK: only the desktop modules are wanted, and the phone's need more than this job installs.
           unset ANDROID_HOME ANDROID_SDK_ROOT
+          # Ubuntu's cmake, as the Docker build uses, not the newer one the runner keeps in /usr/local/bin.
+          export PATH="/usr/bin:$PATH"
+          cmake --version | head -1
           chmod +x gradlew
           ./gradlew --no-daemon -Pbitchord.target=windows -Pbitchord.version="$version" \
             -Pbitchord.windowsRuntime="$RUNNER_TEMP/windows-jre" :desktopApp:windowsPortable
