@@ -476,8 +476,7 @@ private fun WhileShown(shown: () -> Boolean, content: @Composable () -> Unit) {
  * longer goes full bleed at these widths, but the switch is still listed
  * there, unchanged, until that is decided on its own.
  */
-fun fullBleedArtworkAvailable(windowWidth: Dp): Boolean =
-    playerFillsWindow(windowWidth) || tabletSizedPlayer(windowWidth)
+fun fullBleedArtworkAvailable(windowWidth: Dp): Boolean = true // fork: was playerFillsWindow(windowWidth) || tabletSizedPlayer(windowWidth); any portrait window honours it (forkBigArtFits)
 
 /**
  * Whether a player given the whole of a window this wide is still narrow enough
@@ -1228,7 +1227,7 @@ fun NowPlayingScreen(
     // still-art full-bleed preference. Other providers and static artwork keep
     // answering to that preference exactly as before.
     val heroMode = spotifyCanvasOnPhone ||
-        (fullBleedArt && playerFillsWindow(windowWidth))
+        (fullBleedArt && forkBigArtFits(playerFillsWindow(windowWidth), windowWidth, windowHeight)) // fork: was playerFillsWindow(windowWidth)
 
     // Whether there's a still image to blow out — a placeholder tile is a card
     // or it is nothing, and going full-bleed with one would just tint the top
@@ -1297,7 +1296,7 @@ fun NowPlayingScreen(
     }
     val clipFullscreen = spotifyCanvasOnPhone &&
         heroClipMounted?.source?.fillsPhone == true // fork: was == SPOTIFY
-    val forkIntro = rememberForkBackdropIntro(heroClipMounted?.url, clipFullscreen) // fork
+    val forkIntro = rememberForkBackdropIntro(heroClipMounted?.url, clipFullscreen && fullBleedArt) // fork: Fullscreen off, no big art before the video
     val clipPortrait = !clipFullscreen &&
         heroClipMounted != null && canvasAspect > 0f && canvasAspect < 1f
 

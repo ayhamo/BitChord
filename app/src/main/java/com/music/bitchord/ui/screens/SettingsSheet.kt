@@ -842,7 +842,7 @@ fun SettingsScreen(
             // the sleeve either way. A docked pane is a phone's width, so it does
             // honour it — see [fullBleedArtworkAvailable].
             if (fullBleedArtworkAvailable(windowWidth)) {
-                val fullScreenCoverArtTitle = stringResource(R.string.full_screen_cover_art)
+                val fullScreenCoverArtTitle = stringResource(R.string.fork_fullscreen_cover_art) // fork: the name the player menu uses
                 row(fullScreenCoverArtTitle, "artwork", "player") {
                     SettingsRow(
                         icon = Icons.Rounded.Fullscreen,

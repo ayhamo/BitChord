@@ -89,4 +89,5 @@
     <string name="fork_navidrome_yt_history_subtitle">Songs you play from your server count on YouTube Music too (signed in), so its recommendations learn from them</string>
     <string name="fork_start_instant_mix">Start radio (Instant Mix)</string>
     <string name="fork_no_similar_songs">No similar songs found</string>
+    <string name="fork_fullscreen_cover_art">Fullscreen cover art</string>
 </resources>

@@ -69,3 +69,12 @@ private fun CanvasArtwork?.forkInSleeve(backdropShown: Boolean): CanvasArtwork? 
  */
 internal fun forkFillsScreen(canvas: CanvasArtwork?, phoneWidth: Boolean, windowWidth: Dp, windowHeight: Dp): Boolean =
     windowHeight >= windowWidth && (phoneWidth || canvas?.source?.fillsPhone == true)
+
+/**
+ * Fork: where "Fullscreen cover art" runs the still cover to the edges. Upstream:
+ * only a phone-width window. Also any portrait window wider than that, the same
+ * windows a backdrop fills ([forkFillsScreen]), so the switch doesn't quietly do
+ * nothing there.
+ */
+internal fun forkBigArtFits(phoneWidth: Boolean, windowWidth: Dp, windowHeight: Dp): Boolean =
+    phoneWidth || windowHeight >= windowWidth

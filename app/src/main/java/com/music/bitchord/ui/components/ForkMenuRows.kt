@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.Wallpaper
 import androidx.compose.material.icons.rounded.Animation
 import androidx.compose.material.icons.rounded.DownloadForOffline
@@ -214,10 +215,27 @@ internal fun ForkAnimatedCoversMenuRow(accent: Color) {
     ) { ForkSettings.setAnimatedCovers(!on) }
 }
 
-/** The fork's rows in the player's menu: the two video switches and saved queues. */
+/**
+ * Fork: "Fullscreen cover art" in the player's song menu, upstream's own setting
+ * ([AppSettings.fullBleedArtwork], also in Settings): the still cover run to the
+ * edges of the player. Separate from the two video switches.
+ */
+@Composable
+internal fun ForkFullscreenArtMenuRow(accent: Color) {
+    val on by com.music.bitchord.data.settings.AppSettings.fullBleedArtwork.collectAsStateWithLifecycle()
+    ActionRow(
+        icon = Icons.Rounded.Fullscreen,
+        label = stringResource(R.string.fork_fullscreen_cover_art),
+        value = stringResource(if (on) R.string.fork_on else R.string.fork_off),
+        accent = accent,
+    ) { com.music.bitchord.data.settings.AppSettings.setFullBleedArtwork(!on) }
+}
+
+/** The fork's rows in the player's menu: the big art, the two video switches and saved queues. */
 @Composable
 internal fun ForkPlayerMenuRows(song: com.music.bitchord.data.model.Song, accent: Color) {
     if (!com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(song.videoId)) {
+        ForkFullscreenArtMenuRow(accent)
         ForkBackdropMenuRow(accent)
         ForkAnimatedCoversMenuRow(accent)
     }
