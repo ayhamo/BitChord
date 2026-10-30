@@ -10,6 +10,9 @@ const val NAVIDROME_ID_PREFIX = "navidrome:"
  */
 val Song.isNavidrome: Boolean get() = videoId.startsWith(NAVIDROME_ID_PREFIX)
 
+/** fork: one of the server's internet radio stations (`NavidromeRadio`). It carries a `localUri`, and it has no like. */
+val Song.isNavidromeRadio: Boolean get() = videoId.startsWith("radio:")
+
 private val SUBSONIC_SIZE = Regex("""([?&])size=\d+""")
 
 /**

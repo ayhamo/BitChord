@@ -102,15 +102,14 @@ suspend fun loadAutoplayTracks(
     limit: Int = MAX_QUEUED_AUTOPLAY,
     forkStation: Boolean = false, // fork: asked for by "Start radio", not AutoPlay
 ): Result<List<Song>> {
-    if (forkStation && com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(seedSong.videoId)) return com.music.bitchord.data.navidrome.NavidromeRepository.instantMix(seedSong) // fork
+    if (forkStation && com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(seedSong.videoId)) return com.music.bitchord.data.navidrome.NavidromeRepository.instantMix(seedSong)
     // fork: a Navidrome song's AutoPlay comes from the same library, not a YouTube radio
-    val related = if (com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(seedSong.videoId)) {
-        com.music.bitchord.data.navidrome.NavidromeRepository.related(seedSong).getOrElse { return Result.failure(it) }
-    } else {
-        val seed = youtubeSeedFor(seedSong) ?: return Result.success(emptyList())
-        YtMusicRepository.radio(seed).getOrElse { return Result.failure(it) }
-    }
-    val extra = QueueBuilder.extend(existing, related, limit)
+    val forkServerSong = com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(seedSong.videoId)
+    val seed = if (forkServerSong) seedSong.videoId else youtubeSeedFor(seedSong) ?: return Result.success(emptyList())
+    // A music video plays on with music videos, as YouTube Music does.
+    val videos = !forkServerSong && seedSong.isVideo && seed == seedSong.videoId
+    val related = (if (forkServerSong) com.music.bitchord.data.navidrome.NavidromeRepository.related(seedSong) else YtMusicRepository.radio(seed, preferVideo = videos)).getOrElse { return Result.failure(it) }
+    val extra = QueueBuilder.extend(existing, related, limit, preferVideos = videos)
     if (extra.isEmpty()) return Result.success(emptyList())
 
     return Result.success(extra.map {

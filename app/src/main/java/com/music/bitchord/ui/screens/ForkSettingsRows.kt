@@ -356,8 +356,8 @@ internal fun SettingsGroupScope.forkCacheRows() {
 
 /** Every fork switch again in one group (the same settings as their rows above, so they stay in sync). */
 @Composable
-internal fun ForkSettingsGroup(search: SettingsSearch) {
-    SearchableSettingsGroup(search, header = stringResource(R.string.fork_settings)) {
+internal fun SettingsGroupScope.forkSettingsRows() {
+    run {
         row(stringResource(R.string.fork_crossfade_on_skip), "fork", "fade", "skip") { ForkCrossfadeOnSkipRow() }
         row(stringResource(R.string.fork_animated_covers), "fork", "apple", "animated", "cover") { ForkAnimatedCoversRow() }
         row(stringResource(R.string.fork_backdrop_clips), "fork", "navidrome", "backdrop", "video") { ForkBackdropClipsRow() }

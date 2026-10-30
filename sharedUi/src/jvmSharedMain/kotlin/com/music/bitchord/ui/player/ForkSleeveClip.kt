@@ -61,7 +61,7 @@ internal fun forkCanvases(raw: CanvasArtwork?, phoneWidth: Boolean, windowWidth:
 
 private fun CanvasArtwork?.forkInSleeve(backdropShown: Boolean): CanvasArtwork? = when {
     this == null || !source.fillsPhone || backdropShown -> this
-    else -> sleeveUrl?.let { copy(url = it, fallbackUrl = null, source = CanvasSource.OTHER, sleeveUrl = null) }
+    else -> sleeveUrl?.let { copy(url = it, fallbackUrl = null, source = CanvasSource.OTHER, sleeveUrl = null, portraitUrl = null) }
 }
 
 /**
