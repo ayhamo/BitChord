@@ -142,7 +142,7 @@ Upstream removed `desktopApp` and `desktopUi` in `e4dd63d8`; `pc` restores them 
 | `desktopApp/.../DesktopApp.kt` (offline) | `ForkOfflineButton` on a server album or playlist page, and on an album on the Navidrome page. Home reloads when offline changes. `onOpenPage` |
 | `desktopApp/.../DesktopArtwork.kt` | `load()`: a kept cover first. Budget a tenth of the heap, was a sixth |
 | `desktopApp/.../DesktopCanvasVideo.kt` | One copy per frame, not three, and a replaced frame is closed: `forkHandedOut` |
-| `desktopApp/.../DesktopTrackAnalyzer.kt` | `results` keeps 12 analyses in RAM (from PC-Continued `c310d0e3`) |
+| `desktopApp/.../DesktopTrackAnalyzer.kt` | `results` keeps 12 analyses in RAM (from PC-Continued `c310d0e3`). `request()`: a server's song is measured from `ForkNavidrome.stream`, its kept file or the server, not YouTube |
 | `desktopApp/.../DesktopSpotifyCanvas.kt` | `accessToken()`: the page's own token first (`ForkSpotifyToken`) |
 | `desktopApp/.../DesktopApp.kt` (search history) | `EntityType.OTHER`, which upstream's v1.9 added, opens as a page |
 | `desktopApp/.../DesktopPersistence.kt` | `encodeSong`, `decodeSong`: no server login in the registry (`NavidromeRepository.atRest`, `.live`) |

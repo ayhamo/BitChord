@@ -129,7 +129,7 @@ internal class DesktopTrackAnalyzer(
         val local = stream?.takeIf { it.isLocalFile }
         DesktopTrackLog.log(
             "automix: analysing '${song.title}' (${"%.0f".format(durationSeconds)}s)" +
-                if (local != null) " from the file" else " from YouTube Opus",
+                if (local != null) " from the file" else if (ForkNavidrome.owns(song)) " from the server" else " from YouTube Opus", // fork: the server
         )
 
         worker.execute {
@@ -143,7 +143,7 @@ internal class DesktopTrackAnalyzer(
                 Thread.currentThread().priority =
                     if (performance().yieldsToPlayback) Thread.MIN_PRIORITY else Thread.NORM_PRIORITY
                 val analysis = runCatching {
-                    val source = local ?: youTubeOpus(song) ?: return@runCatching null
+                    val source = local ?: ForkNavidrome.stream(song).takeIf { ForkNavidrome.owns(song) } ?: youTubeOpus(song) ?: return@runCatching null // fork: a server's song is measured on its own audio; it has no YouTube id
                     analyse(trackId, source, durationSeconds)
                 }
                     .onFailure { DesktopTrackLog.log("analysis of '${song.title}' failed: ${it.message}") }
