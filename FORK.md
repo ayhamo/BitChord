@@ -173,6 +173,7 @@ Upstream removed `desktopApp` and `desktopUi` in `e4dd63d8`; `pc` restores them 
 | `desktopApp/.../DesktopPlayerHost.kt` | `canvasFor()`: `NavidromeClips.canvasFor(song)` first |
 | `desktopApp/.../DesktopScrobbling.kt` | `updateNowPlaying()`, `onPlaybackEnded()`: `NavidromeScrobble`; both do nothing for a radio station |
 | `desktopApp/.../DesktopArtwork.kt` | `load`: `withLogin`, it opens the address itself rather than through `Http` |
+| `desktopApp/build.gradle.kts` `windowsPortable`, `docker/pc-jre.sh`, `.github/workflows/fork-pc-release.yml` | The portable zip carries its own Java (`-Pbitchord.windowsRuntime`, required) and the memory flags; `BitChord-log.bat`; the workflow publishes it as a pre-release |
 | `desktopApp/.../DesktopUpdateChecker.kt` | `LATEST_RELEASE_URL` points at `ayhamo/BitChord`; the tag has `fork-` stripped before `v`; a release with no file for this platform says nothing; `-windows-portable.zip` counts as the Windows file |
 | `desktopApp/.../ForkRadio.kt` (new) | Internet radio, the phone's Library page: stations from the shared `NavidromeRadio` (moved from `app`, its logo prefs now a `NavidromePlatform.Store`), a page in place of the library on the Navidrome page, hidden offline; logo keys hashed for Java Preferences' 80 characters |
 | `desktopApp/.../DesktopApp.kt` (radio) | `ForkNavidromeScreen`: `radio = { ForkRadioPage(…) }`. `playPrevious`: on a station, always the previous row |
