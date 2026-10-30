@@ -12,6 +12,8 @@ public class W {
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr dc, uint f);
   [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
   public struct RECT { public int L, T, R, B; }
   public static List<IntPtr> For(uint want) {
     var res = new List<IntPtr>();
@@ -25,6 +27,7 @@ $procs = Get-CimInstance Win32_Process -Filter "Name='java.exe'" | Where-Object 
 foreach ($p in $procs) {
   "java pid $($p.ProcessId) MB $([int]($p.WorkingSetSize/1MB))"
   foreach ($h in [W]::For([uint32]$p.ProcessId)) {
+    if ([W]::IsIconic($h)) { [void][W]::ShowWindow($h, 4); Start-Sleep -Milliseconds 800 } # minimized: back, without taking focus
     $sb = New-Object Text.StringBuilder 256; [void][W]::GetWindowText($h, $sb, 256)
     $r = New-Object W+RECT; [void][W]::GetWindowRect($h, [ref]$r)
     $w = $r.R - $r.L; $ht = $r.B - $r.T

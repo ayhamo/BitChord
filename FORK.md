@@ -126,7 +126,8 @@ Upstream removed `desktopApp` and `desktopUi` in `e4dd63d8`; `pc` restores them 
 | `desktopApp/.../DesktopApp.kt` (pages) | `startRadio`: `forkStation = true`. `openArtist` and the collection loader: `ForkNavidrome` answers a server page. `loadHome`: the server's shelves lead Home |
 | `desktopApp/.../DesktopAutoplay.kt` | `tracksFor`: `forkStation`, a Navidrome seed takes `ForkNavidrome.tracks` |
 | `desktopApp/.../DesktopSongMenuUi.kt` | "Start radio (Instant Mix)" on a Navidrome song |
-| `desktopUi/.../player/NowPlayingScreen.kt` | The heart also shows for a Navidrome song |
+| `desktopUi/.../player/NowPlayingScreen.kt` | The heart also shows for a Navidrome song (and in `LandscapePlayer.kt`). `forkCanvases`, `ForkLandscapeBackdrop` and `fillsPhone`, as on the phone (copies of `ForkSleeveClip`, `ForkBackdropIntro`, `ForkLandscapeBackdrop` live in `desktopUi`) |
+| `desktopApp/.../DesktopCanvas.kt` | `fileFor`: the server's clips go through `ForkNavidrome.fetchClip`; a failed download is deleted (**fixes upstream**) |
 | `desktopApp/.../DesktopSourceRegistry.kt` | `resolveLive()`: `ForkNavidrome.stream(song)` first |
 | `desktopApp/.../DesktopLyricsClient.kt` | `lookup()`: the server's timed lyrics first |
 | `desktopApp/.../DesktopPlayerHost.kt` | `canvasFor()`: `NavidromeClips.canvasFor(song)` first |

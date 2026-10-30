@@ -845,7 +845,7 @@ fun NowPlayingScreen(
     // track" check lives.
     val spotifyCanvasAutoHide by PlayerSettings.spotifyCanvasAutoHide.collectAsStateWithLifecycle()
     val mixing by PlayerSettings.smartMixInProgress.collectAsStateWithLifecycle()
-    val canvas = rememberCanvasArtwork(song)
+    val (canvas, forkLandscapeClip) = forkCanvases(rememberCanvasArtwork(song), playerFillsWindow(windowWidth), windowWidth, windowHeight) // fork: a backdrop never plays cropped in the square
     var canvasAspect by remember(canvas) { mutableFloatStateOf(0f) }
     // Whether the clip actually has a frame on screen right now, and one of
     // them — used to blow the sleeve out to the full-bleed hero treatment and
@@ -1288,7 +1288,7 @@ fun NowPlayingScreen(
     // ignored [fullBleedArt] entirely, so turning the setting off still left a
     // clip running the full screen. CanvasArtworkPlayer masks itself on every
     // API level now, and both layers answer to this.
-    val spotifyCanvasOnPhone = canvas?.source == CanvasSource.SPOTIFY &&
+    val spotifyCanvasOnPhone = canvas?.source?.fillsPhone == true && // fork: was == SPOTIFY
         playerFillsWindow(windowWidth)
     // Spotify Canvas is the player background on a phone, independent of the
     // still-art full-bleed preference. Other providers and static artwork keep
@@ -1340,7 +1340,7 @@ fun NowPlayingScreen(
     // clip goes, rather than a frame later with no artwork anywhere.
     val heroClip = canvas?.takeIf { heroMode && !collapsePastHalf }
     val spotifyCanvasFullscreen = spotifyCanvasOnPhone &&
-        heroClip?.source == CanvasSource.SPOTIFY
+        heroClip?.source?.fillsPhone == true // fork: was == SPOTIFY
     val spotifyCanvasPresentation = spotifyCanvasFullscreen && canvasRendered
     val canvasFirstPortrait = !spotifyCanvasFullscreen &&
         heroClip != null && canvasAspect > 0f && canvasAspect < 1f
@@ -1362,7 +1362,7 @@ fun NowPlayingScreen(
         heroMode && (!(lyricsOpen || queueOpen) || !collapseDone)
     }
     val clipFullscreen = spotifyCanvasOnPhone &&
-        heroClipMounted?.source == CanvasSource.SPOTIFY
+        heroClipMounted?.source?.fillsPhone == true // fork: was == SPOTIFY
     val clipPortrait = !clipFullscreen &&
         heroClipMounted != null && canvasAspect > 0f && canvasAspect < 1f
 
@@ -1950,13 +1950,14 @@ fun NowPlayingScreen(
                         // The whole screen is the sheets' frost source: there is
                         // no full-bleed banner here to be it instead.
                         fullArtworkBlurContent(backgroundModifier.hazeSource(playerHaze))
+                        forkLandscapeClip?.let { ForkLandscapeBackdrop(it, fullArtworkBlurImage, isPlaying, dockMoving, dimmed = lyricsOpen || queueOpen, modifier = backgroundModifier) } // fork
                     },
                     artwork = { artworkModifier, glowRounded ->
                         LandscapeArtwork(
                             artRequest = art.request,
                             artLoaded = art.loaded,
                             onArtState = art::onState,
-                            canvas = canvas,
+                            canvas = canvas.takeUnless { it?.url == forkLandscapeClip?.url }, // fork: the backdrop never plays twice; a cover clip stays in the sleeve
                             canvasRendered = canvasRendered,
                             isPlaying = isPlaying,
                             onCanvasRenderedChange = { canvasRendered = it },

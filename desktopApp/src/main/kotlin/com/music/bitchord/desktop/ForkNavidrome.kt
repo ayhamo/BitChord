@@ -29,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.music.bitchord.data.Http
 import com.music.bitchord.data.LikeState
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.model.BrowseType
@@ -49,12 +50,16 @@ import com.music.bitchord.data.navidrome.NavidromeRepository
 import com.music.bitchord.data.navidrome.NavidromeSettings
 import com.music.bitchord.data.navidrome.NavidromeSongInfo
 import com.music.bitchord.playback.QueueBuilder
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import java.util.Base64
 import java.util.prefs.Preferences
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import okhttp3.Request
 
 /**
  * Fork: the Navidrome library on the desktop. The client, library, lyrics, clips
@@ -78,6 +83,19 @@ internal object ForkNavidrome {
     fun stream(song: Song): DesktopStream? {
         if (!owns(song) || !NavidromeSettings.isConfigured()) return null
         return DesktopStream(NavidromeRepository.client().streamUrl(song.videoId.removePrefix(NavidromeSettings.ID_PREFIX)))
+    }
+
+    /**
+     * Downloads a clip from the server through the shared client, whose interceptor adds the
+     * login a clip's address can't carry. False for any other address.
+     */
+    fun fetchClip(url: String, target: Path): Boolean {
+        if (!NavidromeSettings.isConfigured() || "/rest/x-clip/" !in url) return false
+        Http.client.newCall(Request.Builder().url(url).build()).execute().use { response ->
+            check(response.isSuccessful) { "canvas HTTP ${response.code}" }
+            response.body.byteStream().use { Files.copy(it, target, StandardCopyOption.REPLACE_EXISTING) }
+        }
+        return true
     }
 
     /** The server's timed lyrics for a Navidrome song, or null: the online sources are asked next. */
@@ -251,9 +269,11 @@ internal fun ForkNavidromeScreen(
         ForkNavidromeLogin(contentPadding)
         return
     }
+    var attempt by remember(saved) { mutableStateOf(0) }
     var songs by remember(saved) { mutableStateOf<List<Song>?>(null) }
     var failure by remember(saved) { mutableStateOf<String?>(null) }
-    LaunchedEffect(saved) {
+    LaunchedEffect(saved, attempt) {
+        failure = null
         runCatching { NavidromeRepository.getSongs() }
             .onSuccess {
                 songs = it
@@ -274,7 +294,12 @@ internal fun ForkNavidromeScreen(
             val loaded = songs
             when {
                 loaded != null -> page(loaded)
-                failure != null -> Text(failure.orEmpty(), Modifier.align(Alignment.Center).padding(24.dp))
+                // The whole library is several requests: one failing shouldn't need a restart.
+                failure != null -> Column(Modifier.align(Alignment.Center).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(failure.orEmpty())
+                    Spacer(Modifier.height(12.dp))
+                    Button(onClick = { attempt++ }) { Text("Retry") }
+                }
                 else -> CircularProgressIndicator(Modifier.align(Alignment.Center))
             }
         }

@@ -222,6 +222,10 @@ internal object DesktopCanvasCache {
         DesktopMediaCache.existing(url, "mp4")?.let { return it }
         return runCatching {
             val target = DesktopMediaCache.pathFor(url, "mp4")
+            if (ForkNavidrome.fetchClip(url, target)) { // fork: the server's clips need its login
+                DesktopMediaCache.trim()
+                return@runCatching target
+            }
             val response = client.send(
                 HttpRequest.newBuilder(URI.create(url))
                     .timeout(Duration.ofSeconds(30))
@@ -236,7 +240,12 @@ internal object DesktopCanvasCache {
             // The only moment the cache can be over its limit is just after a write.
             DesktopMediaCache.trim()
             target
-        }.onFailure { DesktopTrackLog.log("canvas: could not fetch the clip — ${it.message}") }.getOrNull()
+        }.onFailure {
+            // fork: fixes upstream. A refused download left the error page at the clip's path, and the
+            // check at the top then handed that to the decoder for good.
+            runCatching { java.nio.file.Files.deleteIfExists(DesktopMediaCache.pathFor(url, "mp4")) }
+            DesktopTrackLog.log("canvas: could not fetch the clip — ${it.message}")
+        }.getOrNull()
     }
 }
 
