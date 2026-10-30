@@ -316,7 +316,7 @@ fun SongActionsSheet(
         WebDavUploadRow(song, palette, isOffline, onUploadToWebDav)
         if (!com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(song.videoId)) ActionRow( // fork: a radio station has no song radio
             icon = Icons.Rounded.Radio,
-            label = stringResource(R.string.start_radio),
+            label = stringResource(if (com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(song.videoId)) R.string.fork_start_instant_mix else R.string.start_radio), // fork
             accent = palette.accent,
             onClick = onStartRadio,
         )

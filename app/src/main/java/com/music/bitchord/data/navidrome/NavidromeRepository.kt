@@ -2,9 +2,14 @@ package com.music.bitchord.data.navidrome
 
 import com.music.bitchord.data.LocalGroups
 import com.music.bitchord.data.model.PlaybackSourceType
+import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.playback.QueueBuilder
+import com.music.bitchord.playback.QueueCoordinator.asQueueEntry
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /**
  * The Navidrome library as [Song] rows (fork-only), shaped like the WebDAV and
@@ -20,6 +25,9 @@ object NavidromeRepository {
 
     private const val PAGE = 500
     private const val CACHE_MS = 2 * 60 * 1000L
+
+    /** As many songs as Navidrome's own Instant Mix asks for. */
+    private const val INSTANT_MIX_SIZE = 100
 
     private val lock = Mutex()
     @Volatile private var cached: List<Song>? = null
@@ -94,6 +102,36 @@ object NavidromeRepository {
             emptyList()
         }
         similar.ifEmpty { client.randomSongs(count) }.map { it.toSong(client) }
+    }
+
+    /**
+     * "Start radio (Instant Mix)" on a Navidrome song: the server's similar songs (AudioMuse, when
+     * the server has it), in the server's order, as Navidrome's own Instant Mix plays them.
+     *
+     * Unlike [related] an empty answer stays empty, so the player can say so instead of playing
+     * random songs under that name. And not through `QueueBuilder.extend`: its two-per-artist cap
+     * is for YouTube's mixes, and would cut a server's mix of 100 down to a fraction.
+     */
+    suspend fun instantMix(seed: Song): Result<List<Song>> = runCatching {
+        val client = client()
+        val found = client.similarSongs(seed.videoId.removePrefix(NavidromeSettings.ID_PREFIX), INSTANT_MIX_SIZE)
+            .map { it.toSong(client) }
+        withContext(Dispatchers.Default) { withoutRepeats(seed, found) }.map {
+            it.copy(
+                radioName = seed.radioName,
+                playbackSource = seed.playbackSource,
+                playbackSourceType = seed.playbackSourceType,
+                playbackSourceId = seed.playbackSourceId,
+            ).asQueueEntry(QueueTier.AUTOPLAY)
+        }
+    }
+
+    /** Each recording once and never the seed's, in the server's order: one song can be in the library twice (a FLAC and an opus copy). */
+    internal fun withoutRepeats(seed: Song, songs: List<Song>): List<Song> {
+        val taken = mutableListOf(seed)
+        return songs.filter { song ->
+            taken.none { QueueBuilder.isSameRecording(it, song) } && taken.add(song)
+        }
     }
 
     suspend fun testConnection(url: String, username: String, password: String): Result<Unit> =

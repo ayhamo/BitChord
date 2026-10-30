@@ -1519,6 +1519,7 @@ private fun BitChordApp(
                     existing = listOf(seed),
                     seedSong = seed,
                     limit = INITIAL_RADIO_TRACKS,
+                    forkStation = true, // fork
                 ).getOrElse {
                     if (request == playRequestGeneration) {
                         Toast.makeText(context, R.string.couldnt_load_tracks, Toast.LENGTH_SHORT).show()
@@ -1527,7 +1528,7 @@ private fun BitChordApp(
                 }
                 if (related.isEmpty()) {
                     if (request == playRequestGeneration) {
-                        Toast.makeText(context, R.string.couldnt_load_tracks, Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, if (com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(song.videoId)) R.string.fork_no_similar_songs else R.string.couldnt_load_tracks, Toast.LENGTH_SHORT).show() // fork: an Instant Mix can be empty
                     }
                     return@launch
                 }
