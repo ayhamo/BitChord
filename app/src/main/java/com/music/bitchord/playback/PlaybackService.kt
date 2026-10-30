@@ -1911,7 +1911,7 @@ class PlaybackService : MediaLibraryService() {
             ?.let {
                 CommandButton.Builder(CommandButton.ICON_RADIO)
                     .setSessionCommand(startStationCommand)
-                    .setDisplayName(getString(R.string.start_radio))
+                    .setDisplayName(getString(if (com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(it.videoId)) R.string.fork_start_instant_mix else R.string.start_radio)) // fork
                     .build()
             }
         val revert = current
@@ -1974,6 +1974,7 @@ class PlaybackService : MediaLibraryService() {
                 existing = listOf(radioSeed),
                 seedSong = radioSeed,
                 limit = INITIAL_STATION_TRACKS,
+                forkStation = true, // fork
             ).getOrElse {
                 TrackLog.w(
                     "BitChord",
