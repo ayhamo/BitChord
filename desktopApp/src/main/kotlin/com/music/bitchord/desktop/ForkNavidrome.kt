@@ -15,6 +15,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -70,11 +71,24 @@ import okhttp3.Request
  */
 internal object ForkNavidrome {
 
+    private const val KEY_YT_HISTORY = "youtube_history"
+
+    /** The fork's own desktop switches, apart from the login. */
+    private val settings: NavidromePlatform.Store by lazy { PrefsStore("com/music/bitchord/navidrome_fork", sealed = emptySet()) }
+
+    fun setYouTubeHistory(on: Boolean) {
+        ForkYouTubeHistory.enabled.value = on
+        settings.putStrings(mapOf(KEY_YT_HISTORY to if (on) "on" else "off"))
+    }
+
     fun install() {
         NavidromeSettings.init(PrefsStore("com/music/bitchord/navidrome", sealed = setOf("password")))
         NavidromeClips.init(PrefsStore("com/music/bitchord/navidrome_clips", sealed = emptySet()))
         NavidromeSongInfo.init()
         NavidromeLyrics.init(DesktopMediaCache.directory.resolve("navidrome_lyrics").toFile())
+        ForkYouTubeHistory.init(PrefsStore("com/music/bitchord/navidrome_yt_history", sealed = emptySet()))
+        NavidromePlatform.onSong = ForkYouTubeHistory::remember
+        ForkYouTubeHistory.enabled.value = settings.string(KEY_YT_HISTORY) != "off"
     }
 
     fun owns(song: Song): Boolean = NavidromeSettings.isNavidromeId(song.videoId)
@@ -288,7 +302,14 @@ internal fun ForkNavidromeScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Text("$username on $url", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            TextButton(onClick = { NavidromeSettings.clear() }) { Text("Disconnect") }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val history by ForkYouTubeHistory.enabled.collectAsState()
+                Text("Plays count on YouTube Music", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.widthIn(min = 8.dp))
+                Switch(checked = history, onCheckedChange = ForkNavidrome::setYouTubeHistory)
+                Spacer(Modifier.widthIn(min = 16.dp))
+                TextButton(onClick = { NavidromeSettings.clear() }) { Text("Disconnect") }
+            }
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
             val loaded = songs

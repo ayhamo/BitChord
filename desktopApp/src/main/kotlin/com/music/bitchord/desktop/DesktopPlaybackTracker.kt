@@ -65,6 +65,7 @@ internal object DesktopPlaybackTracker {
 
     /** Call when [videoId] becomes audible. */
     fun onPlaying(videoId: String) {
+        if (ForkYouTubeHistory.intercept(videoId)) return // fork: a Navidrome song, matched to its YouTube id first
         // A local file carries its path and an addon carries whatever that source uses; asking
         // Google to register a play of one cannot succeed.
         if (!DesktopSearchClient.isVideoId(videoId)) return
@@ -92,6 +93,7 @@ internal object DesktopPlaybackTracker {
 
     /** Progress for the current track, in seconds played. */
     fun onProgress(videoId: String, positionSeconds: Long) {
+        ForkYouTubeHistory.mapped(videoId)?.let { return onProgress(it, positionSeconds) } // fork
         val current = session ?: return
         if (current.videoId != videoId) return
         if (!current.atrSent && positionSeconds >= current.tracking.atrAfterSeconds) {

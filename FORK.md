@@ -129,6 +129,7 @@ Upstream removed `desktopApp` and `desktopUi` in `e4dd63d8`; `pc` restores them 
 | `desktopUi/.../player/NowPlayingScreen.kt` | The heart also shows for a Navidrome song (and in `LandscapePlayer.kt`). `forkCanvases`, `ForkLandscapeBackdrop` and `fillsPhone`, as on the phone (copies of `ForkSleeveClip`, `ForkBackdropIntro`, `ForkLandscapeBackdrop` live in `desktopUi`) |
 | `desktopApp/.../DesktopCanvas.kt` | `fileFor`: the server's clips go through `ForkNavidrome.fetchClip`; a failed download is deleted (**fixes upstream**) |
 | `desktopApp/.../DesktopSourceRegistry.kt` | `resolveLive()`: `ForkNavidrome.stream(song)` first |
+| `desktopApp/.../DesktopPlaybackTracker.kt` | `onPlaying`, `onProgress`: `ForkYouTubeHistory` first (Navidrome plays into YouTube history; the switch is on the Navidrome page) |
 | `desktopApp/.../DesktopLyricsClient.kt` | `lookup()`: the server's timed lyrics first |
 | `desktopApp/.../DesktopPlayerHost.kt` | `canvasFor()`: `NavidromeClips.canvasFor(song)` first |
 | `desktopApp/.../DesktopScrobbling.kt` | `updateNowPlaying()`, `onPlaybackEnded()`: `NavidromeScrobble` |
