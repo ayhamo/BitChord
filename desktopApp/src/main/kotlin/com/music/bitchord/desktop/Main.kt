@@ -63,6 +63,7 @@ fun main() {
     )
     // The public "apps open right now" count; see Presence.
     DesktopPresence.install()
+    ForkDebugBridge.install() // fork: test door, off unless asked for
     desktopMain()
 }
 
@@ -111,6 +112,7 @@ private fun desktopMain() = application {
         val openingSize = remember { state.size }
         LaunchedEffect(composeWindow) {
             DesktopWindowVisibility.attachWindow(composeWindow)
+            ForkDebugBridge.attach(composeWindow) // fork
             // AWT's default is white, and it is what shows for the frame or two a moved or resized
             // window takes to repaint: a white band along its edges.
             // Not over a transparent window, whose clear background is what the material shows

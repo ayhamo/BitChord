@@ -613,6 +613,7 @@ fun BitChordDesktopApp() {
     // One party AutoPlay top-up at a time; see topUpPartyAutoplay.
     val partyAutoplayLock = remember { Mutex() }
     val queue = liveQueue.songs
+    ForkDebugBridge.queue = { liveQueue } // fork
     // What was played on this computer. The account's own history replaces it
     // while signed in — see [remoteHistory] — because that is what Android's
     // History screen is and what makes a phone and a desktop agree.
@@ -1609,6 +1610,7 @@ fun BitChordDesktopApp() {
             },
         )
     }
+    ForkDebugBridge.engine = playbackEngine // fork
     val partySync = remember(playbackEngine) {
         DesktopPartySync(
             scope = scope,
