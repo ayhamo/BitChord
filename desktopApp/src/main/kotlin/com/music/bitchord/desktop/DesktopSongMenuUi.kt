@@ -413,7 +413,7 @@ internal fun DesktopSongMenu(
                 onClick = onDownload,
             )
         }
-        DesktopMenuRow(Icons.Rounded.Radio, DesktopStrings["start_radio", "Start radio"], onClick = onStartRadio)
+        DesktopMenuRow(Icons.Rounded.Radio, if (com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(song.videoId)) "Start radio (Instant Mix)" else DesktopStrings["start_radio", "Start radio"], onClick = onStartRadio)
         DesktopMenuRow(Icons.AutoMirrored.Rounded.PlaylistPlay, DesktopStrings["play_next", "Play next"], onClick = onPlayNext)
         DesktopMenuRow(Icons.AutoMirrored.Rounded.QueueMusic, DesktopStrings["add_to_queue", "Add to queue"], onClick = onAddToQueue)
         // What the player's content column shows, and the ways of reading the

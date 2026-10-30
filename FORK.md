@@ -123,6 +123,10 @@ Upstream removed `desktopApp` and `desktopUi` in `e4dd63d8`; `pc` restores them 
 | `desktopApp/native/window/CMakeLists.txt` | Cross-building: the same `jni_md.h` stand-in the analyser uses |
 | `desktopApp/.../Main.kt` | `ForkDebugBridge.install()`, `ForkNavidrome.install()`, `ForkDebugBridge.attach(composeWindow)` |
 | `desktopApp/.../DesktopApp.kt` | `ForkDebugBridge.queue` and `.engine`. `DesktopDestination.NAVIDROME` with its sidebar row and page. `rate()`: a Navidrome song's heart is its star on the server |
+| `desktopApp/.../DesktopApp.kt` (pages) | `startRadio`: `forkStation = true`. `openArtist` and the collection loader: `ForkNavidrome` answers a server page. `loadHome`: the server's shelves lead Home |
+| `desktopApp/.../DesktopAutoplay.kt` | `tracksFor`: `forkStation`, a Navidrome seed takes `ForkNavidrome.tracks` |
+| `desktopApp/.../DesktopSongMenuUi.kt` | "Start radio (Instant Mix)" on a Navidrome song |
+| `desktopUi/.../player/NowPlayingScreen.kt` | The heart also shows for a Navidrome song |
 | `desktopApp/.../DesktopSourceRegistry.kt` | `resolveLive()`: `ForkNavidrome.stream(song)` first |
 | `desktopApp/.../DesktopLyricsClient.kt` | `lookup()`: the server's timed lyrics first |
 | `desktopApp/.../DesktopPlayerHost.kt` | `canvasFor()`: `NavidromeClips.canvasFor(song)` first |

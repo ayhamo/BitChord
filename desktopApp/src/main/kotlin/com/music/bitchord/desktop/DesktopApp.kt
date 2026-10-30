@@ -327,6 +327,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
@@ -1059,7 +1060,7 @@ fun BitChordDesktopApp() {
         scope.launch {
             // AutoPlay's section behind the seed, as the phone queues a station — which is also
             // what lets a party share it: a context tail is never published.
-            val related = DesktopAutoplay.tracksFor(listOf(seed), seed, INITIAL_RADIO_TRACKS)
+            val related = DesktopAutoplay.tracksFor(listOf(seed), seed, INITIAL_RADIO_TRACKS, forkStation = true)
                 .getOrNull()
                 .orEmpty()
             if (related.isEmpty()) {
@@ -1126,6 +1127,13 @@ fun BitChordDesktopApp() {
             ?.takeIf { it.loading && !it.browseId.startsWith(SPOTIFY_PAGE_PREFIX) }
             ?: return@LaunchedEffect
         collectionError = null
+        ForkNavidrome.collection(pending)?.let { answer -> // fork: a page of the server's, not YouTube's
+            answer.fold(
+                onSuccess = { loaded -> if (openedCollection?.browseId == pending.browseId) openedCollection = loaded },
+                onFailure = { collectionError = it.message ?: "Could not open ${pending.title.ifBlank { "this page" }}" },
+            )
+            return@LaunchedEffect
+        }
         DesktopSearchClient.browse(
             browseId = pending.browseId,
             fallback = BrowseItem(
@@ -2072,6 +2080,10 @@ fun BitChordDesktopApp() {
 
     /** Opens an artist's page, from a card, a search row or the player's credit. */
     fun openArtist(browseId: String, name: String) {
+        if (ForkNavidrome.ownsPage(browseId)) { // fork: the server's artist page is a list of its songs
+            openCollection(browseId, BrowseItem(browseId = browseId, title = name, subtitle = "", thumbnailUrl = null, type = BrowseType.PLAYLIST))
+            return
+        }
         val target = DesktopArtistTarget(browseId, name)
         if (openedArtist == target && artistState is UiState.Success) return
         openedCollection = null
@@ -2478,6 +2490,10 @@ fun BitChordDesktopApp() {
         homeLoadingMore = false
         homeRecentsLoading = signedIn
         scope.launch {
+            launch { // fork: the server's shelves lead Home
+                val shelves = ForkNavidrome.homeShelves()
+                if (generation == homeGeneration && shelves.isNotEmpty()) publishHomeShelves(shelves, prepend = true)
+            }
             launch {
                 DesktopSearchClient.home().fold(
                     onSuccess = { feed ->
@@ -2613,6 +2629,7 @@ fun BitChordDesktopApp() {
 
     // The feed is the account's: signing in, out or across to another channel is a different Home,
     // and Recently Played only exists with an account behind it.
+    LaunchedEffect(Unit) { com.music.bitchord.data.navidrome.NavidromeSettings.saved.drop(1).collect { loadHome() } } // fork: a new login, a new Home
     LaunchedEffect(youtubeSignedIn, activeAccountId) {
         val identity = "${DesktopYouTubeAuth.isSignedIn}/${DesktopAccounts.activeAccountId()}"
         if (homeIdentity != null && identity != homeIdentity) loadHome()

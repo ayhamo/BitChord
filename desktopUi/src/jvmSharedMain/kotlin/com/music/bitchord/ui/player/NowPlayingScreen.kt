@@ -3431,7 +3431,7 @@ fun NowPlayingScreen(
                             // there's no account to record it against — and neither
                             // does a local file or a finished download, which carries
                             // no YouTube identity to rate.
-                            if (signedIn && song.localUri == null) {
+                            if ((signedIn && song.localUri == null) || com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(song.videoId)) { // fork: Navidrome stars
                                 val liked = likeStatus == LikeStatus.LIKE
                                 CircleGlyph(
                                     icon = if (liked) BitChordIcons.HeartFilled else BitChordIcons.Heart,

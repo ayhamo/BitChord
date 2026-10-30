@@ -62,7 +62,9 @@ internal object DesktopAutoplay {
         existing: List<Song>,
         seedSong: Song,
         limit: Int = MAX_QUEUED_AUTOPLAY,
+        forkStation: Boolean = false, // fork: asked for by "Start radio", not AutoPlay
     ): Result<List<Song>> {
+        ForkNavidrome.tracks(existing, seedSong, limit, forkStation)?.let { return it } // fork
         val seed = youtubeSeedFor(seedSong)
         if (seed == null) {
             DesktopTrackLog.log("autoplay: no YouTube match to seed a station on for '${seedSong.title}'")

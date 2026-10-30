@@ -31,16 +31,29 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.music.bitchord.data.LikeState
 import com.music.bitchord.data.lyrics.LyricLine
+import com.music.bitchord.data.model.BrowseType
+import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.LikeStatus
+import com.music.bitchord.data.model.QueueTier
+import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.UiState
+import com.music.bitchord.data.navidrome.NavidromeAlbums
+import com.music.bitchord.data.navidrome.NavidromeArtists
+import com.music.bitchord.data.navidrome.NavidromeClient
 import com.music.bitchord.data.navidrome.NavidromeClips
 import com.music.bitchord.data.navidrome.NavidromeLyrics
 import com.music.bitchord.data.navidrome.NavidromePlatform
+import com.music.bitchord.data.navidrome.NavidromePlaylists
 import com.music.bitchord.data.navidrome.NavidromeRepository
 import com.music.bitchord.data.navidrome.NavidromeSettings
 import com.music.bitchord.data.navidrome.NavidromeSongInfo
+import com.music.bitchord.playback.QueueBuilder
 import java.util.Base64
 import java.util.prefs.Preferences
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
 /**
@@ -70,6 +83,104 @@ internal object ForkNavidrome {
     /** The server's timed lyrics for a Navidrome song, or null: the online sources are asked next. */
     suspend fun lyrics(song: Song): List<LyricLine>? =
         if (owns(song)) NavidromeLyrics.forSong(song.videoId.removePrefix(NavidromeSettings.ID_PREFIX)) else null
+
+    /**
+     * A Navidrome seed's next songs, always from this library: "Start radio" is the server's
+     * Instant Mix, AutoPlay its similar songs (random ones when it has no agent). Null for any
+     * other seed, which goes to YouTube.
+     */
+    suspend fun tracks(existing: List<Song>, seed: Song, limit: Int, station: Boolean): Result<List<Song>>? {
+        if (!owns(seed)) return null
+        if (station) return NavidromeRepository.instantMix(seed)
+        return NavidromeRepository.related(seed).map { related ->
+            QueueBuilder.extend(existing, related, limit).map {
+                it.copy(queueTier = QueueTier.AUTOPLAY, radioName = seed.radioName, playbackSource = seed.playbackSource)
+            }
+        }
+    }
+
+    fun ownsPage(browseId: String): Boolean =
+        browseId.startsWith(NavidromeAlbums.PREFIX) || browseId.startsWith(NavidromeArtists.PREFIX) || browseId.startsWith(NavidromePlaylists.PREFIX)
+
+    /** The page for a Navidrome album, artist or playlist id, or null for any other id. */
+    suspend fun collection(pending: DesktopCollection): Result<DesktopCollection>? {
+        val browseId = pending.browseId
+        if (!ownsPage(browseId)) return null
+        val empty = { "Nothing here" }
+        val answer = NavidromeAlbums.pageState(browseId, empty)
+            ?: NavidromeArtists.pageState(browseId, empty)
+            ?: NavidromePlaylists.pageState(browseId, empty)
+            ?: return Result.failure(IllegalStateException("Nothing here"))
+        return when (answer) {
+            is UiState.Success -> {
+                val header = NavidromeAlbums.header(browseId)
+                val name = browseId.removePrefix(NavidromeAlbums.PREFIX).removePrefix(NavidromeArtists.PREFIX)
+                Result.success(
+                    pending.copy(
+                        title = pending.title.ifBlank { name },
+                        type = if (browseId.startsWith(NavidromeAlbums.PREFIX)) BrowseType.ALBUM else BrowseType.PLAYLIST,
+                        subtitle = header?.artist ?: pending.subtitle,
+                        thumbnailUrl = header?.cover ?: pending.thumbnailUrl ?: answer.data.firstOrNull()?.thumbnailUrl,
+                        songs = answer.data,
+                        loading = false,
+                    ),
+                )
+            }
+            is UiState.Error -> Result.failure(IllegalStateException(answer.message))
+            else -> Result.failure(IllegalStateException("Nothing here"))
+        }
+    }
+
+    /** The server's album and playlist shelves for the top of Home; none without a login or a server. */
+    suspend fun homeShelves(): List<HomeShelf> {
+        if (!NavidromeSettings.isConfigured()) return emptyList()
+        val client = NavidromeRepository.client()
+        fun albums(rows: List<NavidromeClient.AlbumRow>) = rows.map { row ->
+            NavidromeAlbums.remember(row.name, row.id)
+            ShelfItem(
+                title = row.name,
+                subtitle = row.artist.orEmpty(),
+                thumbnailUrl = row.coverArt?.let { client.coverUrl(it) },
+                videoId = null,
+                browseId = NavidromeSettings.albumPageId(row.name),
+            )
+        }.distinctBy { it.browseId }
+        return runCatching {
+            coroutineScope {
+                val shelves = HOME_SHELVES.map { (type, title) ->
+                    async { HomeShelf(title, albums(client.albums(type, PER_SHELF)), "Navidrome") }
+                }
+                val playlists = async {
+                    val items = client.playlists().map { row ->
+                        ShelfItem(
+                            title = row.name,
+                            subtitle = row.songCount?.let { "$it songs" }.orEmpty(),
+                            thumbnailUrl = row.coverArt?.let { client.coverUrl(it) },
+                            videoId = null,
+                            browseId = NavidromePlaylists.pageId(row.id),
+                        )
+                    }
+                    HomeShelf("Playlists", items, "Navidrome")
+                }
+                val loaded = shelves.awaitAll()
+                (listOf(loaded.first(), playlists.await()) + loaded.drop(1)).filter { it.items.isNotEmpty() }
+            }
+        }.getOrElse {
+            if (it is kotlinx.coroutines.CancellationException) throw it
+            DesktopTrackLog.log("navidrome: home shelves: ${it.message}")
+            emptyList()
+        }
+    }
+
+    private const val PER_SHELF = 20
+
+    /** `getAlbumList2` types, in the order the phone shows them. */
+    private val HOME_SHELVES = listOf(
+        "newest" to "Recently added",
+        "recent" to "Recents",
+        "frequent" to "Most played",
+        "random" to "Random",
+    )
 
     /** The stars read so far, from the server's listings. */
     fun starred(): Set<String> =
