@@ -3,6 +3,7 @@ package com.music.bitchord.data.navidrome
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
  * The Navidrome server this fork plays from (fork-only).
@@ -80,8 +81,10 @@ object NavidromeSettings {
         val trimmed = raw.trim().trimEnd('/')
         if (trimmed.isEmpty()) return ""
         val url = if (trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true)) trimmed else "https://$trimmed"
-        // "not a url" normalizes to "https://not a url": only a parseable host counts.
-        return if (runCatching { java.net.URI(url).host }.getOrNull().isNullOrBlank()) "" else url
+        // "not a url" normalizes to "https://not a url": only a parseable host counts. And the client's
+        // own parser has the last word: java.net.URI accepts what HttpUrl refuses (a port of 99999), and
+        // a saved address the client can't use crashed every start.
+        return if (runCatching { java.net.URI(url).host }.getOrNull().isNullOrBlank() || url.toHttpUrlOrNull() == null) "" else url
     }
 
     fun newSalt(): String =

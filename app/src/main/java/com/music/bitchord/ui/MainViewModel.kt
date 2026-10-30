@@ -331,6 +331,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val artist: String,
         val durationMs: Long,
         val album: String?,
+        val localUri: String? = null, // fork: for forkBackOnline's second ask
     )
 
     private var currentLyricsRequest: LyricsRequest? = null
@@ -381,7 +382,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         lyricsFor = key
         lyricsGeneration += 1
         val generation = lyricsGeneration
-        currentLyricsRequest = LyricsRequest(videoId, title, artist, durationMs, album)
+        currentLyricsRequest = LyricsRequest(videoId, title, artist, durationMs, album, localUri)
         selectedLyricsSource = null
         manualLyricsJobs.values.forEach(Job::cancel)
         manualLyricsJobs.clear()
@@ -1745,7 +1746,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val request = currentLyricsRequest ?: return
         if (_lyrics.value != null) return
         lyricsFor = null
-        loadLyrics(request.videoId, request.title, request.artist, request.durationMs, request.album)
+        loadLyrics(request.videoId, request.title, request.artist, request.durationMs, request.album, request.localUri)
     }
 
     /** Refreshes the core feed without blanking the current Play page first. */

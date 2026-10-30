@@ -21,6 +21,10 @@ Next steps, in order:
    - Pick PC-Continued commits. Start with their memory fixes (`c310d0e3`, about 430 lines). The owner should look at their app before deciding on the redesign.
    - Then the rest of the fork's features: offline, radio, saved queues, Home sections.
 
+Full Android audit (Audit request chat, main at a47f039d): 2 high, 8 medium, 17 low, read from the code only. Fixed on `audit-fixes`: H1, H2, M1-M4, M6-M8, L2-L7, L13-L16.
+Tested on the emulator: M1, M2, M6, and a general smoke test. H1 has a unit test. H2, M3, M4, M7, M8 and the lows are fixed by reading only, not seen on a device.
+Left on purpose, ask if they bite: M5 (a keep waiting for an allowed network uses up Android 15's 6-hour limit; needs persisted keeps or WorkManager), L1 (Home hides YouTube's error when server shelves are up), L8 (offline manifest read on the main thread at start), L9-L11 (edits and seeks during a skip's arming window; the crossfade area the owner said to leave), L12 (paused cover flickers on a buffer stall), L17.
+
 Facts worth keeping:
 
 - `desktopUi` is upstream's own copy of the player and pages (split on 2026-10-14 "so a desktop redesign can land without moving the phone"); `desktopApp` depends on `shared` + `desktopUi`, not `sharedUi`. Keep them separate. PC-Continued's `sharedUi` edits map onto `desktopUi`, because their fork predates the split. Today's `sharedUi` differs from that copy by little (Now Playing about 213 lines, Lyrics 287, Queue 40).

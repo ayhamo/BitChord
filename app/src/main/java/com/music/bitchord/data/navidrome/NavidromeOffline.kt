@@ -149,6 +149,12 @@ object NavidromeOffline {
     private val _status = MutableStateFlow(Status(emptyList(), 0, 0))
     val status: StateFlow<Status> = _status.asStateFlow()
 
+    /**
+     * The manifest was there and couldn't be read: nothing says which files are kept, so nothing
+     * is swept this run. Without this one bad write deleted every kept song at the next keep or remove.
+     */
+    @Volatile private var manifestUnreadable = false
+
     fun init(context: Context) {
         appContext = context.applicationContext
         dir = File(context.filesDir, "navidrome_offline").apply { mkdirs() }
@@ -298,8 +304,11 @@ object NavidromeOffline {
                 val keepPartial = !kept && stoppedByAndroid && jobs[id] === me && songs.any(::hasFile) // nothing down yet: no page
                 if (keepPartial) {
                     _pages.update { it + (id to page) }
-                    writeManifest()
-                    writeClips()
+                    // A full disk here must not skip the clean-up below: the notification would stay up for good.
+                    runCatching {
+                        writeManifest()
+                        writeClips()
+                    }.onFailure { Log.d(TAG, "offline $id: ${it.message}") }
                     publishRow()
                     NavidromeRepository.invalidateListing()
                 }
@@ -444,6 +453,14 @@ object NavidromeOffline {
     }
 
     /**
+     * Stops a download. A page already kept (a playlist re-syncing itself) stays as it was;
+     * one being kept for the first time goes, as [remove].
+     */
+    fun stop(id: String) {
+        if (id in _pages.value) jobs[id]?.cancel() else remove(id)
+    }
+
+    /**
      * Lets a page go, kept or still downloading. Its files are deleted unless
      * another kept page, or one still downloading, holds them. Off the main
      * thread: it can be thousands of files.
@@ -477,7 +494,7 @@ object NavidromeOffline {
      * and are left to them.
      */
     private fun sweep() = synchronized(ioLock) {
-        if (!::dir.isInitialized) return@synchronized
+        if (!::dir.isInitialized || manifestUnreadable) return@synchronized
         val pages = _pages.value.values + active.values
         val songIds = pages.flatMap { it.songs }.mapTo(HashSet()) { it.videoId.removePrefix(NavidromeSettings.ID_PREFIX) }
         val coverIds = pages.flatMap { p -> p.songs.map { it.thumbnailUrl } + p.cover }.mapNotNullTo(HashSet()) { it?.let(::coverIdOf) }
@@ -543,9 +560,10 @@ object NavidromeOffline {
             try {
                 call.execute().use { response ->
                     if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
-                    // Subsonic answers its errors (bad login, song gone) with 200 and a JSON or XML body:
-                    // never keep that as a song or a cover.
-                    if (response.body.contentType()?.subtype?.let { "json" in it || "xml" in it } == true) {
+                    // Subsonic answers its errors (bad login, song gone) with 200 and a JSON or XML body, and a
+                    // login page in front of the server (a proxy's, a captive portal's) with 200 and HTML:
+                    // never keep that as a song or a cover. A kept file is never fetched again.
+                    if (response.body.contentType()?.let { it.type == "text" || "json" in it.subtype || "xml" in it.subtype } == true) {
                         throw IOException("server error instead of a file")
                     }
                     response.body.byteStream().use { input ->
@@ -651,6 +669,7 @@ object NavidromeOffline {
         }.associateBy { it.id }
     }.getOrElse {
         Log.d(TAG, "offline manifest: ${it.message}")
+        manifestUnreadable = true
         emptyMap()
     }
 
@@ -671,7 +690,11 @@ object NavidromeOffline {
             }
         }
         val tmp = File(dir, "offline.json.tmp")
-        tmp.writeText(array.toString())
+        // On disk before the rename: a power cut in between could otherwise leave an empty manifest.
+        java.io.FileOutputStream(tmp).use { out ->
+            out.write(array.toString().toByteArray())
+            out.fd.sync()
+        }
         tmp.renameTo(manifest)
     }
 

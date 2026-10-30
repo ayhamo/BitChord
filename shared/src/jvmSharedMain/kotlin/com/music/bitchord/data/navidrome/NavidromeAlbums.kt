@@ -54,7 +54,13 @@ object NavidromeAlbums {
                 ?: client.searchAlbums(name).filter { it.name == name }.map { it.id }
                     .onEach { remember(name, it) }
             if (albumIds.isEmpty()) return null
-            val albums = albumIds.map { client.album(it) }
+            val albums = try {
+                albumIds.map { client.album(it) }
+            } catch (e: java.io.IOException) {
+                // A rescan after a tag edit changes an album's id: forget the remembered ones and look it up.
+                if (ids.remove(name) == null) throw e
+                client.searchAlbums(name).filter { it.name == name }.onEach { remember(name, it.id) }.map { client.album(it.id) }
+            }
             headers[browseId] = Header(
                 cover = albums.firstNotNullOfOrNull { it.first?.coverArt }?.let { client.coverUrl(it) },
                 artist = albums.mapNotNull { it.first?.artist }.distinct().joinToString(", ").ifBlank { null },

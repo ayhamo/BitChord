@@ -49,6 +49,12 @@ object ForkPreload {
         NavidromeSettings.isNavidromeId(id) || com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(id) ||
             com.music.bitchord.data.webdav.WebDavConfig.isWebDavId(id) || com.music.bitchord.data.smb.SmbConfig.isSmbId(id)
 
+    /** Stops with upstream's read-ahead (a pause, the service going): files shouldn't keep coming down with nothing playing. */
+    fun cancel() {
+        pending = emptyList()
+        job?.cancel()
+    }
+
     /** Called with the player whenever upstream's read-ahead is (`PlaybackService.prefetchAround`). */
     fun around(player: Player) {
         val count = ForkSettings.preloadSongs.value

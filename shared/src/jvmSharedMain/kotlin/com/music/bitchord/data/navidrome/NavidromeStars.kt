@@ -38,7 +38,7 @@ object NavidromeStars {
     suspend fun rate(videoId: String, status: LikeStatus): Result<Unit> = runCatching {
         val id = videoId.removePrefix(NavidromeSettings.ID_PREFIX)
         NavidromeRepository.client().setStarred(id, status == LikeStatus.LIKE)
-    }
+    }.onFailure { if (it is kotlin.coroutines.cancellation.CancellationException) throw it } // the call may have gone through: no roll-back on a cancel
 
     /** The server's starred songs as liked, without undoing a change made in this session. */
     fun seed(starredVideoIds: Set<String>) = LikeState.seedLiked(starredVideoIds)

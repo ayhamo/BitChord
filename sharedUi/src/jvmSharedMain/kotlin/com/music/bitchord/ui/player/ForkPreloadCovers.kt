@@ -24,8 +24,9 @@ import com.music.bitchord.data.model.artworkAt
 internal fun ForkPreloadCovers(queue: List<Song>, current: Song) {
     // Once per queue and song, not on every recomposition of the player (a Navidrome queue runs to thousands).
     val index = remember(queue, current.videoId) { queue.indexOfFirst { it.videoId == current.videoId } }
-    val first = rememberRemoteArtworkUrl(queue.getOrNull(index + 1).takeIf { index >= 0 })
-    val second = rememberRemoteArtworkUrl(queue.getOrNull(index + 2).takeIf { index >= 0 })
+    // Only songs that carry an address: for a WebDAV or SMB file without one this would read the file itself.
+    val first = rememberRemoteArtworkUrl(queue.getOrNull(index + 1).takeIf { index >= 0 && it?.thumbnailUrl != null })
+    val second = rememberRemoteArtworkUrl(queue.getOrNull(index + 2).takeIf { index >= 0 && it?.thumbnailUrl != null })
     val context = LocalPlatformContext.current
     LaunchedEffect(first, second) {
         val loader = SingletonImageLoader.get(context)

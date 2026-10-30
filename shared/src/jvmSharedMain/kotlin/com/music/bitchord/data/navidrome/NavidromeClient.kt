@@ -137,8 +137,8 @@ class NavidromeClient(
     }
 
     /** `getAlbumList2` of [type] (`newest`, `recent`, `frequent`, `random`, …). */
-    suspend fun albums(type: String, size: Int): List<AlbumRow> {
-        val result = call("getAlbumList2", "type" to type, "size" to size.toString())
+    suspend fun albums(type: String, size: Int, offset: Int = 0): List<AlbumRow> {
+        val result = call("getAlbumList2", "type" to type, "size" to size.toString(), "offset" to offset.toString())
         return asList(result["albumList2"]?.jsonObject?.get("album")).mapNotNull { it.toAlbumRow() }
     }
 

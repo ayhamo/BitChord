@@ -134,6 +134,8 @@ object NavidromeClips {
         val probe = Request.Builder().url(url).header("Range", "bytes=0-0").get().build()
         Http.client.newCall(probe).execute().use { response ->
             when {
+                // A login page in front of the server answers 200 too. Not a clip, and not "no clip" either.
+                response.isSuccessful && response.body.contentType()?.type == "text" -> null.also { Log.d(TAG, "$key: a page, not a clip") }
                 response.isSuccessful -> url.also {
                     found[key] = it
                     Log.d(TAG, "$key: found")
