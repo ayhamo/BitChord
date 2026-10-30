@@ -64,6 +64,7 @@ fun main() {
     // The public "apps open right now" count; see Presence.
     DesktopPresence.install()
     ForkDebugBridge.install() // fork: test door, off unless asked for
+    ForkNavidrome.install() // fork
     desktopMain()
 }
 

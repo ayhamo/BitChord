@@ -118,6 +118,7 @@ object DesktopScrobbling {
     }
 
     suspend fun updateNowPlaying(song: Song): Result<Unit> = runCatching {
+        com.music.bitchord.data.navidrome.NavidromeScrobble.nowPlaying(song, scope) // fork
         if (lastFmConfigured) updateLastFm(song)
         if (listenBrainzConfigured) submitListenBrainz(song, "playing_now", 0L, song.durationMillis(), 0L)
     }
@@ -181,6 +182,7 @@ object DesktopScrobbling {
             timerStartedAtMs = 0L
             activeStartedAtMs.takeIf { activeSongId == song.videoId } ?: System.currentTimeMillis()
         }
+        com.music.bitchord.data.navidrome.NavidromeScrobble.finished(song, startedAt, scope) // fork
         scope.launch {
             try {
                 val minDurationMs = DesktopScrobbleSettings.minDuration.value * 1_000L

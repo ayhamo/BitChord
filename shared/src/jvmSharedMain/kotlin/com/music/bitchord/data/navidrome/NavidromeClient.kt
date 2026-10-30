@@ -349,11 +349,11 @@ class NavidromeClient(
     private fun JsonObject.int(key: String): Int? =
         (get(key) as? JsonPrimitive)?.intOrNull
 
-    internal companion object {
+    companion object {
         private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
         /** `getLyricsBySongId`'s answer (the `subsonic-response` object); apart from [call] so it can be tested. */
-        internal fun parseLyrics(result: JsonObject): List<LyricsRow> {
+        fun parseLyrics(result: JsonObject): List<LyricsRow> {
             val list = result["lyricsList"]?.jsonObject?.get("structuredLyrics") ?: return emptyList()
             return (list as? JsonArray ?: JsonArray(listOf(list))).mapNotNull { entry ->
                 val o = entry as? JsonObject ?: return@mapNotNull null

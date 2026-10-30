@@ -1,6 +1,5 @@
 package com.music.bitchord.data.navidrome
 
-import com.music.bitchord.data.LocalGroups
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
 import java.util.concurrent.ConcurrentHashMap
@@ -23,7 +22,7 @@ import java.util.concurrent.ConcurrentHashMap
  */
 object NavidromeAlbums {
 
-    val PREFIX = LocalGroups.albumPageId(NavidromeSettings.BROWSE_ID, "")
+    val PREFIX = NavidromeSettings.albumPageId("")
 
     /** Album server ids by album name, from songs and cards seen this session. */
     private val ids = ConcurrentHashMap<String, MutableSet<String>>()
@@ -47,7 +46,7 @@ object NavidromeAlbums {
     suspend fun pageState(browseId: String, emptyText: () -> String): UiState<List<Song>>? {
         if (!browseId.startsWith(PREFIX) || !NavidromeSettings.isConfigured()) return null
         // Offline mode: the kept copy, or the library listing (the kept songs) groups the album.
-        if (com.music.bitchord.fork.ForkNetwork.offline.value) return NavidromeOffline.pageState(browseId)
+        if (NavidromePlatform.offline.value) return NavidromePlatform.kept.pageState(browseId)
         val name = browseId.removePrefix(PREFIX)
         return runCatching {
             val client = NavidromeRepository.client()
@@ -67,7 +66,7 @@ object NavidromeAlbums {
             onSuccess = { songs -> if (songs.isEmpty()) UiState.Error(emptyText()) else UiState.Success(songs) },
             // No server (offline, unreachable): the kept copy, if the page is kept.
             onFailure = { if (it is kotlin.coroutines.cancellation.CancellationException) throw it // left the page: not an error
-                NavidromeOffline.pageState(browseId) ?: UiState.Error(it.message ?: emptyText()) },
+                NavidromePlatform.kept.pageState(browseId) ?: UiState.Error(it.message ?: emptyText()) },
         )
     }
 

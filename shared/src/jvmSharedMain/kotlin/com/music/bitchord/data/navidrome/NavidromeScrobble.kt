@@ -2,7 +2,6 @@ package com.music.bitchord.data.navidrome
 
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.model.Song
-import com.music.bitchord.fork.ForkSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -25,7 +24,7 @@ object NavidromeScrobble {
     fun finished(song: Song, startMs: Long, scope: CoroutineScope) = send(song, scope, submission = true, timeMs = startMs)
 
     private fun send(song: Song, scope: CoroutineScope, submission: Boolean, timeMs: Long?) {
-        if (!ForkSettings.navidromeScrobble.value || !NavidromeSettings.isNavidromeId(song.videoId)) return
+        if (!NavidromePlatform.scrobble() || !NavidromeSettings.isNavidromeId(song.videoId)) return
         if (!NavidromeSettings.isConfigured()) return
         val id = song.videoId.removePrefix(NavidromeSettings.ID_PREFIX)
         scope.launch {

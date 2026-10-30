@@ -1,6 +1,5 @@
 package com.music.bitchord.data.navidrome
 
-import com.music.bitchord.data.LocalGroups
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
 
@@ -17,14 +16,14 @@ import com.music.bitchord.data.model.UiState
  */
 object NavidromeArtists {
 
-    val PREFIX = LocalGroups.artistPageId(NavidromeSettings.BROWSE_ID, "")
+    val PREFIX = NavidromeSettings.artistPageId("")
 
     private const val PAGE = 500
 
     suspend fun pageState(browseId: String, emptyText: () -> String): UiState<List<Song>>? {
         if (!browseId.startsWith(PREFIX) || !NavidromeSettings.isConfigured()) return null
         // Offline mode: the library listing (the kept songs) answers.
-        if (com.music.bitchord.fork.ForkNetwork.offline.value) return null
+        if (NavidromePlatform.offline.value) return null
         val name = browseId.removePrefix(PREFIX)
         return runCatching {
             val client = NavidromeRepository.client()

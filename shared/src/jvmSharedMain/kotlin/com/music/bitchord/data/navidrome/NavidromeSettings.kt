@@ -1,9 +1,5 @@
 package com.music.bitchord.data.navidrome
 
-import android.content.Context
-import android.content.SharedPreferences
-import com.music.bitchord.auth.EncryptedPrefs
-import com.music.bitchord.data.webdav.WebDavConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -11,7 +7,7 @@ import kotlinx.coroutines.flow.asStateFlow
 /**
  * The Navidrome server this fork plays from (fork-only).
  *
- * Kept apart from [com.music.bitchord.data.settings.AppSettings] so upstream
+ * Kept apart from `AppSettings` so upstream
  * changes to that file never conflict with it. All three values live in their
  * own encrypted store: the password is needed again later for Navidrome's own
  * login (animated backdrops sit behind it), so it can't be reduced to a token.
@@ -27,7 +23,7 @@ object NavidromeSettings {
     /** A Navidrome song, which YouTube has never heard of: nothing YouTube-side should be asked about it. */
     fun isNavidromeId(videoId: String?): Boolean = videoId?.startsWith(ID_PREFIX) == true
 
-    private lateinit var prefs: SharedPreferences
+    private lateinit var prefs: NavidromePlatform.Store
 
     private val _url = MutableStateFlow("")
     private val _username = MutableStateFlow("")
@@ -45,18 +41,18 @@ object NavidromeSettings {
     var salt: String = ""
         private set
 
-    fun init(context: Context) {
-        prefs = EncryptedPrefs.open(context, "bitchord_navidrome", "bitchord_navidrome_plain")
-        _url.value = prefs.getString(KEY_URL, "").orEmpty()
-        _username.value = prefs.getString(KEY_USERNAME, "").orEmpty()
-        _password.value = prefs.getString(KEY_PASSWORD, "").orEmpty()
-        salt = prefs.getString(KEY_SALT, null) ?: newSalt().also { prefs.edit().putString(KEY_SALT, it).apply() }
-        NavidromeClips.init(context)
-        NavidromeSongInfo.init()
-        NavidromeOffline.init(context)
-        NavidromeLyrics.init(context)
-        NavidromeRadio.init(context)
+    fun init(store: NavidromePlatform.Store) {
+        prefs = store
+        _url.value = prefs.string(KEY_URL).orEmpty()
+        _username.value = prefs.string(KEY_USERNAME).orEmpty()
+        _password.value = prefs.string(KEY_PASSWORD).orEmpty()
+        salt = prefs.string(KEY_SALT) ?: newSalt().also { prefs.putStrings(mapOf(KEY_SALT to it)) }
     }
+
+    /** The library's own album and artist pages (`LocalGroups` on the phone builds the same ids). */
+    fun albumPageId(name: String): String = "local:group:album:navidrome:$name"
+
+    fun artistPageId(name: String): String = "local:group:artist:navidrome:$name"
 
     fun isConfigured(): Boolean = isConfigured(_url.value, _username.value)
 
@@ -72,12 +68,7 @@ object NavidromeSettings {
         _username.value = username.trim()
         _password.value = password
         salt = newSalt()
-        prefs.edit()
-            .putString(KEY_URL, _url.value)
-            .putString(KEY_USERNAME, _username.value)
-            .putString(KEY_PASSWORD, password)
-            .putString(KEY_SALT, salt)
-            .apply()
+        prefs.putStrings(mapOf(KEY_URL to _url.value, KEY_USERNAME to _username.value, KEY_PASSWORD to password, KEY_SALT to salt))
         NavidromeRepository.invalidate()
         _saved.value++
     }
@@ -85,8 +76,13 @@ object NavidromeSettings {
     fun clear() = save("", "", "")
 
     /** `music.example.com/` → `https://music.example.com`; anything without a host reads as blank. */
-    fun normalizeUrl(raw: String): String =
-        WebDavConfig.normalizeUrl(raw).takeIf(WebDavConfig::isConfigured).orEmpty()
+    fun normalizeUrl(raw: String): String {
+        val trimmed = raw.trim().trimEnd('/')
+        if (trimmed.isEmpty()) return ""
+        val url = if (trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true)) trimmed else "https://$trimmed"
+        // "not a url" normalizes to "https://not a url": only a parseable host counts.
+        return if (runCatching { java.net.URI(url).host }.getOrNull().isNullOrBlank()) "" else url
+    }
 
     fun newSalt(): String =
         ByteArray(8).also(java.security.SecureRandom()::nextBytes).joinToString("") { String.format(java.util.Locale.ROOT, "%02x", it) }

@@ -486,6 +486,7 @@ private enum class DesktopDestination(val id: String, val label: String) {
     HISTORY("history", "History"),
     DOWNLOADS("downloads", "Downloads"),
     LOCAL_MUSIC("local-music", "Local Music"),
+    NAVIDROME("navidrome", "Navidrome"), // fork
     SETTINGS("settings", "Settings"),
 }
 
@@ -1004,7 +1005,7 @@ fun BitChordDesktopApp() {
         persistence.saveLikedIds(likedIds)
         persistence.saveDislikedIds(dislikedIds)
         scope.launch {
-            DesktopSearchClient.rate(song.videoId, status)
+            (if (ForkNavidrome.owns(song)) com.music.bitchord.data.navidrome.NavidromeStars.rate(song.videoId, status) else DesktopSearchClient.rate(song.videoId, status)) // fork: a Navidrome song's heart is its star on the server
                 .onFailure { DesktopTrackLog.log("youtube: rating ${song.videoId} failed: ${it.message}") }
         }
     }
@@ -4358,6 +4359,22 @@ fun BitChordDesktopApp() {
                             contentPadding = contentPadding,
                             menu = { song -> songMenu(song) },
                         )
+                        destination == DesktopDestination.NAVIDROME -> ForkNavidromeScreen( // fork
+                            contentPadding = contentPadding,
+                            onStars = { likedIds = likedIds + it },
+                        ) { songs ->
+                            DesktopLocalMusicPage(
+                                songs = songs,
+                                onSongClick = { song -> playSongs(songs, songs.indexOf(song).coerceAtLeast(0), DesktopQueueSource("Navidrome", PlaybackSourceType.BROWSE, com.music.bitchord.data.navidrome.NavidromeSettings.BROWSE_ID)) },
+                                contentPadding = PaddingValues(0.dp),
+                                title = "Navidrome",
+                                subtitle = "The library on your server",
+                                emptyTitle = "Nothing on the server yet",
+                                emptyDescription = "Songs on your Navidrome server show up here.",
+                                persistenceKey = "navidrome",
+                                menu = { song -> songMenu(song) },
+                            )
+                        }
                     }
                 }
                 }
@@ -4797,6 +4814,15 @@ private fun DesktopSidebar(
                     onHide = { DesktopSidebarVisibility.hide(LOCAL_MUSIC_KEY, "Local Music") },
                 )
             }
+            if (NAVIDROME_KEY !in hiddenSidebar) { // fork
+                DesktopSidebarItem(
+                    BitChordIcons.Library,
+                    "Navidrome",
+                    destination == DesktopDestination.NAVIDROME,
+                    onClick = { onDestinationSelected(DesktopDestination.NAVIDROME) },
+                    onHide = { DesktopSidebarVisibility.hide(NAVIDROME_KEY, "Navidrome") },
+                )
+            }
             Spacer(Modifier.height(6.dp))
             HorizontalDivider(color = desktopChromeDivider())
             Spacer(Modifier.height(12.dp))
@@ -4920,6 +4946,7 @@ private fun DesktopSidebarItem(
 private const val HISTORY_KEY = "dest:HISTORY"
 private const val DOWNLOADS_KEY = "dest:DOWNLOADS"
 private const val LOCAL_MUSIC_KEY = "dest:LOCAL_MUSIC"
+private const val NAVIDROME_KEY = "dest:NAVIDROME" // fork
 
 /**
  * The "N hidden" row that brings tucked-away rows back: a menu of everything

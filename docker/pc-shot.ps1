@@ -11,6 +11,7 @@ public class W {
   [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr dc, uint f);
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
   public struct RECT { public int L, T, R, B; }
   public static List<IntPtr> For(uint want) {
     var res = new List<IntPtr>();
@@ -19,6 +20,7 @@ public class W {
   }
 }
 "@
+[void][W]::SetProcessDPIAware() # or GetWindowRect reports scaled sizes and the picture is cropped
 $procs = Get-CimInstance Win32_Process -Filter "Name='java.exe'" | Where-Object { $_.CommandLine -like '*desktop.MainKt*' }
 foreach ($p in $procs) {
   "java pid $($p.ProcessId) MB $([int]($p.WorkingSetSize/1MB))"

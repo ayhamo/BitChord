@@ -33,6 +33,14 @@ class NavidromeInstantMixTest {
         assertEquals(listOf(flac), NavidromeRepository.withoutRepeats(seed, listOf(flac, opus)))
     }
 
+    /** The shared module builds these without `LocalGroups`, which stays on the phone: they must stay the same ids. */
+    @Test
+    fun pageIdsMatchTheLibrarysOwn() {
+        val folder = com.music.bitchord.data.navidrome.NavidromeSettings.BROWSE_ID
+        assertEquals(com.music.bitchord.data.LocalGroups.albumPageId(folder, "An Album"), com.music.bitchord.data.navidrome.NavidromeSettings.albumPageId("An Album"))
+        assertEquals(com.music.bitchord.data.LocalGroups.artistPageId(folder, "An Artist"), com.music.bitchord.data.navidrome.NavidromeSettings.artistPageId("An Artist"))
+    }
+
     @Test
     fun anEmptyAnswerStaysEmpty() {
         assertEquals(emptyList<Song>(), NavidromeRepository.withoutRepeats(seed, emptyList()))

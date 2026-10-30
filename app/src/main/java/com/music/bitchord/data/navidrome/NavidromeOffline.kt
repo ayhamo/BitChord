@@ -361,7 +361,7 @@ object NavidromeOffline {
         }
         if (lyricsFile(songId) == null) {
             bestEffort("lyrics $songId") {
-                NavidromeLyrics.lrcFor(songId, song)?.let { File(lyricsDir, "$songId.lrc").writeText(it) }
+                (NavidromeLyrics.serverLrc(songId) ?: com.music.bitchord.download.LyricsTag.forTrack(song)?.let { it.enhanced ?: it.plain })?.let { File(lyricsDir, "$songId.lrc").writeText(it) }
             }
         }
     }

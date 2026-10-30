@@ -1,13 +1,10 @@
 package com.music.bitchord.data.navidrome
 
-import android.content.Context
-import android.content.SharedPreferences
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.canvas.CanvasSource
 import com.music.bitchord.data.model.Song
-import com.music.bitchord.fork.ForkSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -36,7 +33,7 @@ import java.util.concurrent.ConcurrentHashMap
  * phone background) is handed over as [CanvasSource.BACKDROP], which the player
  * presents like Spotify's Canvas: full screen, the cover back on top while
  * paused. Without one, the cover clip plays over the sleeve. Each has its own
- * switch ([ForkSettings][com.music.bitchord.fork.ForkSettings]).
+ * switch (`ForkSettings`).
  * The clip is handed to the player as an ordinary canvas ([CanvasArtwork]),
  * tried before the catalogue searches, so it plays through BitChord's canvas
  * player (the still cover first, the clip fading in once it draws, paused in
@@ -54,11 +51,11 @@ object NavidromeClips {
     private const val TAG = "BitChordNavidrome"
     private const val MISS_MS = 7L * 24 * 60 * 60 * 1000
 
-    private lateinit var prefs: SharedPreferences
+    private lateinit var prefs: NavidromePlatform.Store
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     /** The two clips a song can have, in the order they are tried. */
-    internal enum class Kind(val suffix: String) { COVER(".cover.mp4"), BACKDROP(".background.mp4") }
+    enum class Kind(val suffix: String) { COVER(".cover.mp4"), BACKDROP(".background.mp4") }
 
     /** Clip URLs found this session, by "<song id>|<kind>". */
     private val found = ConcurrentHashMap<String, String>()
@@ -69,11 +66,10 @@ object NavidromeClips {
     @Volatile private var token: String? = null
     private val tokenLock = Any()
 
-    fun init(context: Context) {
-        // Plain prefs: only "no clip for this song" notes, nothing secret.
-        prefs = context.getSharedPreferences("bitchord_navidrome_clips", Context.MODE_PRIVATE)
+    fun init(store: NavidromePlatform.Store) {
+        prefs = store
         // Kept covers and clips (NavidromeOffline) are answered from the phone before anything goes out.
-        Http.forkInterceptor = Interceptor { chain -> NavidromeOffline.serve(chain.request()) ?: interceptor.intercept(chain) }
+        Http.forkInterceptor = Interceptor { chain -> NavidromePlatform.kept.serve(chain.request()) ?: interceptor.intercept(chain) }
     }
 
     /** The settings changed: a different server or account answers differently. */
@@ -81,14 +77,14 @@ object NavidromeClips {
         token = null
         found.clear()
         paths.clear()
-        if (::prefs.isInitialized) prefs.edit().clear().apply()
+        if (::prefs.isInitialized) prefs.clear()
     }
 
     /** Forgets the "no clip" notes of [kind] (the clip cache's clear button): the server is asked again. */
-    internal fun forgetMisses(kind: Kind) {
+    fun forgetMisses(kind: Kind) {
         if (!::prefs.isInitialized) return
         val suffix = "|${kind.name}"
-        prefs.edit().apply { prefs.all.keys.filter { it.endsWith(suffix) }.forEach(::remove) }.apply()
+        prefs.remove(prefs.keys().filter { it.endsWith(suffix) })
     }
 
     /** The song's clip, cover first, or null (none, switched off, not a Navidrome song, or the server couldn't be asked). */
@@ -120,13 +116,13 @@ object NavidromeClips {
     }
 
     /** The song's clip of [kind], kept or looked up; for "Available offline". */
-    internal fun find(id: String, kind: Kind): String? = clip(id, kind)
+    fun find(id: String, kind: Kind): String? = clip(id, kind)
 
     private fun clip(id: String, kind: Kind): String? {
-        NavidromeOffline.clipUrl(id, kind)?.let { return it }
+        NavidromePlatform.kept.clipUrl(id, kind == Kind.BACKDROP)?.let { return it }
         val key = "$id|${kind.name}"
         found[key]?.let { return it }
-        if (System.currentTimeMillis() - prefs.getLong(key, 0L) < MISS_MS) return null
+        if (System.currentTimeMillis() - prefs.long(key) < MISS_MS) return null
         return lookUp(id, kind, key)
     }
 
@@ -146,7 +142,7 @@ object NavidromeClips {
                 // `Cache-Control: private, max-age=604800`. A 404 without it (route missing, proxy
                 // reloading), a 5xx or a timeout is a failure, asked again next time.
                 response.code == 404 && response.header("Cache-Control")?.contains("max-age") == true -> {
-                    prefs.edit().putLong(key, System.currentTimeMillis()).apply()
+                    prefs.putLong(key, System.currentTimeMillis())
                     null
                 }
                 else -> null.also { Log.d(TAG, "$key: HTTP ${response.code}") }
@@ -172,7 +168,7 @@ object NavidromeClips {
     }
 
     /** `…/Youtube FLAC/001-Song.flac` → `<base>/rest/x-clip/Youtube FLAC/001-Song.cover.mp4` (or `.background.mp4`). */
-    internal fun clipUrl(base: HttpUrl, songPath: String, kind: Kind): HttpUrl? {
+    fun clipUrl(base: HttpUrl, songPath: String, kind: Kind): HttpUrl? {
         val parts = songPath.split('/', '\\').filter { it.isNotEmpty() }
         if (parts.size < 2) return null
         val file = parts.last()

@@ -310,6 +310,7 @@ internal object DesktopSourceRegistry {
         quality: String?,
         excludedSourceId: String? = null,
     ): Result<DesktopLiveResolution> = runCatching {
+        ForkNavidrome.stream(song)?.let { return@runCatching DesktopLiveResolution(it) } // fork
         val available = playbackAdapters(quality)
         val owned = available.any { it.owns(song) } ||
             DesktopModuleSource.parseTrack(song.videoId) != null ||

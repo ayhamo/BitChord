@@ -1,6 +1,5 @@
 package com.music.bitchord.data.navidrome
 
-import android.content.Context
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.lyrics.LrcLib
 import com.music.bitchord.data.lyrics.LyricLine
@@ -61,8 +60,8 @@ object NavidromeLyrics {
         },
     )
 
-    fun init(context: Context) {
-        cacheDir = File(context.cacheDir, "navidrome_lyrics").apply { mkdirs() }
+    fun init(directory: File) {
+        cacheDir = directory.apply { mkdirs() }
     }
 
     /**
@@ -71,7 +70,7 @@ object NavidromeLyrics {
      * for its own tags, as any file).
      */
     fun songIdFor(uri: String): String? {
-        NavidromeOffline.songIdForFile(uri)?.let { id -> return id.takeIf { NavidromeOffline.lyricsFile(it) != null } }
+        NavidromePlatform.kept.songIdForFile(uri)?.let { id -> return id.takeIf { NavidromePlatform.kept.lyricsFile(it) != null } }
         if (!NavidromeSettings.isConfigured()) return null
         val url = uri.toHttpUrlOrNull() ?: return null
         val base = NavidromeSettings.url.value.toHttpUrlOrNull() ?: return null
@@ -84,7 +83,7 @@ object NavidromeLyrics {
     suspend fun forSong(songId: String): List<LyricLine>? = lock.withLock {
         // Under the lock, so the second of two callers for one song gets the first one's answer.
         answers[songId]?.let { return@withLock it.ifEmpty { null } }
-        (NavidromeOffline.lyricsFile(songId) ?: cacheFile(songId))?.let { file ->
+        (NavidromePlatform.kept.lyricsFile(songId) ?: cacheFile(songId))?.let { file ->
             parse(runCatching { file.readText() }.getOrNull())?.let { lines ->
                 answers[songId] = lines
                 return@withLock lines
@@ -117,17 +116,15 @@ object NavidromeLyrics {
         if (answers[songId]?.isEmpty() != true) return
         answers[songId] = lines // shown again this session too, also with no network
         scope.launch {
-            if (cacheFile(songId) != null || NavidromeOffline.lyricsFile(songId) != null) return@launch
+            if (cacheFile(songId) != null || NavidromePlatform.kept.lyricsFile(songId) != null) return@launch
             write(songId, lines)
         }
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    /** LRC for keeping [song] offline: the server's timed lyrics, else the online sources', as a download embeds them. */
-    internal suspend fun lrcFor(songId: String, song: Song): String? =
-        forSong(songId)?.asLrc()?.takeIf { it.isNotBlank() }
-            ?: com.music.bitchord.download.LyricsTag.forTrack(song)?.let { it.enhanced ?: it.plain }
+    /** The server's timed lyrics for [songId] as LRC, or null. */
+    suspend fun serverLrc(songId: String): String? = forSong(songId)?.asLrc()?.takeIf { it.isNotBlank() }
 
     /** Bytes the lyrics cache takes. */
     fun cacheBytes(): Long = cacheDir?.listFiles()?.sumOf { it.length() } ?: 0L
@@ -159,7 +156,7 @@ object NavidromeLyrics {
             ?.withBackgroundVocals()
 
     /** The first timed entry as player lines, or null when the server only had plain text (or nothing). */
-    internal fun linesFrom(rows: List<NavidromeClient.LyricsRow>): List<LyricLine>? =
+    fun linesFrom(rows: List<NavidromeClient.LyricsRow>): List<LyricLine>? =
         rows.firstOrNull { it.synced && it.lines.isNotEmpty() }
             ?.let { LrcLib.parseLrc(it.toLrc()) }
             ?.takeIf { parsed -> parsed.any { it.text.isNotBlank() } }

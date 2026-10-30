@@ -90,6 +90,7 @@ object DesktopLyricsClient {
 
         // A downloaded or local file carries its own words; asking servers for a string already
         // on disk is a round trip, and it is why a download showed nothing offline.
+        if (only == null) ForkNavidrome.lyrics(song)?.let { return Result.success(DesktopLyrics("Navidrome", it)) } // fork
         val embedded = if (only == null) embedded(song) else null
         val result = if (embedded != null) {
             Result.success(DesktopLyrics("Downloaded", embedded))

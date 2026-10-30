@@ -1,11 +1,10 @@
 package com.music.bitchord.data.navidrome
 
-import com.music.bitchord.data.LocalGroups
 import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.playback.QueueBuilder
-import com.music.bitchord.playback.QueueCoordinator.asQueueEntry
+import com.music.bitchord.playback.QueueTimeline
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -53,8 +52,8 @@ object NavidromeRepository {
 
     suspend fun getSongs(): List<Song> = lock.withLock {
         // Offline mode (the switch, or no network): the songs kept on the phone, so the library pages and search show only those.
-        if (com.music.bitchord.fork.ForkNetwork.offline.value) return@withLock NavidromeOffline.keptSongs()
-        cached?.takeIf { android.os.SystemClock.elapsedRealtime() - cachedAt < CACHE_MS }?.let { return@withLock it }
+        if (NavidromePlatform.offline.value) return@withLock NavidromePlatform.kept.keptSongs()
+        cached?.takeIf { (System.nanoTime() / 1_000_000) - cachedAt < CACHE_MS }?.let { return@withLock it }
         if (!isConfigured()) return@withLock emptyList()
         val startedAt = generation
         val client = client()
@@ -75,13 +74,13 @@ object NavidromeRepository {
         // The settings changed while this was paging: it describes the old server.
         if (startedAt == generation) {
             cached = songs
-            cachedAt = android.os.SystemClock.elapsedRealtime()
+            cachedAt = (System.nanoTime() / 1_000_000)
         }
         songs
     }
 
     /** A client for the saved server, with the saved salt so its URLs stay the same across starts. */
-    internal fun client() = NavidromeClient(
+    fun client() = NavidromeClient(
         NavidromeSettings.url.value,
         NavidromeSettings.username.value,
         NavidromeSettings.password.value,
@@ -122,12 +121,12 @@ object NavidromeRepository {
                 playbackSource = seed.playbackSource,
                 playbackSourceType = seed.playbackSourceType,
                 playbackSourceId = seed.playbackSourceId,
-            ).asQueueEntry(QueueTier.AUTOPLAY)
+            ).let { song -> with(QueueTimeline) { song.asQueueEntry(QueueTier.AUTOPLAY) } }
         }
     }
 
     /** Each recording once and never the seed's, in the server's order: one song can be in the library twice (a FLAC and an opus copy). */
-    internal fun withoutRepeats(seed: Song, songs: List<Song>): List<Song> {
+    fun withoutRepeats(seed: Song, songs: List<Song>): List<Song> {
         val taken = mutableListOf(seed)
         return songs.filter { song ->
             taken.none { QueueBuilder.isSameRecording(it, song) } && taken.add(song)
@@ -143,29 +142,29 @@ object NavidromeRepository {
      * and artist links lead there, and the player doesn't ask YouTube to fill
      * them in for a song it has never heard of.
      */
-    internal fun NavidromeClient.SongRow.toSong(client: NavidromeClient): Song {
+    fun NavidromeClient.SongRow.toSong(client: NavidromeClient): Song {
         NavidromeAlbums.remember(album, albumId) // so its album page opens with one request
-        sizeBytes?.let { NavidromeOffline.noteSize(id, it) } // so "Available offline" can say how much a page takes
+        sizeBytes?.let { NavidromePlatform.kept.noteSize(id, it) } // so "Available offline" can say how much a page takes
         val lossless = suffix?.lowercase() in LOSSLESS_SUFFIXES
         val artistName = artist ?: "Unknown Artist"
         return Song(
             videoId = NavidromeSettings.ID_PREFIX + id,
             title = title,
             artist = artistName,
-            artistId = LocalGroups.artistPageId(NavidromeSettings.BROWSE_ID, artistName),
-            albumId = album?.let { LocalGroups.albumPageId(NavidromeSettings.BROWSE_ID, it) },
+            artistId = NavidromeSettings.artistPageId(artistName),
+            albumId = album?.let { NavidromeSettings.albumPageId(it) },
             thumbnailUrl = coverArt?.let { client.coverUrl(it) },
             durationText = durationSec?.takeIf { it > 0 }?.let { String.format(java.util.Locale.ROOT, "%d:%02d", it / 60, it % 60) },
             albumName = album,
             // A song kept offline plays from its file (NavidromeOffline).
-            localUri = NavidromeOffline.localFile(id)?.let { android.net.Uri.fromFile(it).toString() } ?: client.streamUrl(id),
+            localUri = NavidromePlatform.kept.localUri(id) ?: client.streamUrl(id),
             trackNumber = track,
             sourceQuality = if (lossless) "LOSSLESS" else null,
             sourceHiRes = lossless && ((bitDepth ?: 0) > 16 || (samplingRate ?: 0) > 48_000),
             playbackSource = "Navidrome",
             playbackSourceType = PlaybackSourceType.BROWSE,
             playbackSourceId = NavidromeSettings.BROWSE_ID,
-        ).also(com.music.bitchord.fork.ForkYouTubeHistory::remember) // title/artist/length for the YouTube history match
+        ).also(NavidromePlatform.onSong) // title/artist/length for the YouTube history match
     }
 
     private val LOSSLESS_SUFFIXES = setOf("flac", "alac", "wav", "aiff", "aif", "ape", "wv", "dsf", "dff")

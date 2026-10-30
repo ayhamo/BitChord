@@ -18,8 +18,11 @@ dependencyResolutionManagement {
 rootProject.name = "BitChord"
 include(":shared")
 include(":sharedUi")
-include(":desktopUi")
-include(":desktopApp")
+// fork: the desktop app needs JDK 21 just to configure, the Android image and CI run on 17.
+if (JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_21)) {
+    include(":desktopUi")
+    include(":desktopApp")
+}
 
 // The Android module only when there is an SDK to build it against. A machine
 // set up for the desktop alone has none, and including it there fails at
