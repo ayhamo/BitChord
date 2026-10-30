@@ -33,7 +33,7 @@ internal object DesktopUpdateChecker {
     )
 
     private const val LATEST_RELEASE_URL =
-        "https://api.github.com/repos/kushagrasinghx/BitChord/releases/latest"
+        "https://api.github.com/repos/ayhamo/BitChord/releases/latest" // fork: upstream no longer builds this app
 
     val currentVersion: String = System.getProperty("bitchord.version") ?: "1.8-beta1"
 
@@ -55,12 +55,14 @@ internal object DesktopUpdateChecker {
             ?: return@runCatching null
         val tag = release["tag_name"]?.jsonPrimitive?.contentOrNull ?: return@runCatching null
         val url = release["html_url"]?.jsonPrimitive?.contentOrNull ?: return@runCatching null
-        val latest = tag.removePrefix("v")
+        val latest = tag.removePrefix("fork-").removePrefix("v") // fork: fork-v<version>
         if (!isNewer(latest, currentVersion)) return@runCatching null
+        // fork: a phone-only release says nothing to the PC
+        val installer = installerUrl(release) ?: return@runCatching null
         UpdateInfo(
             version = latest,
             releaseUrl = url,
-            downloadUrl = installerUrl(release),
+            downloadUrl = installer,
             notes = release["body"]?.jsonPrimitive?.contentOrNull,
         )
     }.getOrNull()
@@ -72,7 +74,7 @@ internal object DesktopUpdateChecker {
      */
     private fun installerUrl(release: JsonObject): String? {
         val suffixes = when {
-            DesktopPlatform.isWindows -> listOf("-windows-x64-setup.exe")
+            DesktopPlatform.isWindows -> listOf("-windows-x64-setup.exe", "-windows-portable.zip") // fork: the portable zip
             DesktopPlatform.isLinux -> listOf(".AppImage", "-linux-amd64.deb")
             else -> return null
         }

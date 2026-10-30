@@ -9,6 +9,6 @@ update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc
 cd /work
 tr -d '\r' < gradlew > .gw
 trap 'rm -f /work/.gw' EXIT
-sh .gw --no-daemon -Pbitchord.target=windows -Pbitchord.version=1.8.1 ${1:-:desktopApp:windowsPortable} > /tmp/log.txt 2>&1 || { grep -nE '^e: |error:|FAILED|fatal|went wrong' -A3 /tmp/log.txt | head -60; exit 1; }
+sh .gw --no-daemon -Pbitchord.target=windows -Pbitchord.version=1.9 ${1:-:desktopApp:windowsPortable} > /tmp/log.txt 2>&1 || { grep -nE '^e: |error:|FAILED|fatal|went wrong' -A3 /tmp/log.txt | head -60; exit 1; }
 grep -E 'windowsPortable:|BUILD|tests completed' /tmp/log.txt
 if ls desktopApp/build/distributions/*.zip >/dev/null 2>&1; then mkdir -p /out; cp desktopApp/build/distributions/*.zip /out/; fi
