@@ -24,39 +24,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: '21'
-
-      - uses: gradle/actions/setup-gradle@v6
-
-      - name: cross-compilers for the Windows natives
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq cmake ninja-build g++-mingw-w64-x86-64
-          sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
-          sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
-
-      - name: Windows Java for the zip
-        run: sh docker/pc-jre.sh "$RUNNER_TEMP/windows-jre"
-
+      # Built in the same image as docker/pc-build.sh on the owner's machine, not on the runner: the
+      # media keys code needs MinGW headers newer than Ubuntu 24.04's.
       - name: build the zip
         id: build
         run: |
           set -euo pipefail
-          version=$(sed -n 's/.*bitchordVersionName"\] = "\(.*\)"/\1/p' build.gradle.kts)
+          version=$(sed -n 's/.*bitchordVersionName"\] = "\(.*\)"//p' build.gradle.kts)
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          # No Android SDK: only the desktop modules are wanted, and the phone's need more than this job installs.
-          unset ANDROID_HOME ANDROID_SDK_ROOT
-          # Ubuntu's cmake, as the Docker build uses, not the newer one the runner keeps in /usr/local/bin.
-          export PATH="/usr/bin:$PATH"
-          cmake --version | head -1
-          chmod +x gradlew
-          ./gradlew --no-daemon -Pbitchord.target=windows -Pbitchord.version="$version" \
-            -Pbitchord.windowsRuntime="$RUNNER_TEMP/windows-jre" :desktopApp:windowsPortable
           mkdir out
-          cp desktopApp/build/distributions/*.zip out/
+          docker run --rm -v "$PWD:/work" -v "$PWD/out:/out" eclipse-temurin:21-jdk bash /work/docker/pc-build.sh
+          sudo chown -R "$(id -u):$(id -g)" out
           (cd out && sha256sum *.zip > SHA256SUMS.txt)
           cat out/SHA256SUMS.txt
 
