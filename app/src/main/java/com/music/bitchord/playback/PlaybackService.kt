@@ -3245,6 +3245,7 @@ class PlaybackService : MediaLibraryService() {
             reason = if (skipBlend) Player.MEDIA_ITEM_TRANSITION_REASON_SEEK else Player.MEDIA_ITEM_TRANSITION_REASON_AUTO, // fork
             alreadyAudible = true,
         )
+        QueueCoordinator.consumePlayedUserQueue(incoming) // fork: a blend is the only transition a skip sees; played "Play next" rows would stay and replay with repeat
         com.music.bitchord.fork.PlayerDecoderNames.of(incoming)?.let(AudioOutputStatus::publishDecoder).also { publishNerdStats() } // fork: the incoming decoder started before this player was listened to
 
         // A crossfade starts the incoming item on the player that was idle, so
@@ -6059,6 +6060,7 @@ class PlaybackService : MediaLibraryService() {
 
     /** Stops both rendition selection and byte read-ahead, and makes resume retry. */
     private fun cancelPrefetch() {
+        com.music.bitchord.fork.ForkPreload.cancel() // fork
         preferredPrefetchRequest = null
         preferredPrefetchJob?.cancel()
         preferredPrefetchJob = null

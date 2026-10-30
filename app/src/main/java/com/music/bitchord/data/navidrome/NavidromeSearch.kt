@@ -14,7 +14,7 @@ object NavidromeSearch {
 
     suspend fun withLibrary(device: UiState<List<Song>>): UiState<List<Song>> {
         if (!NavidromeSettings.isConfigured()) return device
-        val ours = runCatching { NavidromeRepository.getSongs() }.getOrDefault(emptyList())
+        val ours = runCatching { NavidromeRepository.getSongs() }.onFailure { if (it is kotlin.coroutines.cancellation.CancellationException) throw it }.getOrDefault(emptyList())
         if (ours.isEmpty()) return device
         return if (device is UiState.Success) UiState.Success(device.data + ours) else UiState.Success(ours)
     }

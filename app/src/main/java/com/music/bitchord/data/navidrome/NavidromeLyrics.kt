@@ -47,7 +47,7 @@ object NavidromeLyrics {
     /** Past this many files the oldest quarter goes; a song's lyrics are a few KB. */
     private const val CACHE_FILES = 4000
 
-    private val lock = Mutex()
+    private val locks = java.util.concurrent.ConcurrentHashMap<String, Mutex>()
     private var cacheDir: File? = null
 
     /**
@@ -81,8 +81,9 @@ object NavidromeLyrics {
     }
 
     /** Timed lyrics for [songId], or null (none, only plain text, or the server couldn't be asked). */
-    suspend fun forSong(songId: String): List<LyricLine>? = lock.withLock {
-        // Under the lock, so the second of two callers for one song gets the first one's answer.
+    suspend fun forSong(songId: String): List<LyricLine>? = locks.getOrPut(songId) { Mutex() }.withLock {
+        // Under a lock, so the second of two callers for one song gets the first one's answer. One per
+        // song: the server call can't be cancelled, and skipping on shouldn't wait out its timeout.
         answers[songId]?.let { return@withLock it.ifEmpty { null } }
         (NavidromeOffline.lyricsFile(songId) ?: cacheFile(songId))?.let { file ->
             parse(runCatching { file.readText() }.getOrNull())?.let { lines ->

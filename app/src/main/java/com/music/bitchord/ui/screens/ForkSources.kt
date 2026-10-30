@@ -75,7 +75,7 @@ fun ForkNavidromeEditor(hazeState: HazeState) {
                 isPassword = true,
             ),
         ),
-        canSubmit = { it[0].isNotBlank() && it[1].isNotBlank() },
+        canSubmit = { NavidromeSettings.isConfigured(it[0], it[1]) }, // not an address it can't use: Save would keep it blank
         testFailedRes = R.string.navidrome_test_failed,
         onTest = { (url, username, password) -> NavidromeRepository.testConnection(url.trim(), username.trim(), password) },
         onSave = { (url, username, password) ->

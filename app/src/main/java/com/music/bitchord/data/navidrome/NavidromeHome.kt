@@ -105,7 +105,15 @@ object NavidromeHome {
                 val allAlbums = async {
                     HomeShelf(
                         context.getString(R.string.fork_library_navidrome_albums),
-                        client.albums("alphabeticalByName", ALL_ALBUMS).map { it.toItem(client) }.distinctBy { it.browseId },
+                        buildList {
+                            var offset = 0
+                            while (true) {
+                                val page = client.albums("alphabeticalByName", ALL_ALBUMS, offset)
+                                addAll(page)
+                                if (page.size < ALL_ALBUMS) break
+                                offset += ALL_ALBUMS
+                            }
+                        }.map { it.toItem(client) }.distinctBy { it.browseId },
                         label,
                     )
                 }

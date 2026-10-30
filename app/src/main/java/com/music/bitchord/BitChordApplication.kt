@@ -84,6 +84,7 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // share one keystore master key and a first launch must not have two
         // threads racing to create it. Joined before onCreate returns, so
         // nothing that runs after startup can see any of them half open.
+        com.music.bitchord.fork.ForkSettings.applySavedClipLimit(this) // fork: before the clip cache opens, or it evicts down to the default
         val backgroundInit = thread(name = "startup-init") {
             SourceRegistry.init(this)
             AndroidStreamHooks.initInnerTubeX(this)

@@ -7,6 +7,7 @@ import com.music.bitchord.data.webdav.WebDavConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
  * The Navidrome server this fork plays from (fork-only).
@@ -86,7 +87,9 @@ object NavidromeSettings {
 
     /** `music.example.com/` → `https://music.example.com`; anything without a host reads as blank. */
     fun normalizeUrl(raw: String): String =
-        WebDavConfig.normalizeUrl(raw).takeIf(WebDavConfig::isConfigured).orEmpty()
+        // The client's own parser has the last word: java.net.URI accepts what HttpUrl refuses (a
+        // port of 99999), and a saved address the client can't use crashed every start.
+        WebDavConfig.normalizeUrl(raw).takeIf { WebDavConfig.isConfigured(it) && it.toHttpUrlOrNull() != null }.orEmpty()
 
     fun newSalt(): String =
         ByteArray(8).also(java.security.SecureRandom()::nextBytes).joinToString("") { String.format(java.util.Locale.ROOT, "%02x", it) }
