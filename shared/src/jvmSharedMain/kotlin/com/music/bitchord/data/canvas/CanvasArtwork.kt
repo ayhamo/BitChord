@@ -32,6 +32,12 @@ data class CanvasArtwork(
     val source: CanvasSource = CanvasSource.OTHER,
     /** fork: for a [CanvasSource.BACKDROP], the clip the cover square plays where the backdrop can't fill the screen (null = the still cover). */
     val sleeveUrl: String? = null,
+    /**
+     * The same clip framed 3:4, when the provider has one. Only the phone
+     * player takes it (it runs the clip under the whole screen); everywhere
+     * else keeps the square [url].
+     */
+    val portraitUrl: String? = null,
 ) {
     /**
      * Whether this clip really belongs to the track we asked about.
