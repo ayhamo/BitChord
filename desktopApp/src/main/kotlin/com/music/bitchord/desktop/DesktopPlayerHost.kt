@@ -213,7 +213,7 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
     override val smartMixInProgress = MutableStateFlow(false)
     override val smartMixBlend = MutableStateFlow<MixBlend?>(null)
     override val smartTransitionWindow = MutableStateFlow<TransitionWindow?>(null)
-    override val spotifyCanvasAutoHide = MutableStateFlow(true)
+    override val spotifyCanvasAutoHide = MutableStateFlow(false) // fork: was true; the controls stay until tapped away, the phone's default
     override val syncedLyrics = MutableStateFlow(true)
     override val translationLanguage = MutableStateFlow("")
     override val versionAlignmentInProgress = MutableStateFlow(false)

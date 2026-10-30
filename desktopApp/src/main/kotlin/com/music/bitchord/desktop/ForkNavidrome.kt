@@ -51,6 +51,7 @@ import com.music.bitchord.data.navidrome.NavidromeRepository
 import com.music.bitchord.data.navidrome.NavidromeSettings
 import com.music.bitchord.data.navidrome.NavidromeSongInfo
 import com.music.bitchord.playback.QueueBuilder
+import com.music.bitchord.ui.player.ForkCanvasSwitch
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -72,6 +73,8 @@ import okhttp3.Request
 internal object ForkNavidrome {
 
     private const val KEY_YT_HISTORY = "youtube_history"
+    private const val KEY_BACKDROPS = "backdrop_videos"
+    private const val KEY_COVERS = "animated_covers"
 
     /** The fork's own desktop switches, apart from the login. */
     private val settings: NavidromePlatform.Store by lazy { PrefsStore("com/music/bitchord/navidrome_fork", sealed = emptySet()) }
@@ -79,6 +82,16 @@ internal object ForkNavidrome {
     fun setYouTubeHistory(on: Boolean) {
         ForkYouTubeHistory.enabled.value = on
         settings.putStrings(mapOf(KEY_YT_HISTORY to if (on) "on" else "off"))
+    }
+
+    fun setBackdrops(on: Boolean) {
+        ForkCanvasSwitch.backdrops.value = on
+        settings.putStrings(mapOf(KEY_BACKDROPS to if (on) "on" else "off"))
+    }
+
+    fun setCovers(on: Boolean) {
+        ForkCanvasSwitch.covers.value = on
+        settings.putStrings(mapOf(KEY_COVERS to if (on) "on" else "off"))
     }
 
     fun install() {
@@ -89,6 +102,8 @@ internal object ForkNavidrome {
         ForkYouTubeHistory.init(PrefsStore("com/music/bitchord/navidrome_yt_history", sealed = emptySet()))
         NavidromePlatform.onSong = ForkYouTubeHistory::remember
         ForkYouTubeHistory.enabled.value = settings.string(KEY_YT_HISTORY) != "off"
+        ForkCanvasSwitch.backdrops.value = settings.string(KEY_BACKDROPS) != "off"
+        ForkCanvasSwitch.covers.value = settings.string(KEY_COVERS) != "off"
     }
 
     fun owns(song: Song): Boolean = NavidromeSettings.isNavidromeId(song.videoId)

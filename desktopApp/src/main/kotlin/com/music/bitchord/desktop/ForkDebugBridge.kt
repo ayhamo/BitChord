@@ -30,6 +30,7 @@ import kotlinx.serialization.json.putJsonArray
  * - `GET /state`: what is playing and the queue, as JSON
  * - `POST /click?x=&y=`, `POST /scroll?x=&y=&notches=`
  * - `POST /type?text=`, `POST /key?code=` (a `KeyEvent` VK_ code)
+ * - `POST /notice?text=`: shows a [ForkNotice]
  */
 internal object ForkDebugBridge {
 
@@ -51,6 +52,7 @@ internal object ForkDebugBridge {
         server.createContext("/scroll") { respond(it) { scroll(it) } }
         server.createContext("/type") { respond(it) { type(it) } }
         server.createContext("/key") { respond(it) { key(it.query("code").toInt()) } }
+        server.createContext("/notice") { respond(it) { ForkNotice.show(it.query("text")); "ok" } }
         server.start()
         DesktopTrackLog.log("debug bridge on 127.0.0.1:$port")
     }

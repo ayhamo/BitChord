@@ -1065,6 +1065,7 @@ fun BitChordDesktopApp() {
                 .orEmpty()
             if (related.isEmpty()) {
                 DesktopTrackLog.log("radio: nothing to build a station on for '${song.title}'")
+                if (ForkNavidrome.owns(song)) ForkNotice.show("No similar songs found") // fork: as on the phone
                 return@launch
             }
             if (partyTrackChangeBlocked()) return@launch
@@ -2468,7 +2469,7 @@ fun BitChordDesktopApp() {
         }
         val added = shelves.withoutRepeatsOf(existing)
             .filter { it.items.isNotEmpty() && homeSeenTitles.add(it.title.lowercase()) }
-        if (added.isNotEmpty()) homeState = UiState.Success(existing + added)
+        if (added.isNotEmpty()) homeState = UiState.Success(ForkSpotifyHome.keepLast(existing + added)) // fork: was existing + added
     }
 
     /**
@@ -2493,6 +2494,10 @@ fun BitChordDesktopApp() {
             launch { // fork: the server's shelves lead Home
                 val shelves = ForkNavidrome.homeShelves()
                 if (generation == homeGeneration && shelves.isNotEmpty()) publishHomeShelves(shelves, prepend = true)
+            }
+            launch { // fork: Spotify's mixes close Home
+                val mixes = ForkSpotifyHome.shelf()
+                if (generation == homeGeneration && mixes != null) publishHomeShelves(listOf(mixes))
             }
             launch {
                 DesktopSearchClient.home().fold(
@@ -2630,6 +2635,7 @@ fun BitChordDesktopApp() {
     // The feed is the account's: signing in, out or across to another channel is a different Home,
     // and Recently Played only exists with an account behind it.
     LaunchedEffect(Unit) { com.music.bitchord.data.navidrome.NavidromeSettings.saved.drop(1).collect { loadHome() } } // fork: a new login, a new Home
+    LaunchedEffect(Unit) { snapshotFlow { spotifyCanvasCookie.isNotBlank() }.drop(1).collect { loadHome() } } // fork: Spotify's mixes come and go with its sign-in
     LaunchedEffect(youtubeSignedIn, activeAccountId) {
         val identity = "${DesktopYouTubeAuth.isSignedIn}/${DesktopAccounts.activeAccountId()}"
         if (homeIdentity != null && identity != homeIdentity) loadHome()
@@ -3031,10 +3037,12 @@ fun BitChordDesktopApp() {
         onShare = ::shareSong,
     )
 
+    ForkNotice.Host() // fork
     // What the shared player reads as settings, kept in step with the window's own.
     SideEffect {
         DesktopPlayerSettings.animatedCanvas.value = animatedCanvas
         DesktopPlayerSettings.fullBleedArtwork.value = fullBleedArtwork
+        ForkPlayerMenu.onFullBleedChange = { fullBleedArtwork = it; persistence.saveBoolean("full_bleed_artwork", it) } // fork: the menu's row
         DesktopPlayerSettings.legacyMeshGradient.value = legacyMeshGradient
         DesktopPlayerSettings.lyricsBlur.value = lyricsBlur
         DesktopPlayerSettings.syncedLyrics.value = syncedLyrics
@@ -4382,7 +4390,8 @@ fun BitChordDesktopApp() {
                         ) { songs ->
                             DesktopLocalMusicPage(
                                 songs = songs,
-                                onSongClick = { song -> playSongs(songs, songs.indexOf(song).coerceAtLeast(0), DesktopQueueSource("Navidrome", PlaybackSourceType.BROWSE, com.music.bitchord.data.navidrome.NavidromeSettings.BROWSE_ID)) },
+                                onSongClick = {},
+                                forkPlayFrom = { shown, song -> playSongs(shown, shown.indexOf(song).coerceAtLeast(0), DesktopQueueSource("Navidrome", PlaybackSourceType.BROWSE, com.music.bitchord.data.navidrome.NavidromeSettings.BROWSE_ID)) },
                                 contentPadding = PaddingValues(0.dp),
                                 title = "Navidrome",
                                 subtitle = "The library on your server",
@@ -5685,6 +5694,8 @@ private fun DesktopLocalMusicPage(
     emptyDescription: String = "Put audio files in your Music folder and reopen this page.",
     persistenceKey: String = "local",
     menu: (@Composable (Song) -> Unit)? = null,
+    /** Fork: plays from the list on screen, an album's songs when one is open, rather than one song. */
+    forkPlayFrom: ((List<Song>, Song) -> Unit)? = null,
 ) {
     val persistence = remember { DesktopPersistence() }
     var selectedTab by remember(persistenceKey) { mutableStateOf(0) }
@@ -5766,9 +5777,10 @@ private fun DesktopLocalMusicPage(
                     Text(drillDown!!.first, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                 }
                 Spacer(Modifier.height(6.dp))
-                DesktopLibrarySongContent(drillDown!!.second, view, onSongClick, menu)
+                val forkShown = drillDown!!.second
+                DesktopLibrarySongContent(forkShown, view, { song -> forkPlayFrom?.invoke(forkShown, song) ?: onSongClick(song) }, menu) // fork: was onSongClick
             } else when (selectedTab) {
-                0 -> DesktopLibrarySongContent(filteredSongs, view, onSongClick, menu)
+                0 -> DesktopLibrarySongContent(filteredSongs, view, { song -> forkPlayFrom?.invoke(filteredSongs, song) ?: onSongClick(song) }, menu) // fork: was onSongClick
                 1 -> DesktopLibraryGroupingContent(artists, view, onGroupClick = { drillDown = it })
                 else -> DesktopLibraryGroupingContent(albums, view, onGroupClick = { drillDown = it })
             }
@@ -6431,8 +6443,8 @@ private fun DesktopSettingsScreen(
                         )
                     }
                     SettingsToggle(
-                        DesktopStrings["full_screen_cover_art", "Full-screen cover art"],
-                        DesktopStrings["full_screen_cover_art_subtitle", "Runs the cover to the edges of the player instead of a square sleeve"],
+                        ForkPlayerMenu.FULLSCREEN_TITLE, // fork: the name the player menu uses, and where it applies
+                        ForkPlayerMenu.FULLSCREEN_SUBTITLE,
                         fullBleedArtwork,
                         onFullBleedArtworkChange,
                     )
@@ -6449,6 +6461,11 @@ private fun DesktopSettingsScreen(
                         onAnimatedCanvasChange,
                     )
                     if (animatedCanvas) {
+                        // fork: the player menu's two video switches
+                        val forkBackdrops by com.music.bitchord.ui.player.ForkCanvasSwitch.backdrops.collectAsState()
+                        val forkCovers by com.music.bitchord.ui.player.ForkCanvasSwitch.covers.collectAsState()
+                        SettingsToggle(ForkPlayerMenu.BACKDROPS_TITLE, ForkPlayerMenu.BACKDROPS_SUBTITLE, forkBackdrops, ForkNavidrome::setBackdrops)
+                        SettingsToggle(ForkPlayerMenu.COVERS_TITLE, ForkPlayerMenu.COVERS_SUBTITLE, forkCovers, ForkNavidrome::setCovers)
                         SettingsNavigationRow(
                             title = DesktopStrings["spotify_canvas_setup", "Spotify Canvas setup"],
                             subtitle = if (spotifyCanvasReady) {
@@ -7065,8 +7082,9 @@ private fun DesktopCollectionPage(
                     // The services hang motion artwork off the release, so a page for one asks for
                     // it directly rather than picking a track and hoping it sits on the right
                     // edition.
-                    val albumCanvas by produceState<DesktopCanvasArtwork?>(null, collection.title, animatedCanvas) {
-                        value = if (!animatedCanvas) {
+                    val forkCovers by com.music.bitchord.ui.player.ForkCanvasSwitch.covers.collectAsState() // fork: album headers follow "Animated covers", as on the phone
+                    val albumCanvas by produceState<DesktopCanvasArtwork?>(null, collection.title, animatedCanvas, forkCovers) {
+                        value = if (!animatedCanvas || !forkCovers) {
                             null
                         } else {
                             withContext(Dispatchers.IO) {

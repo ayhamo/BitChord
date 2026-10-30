@@ -1275,6 +1275,8 @@ fun NowPlayingScreen(
         }
     }
     val fullBleedArt by PlayerSettings.fullBleedArtwork.collectAsStateWithLifecycle()
+    val forkArtAwake = rememberForkArtAwake(isPlaying) // fork
+    ForkCanvasSwitch.bigArtFits.value = forkBigArtFits(playerFillsWindow(windowWidth), windowWidth, windowHeight) // fork: for the menu's row
     // Full-bleed is a phone idiom. What the width has to rule out is a player
     // running a foot wider than the column of controls under it — edge to edge
     // meaning "a picture, and separately some controls" rather than "the
@@ -1289,12 +1291,12 @@ fun NowPlayingScreen(
     // clip running the full screen. CanvasArtworkPlayer masks itself on every
     // API level now, and both layers answer to this.
     val spotifyCanvasOnPhone = canvas?.source?.fillsPhone == true && // fork: was == SPOTIFY
-        playerFillsWindow(windowWidth)
+        forkFillsScreen(canvas, playerFillsWindow(windowWidth), windowWidth, windowHeight) // fork: was playerFillsWindow(windowWidth)
     // Spotify Canvas is the player background on a phone, independent of the
     // still-art full-bleed preference. Other providers and static artwork keep
     // answering to that preference exactly as before.
     val heroMode = spotifyCanvasOnPhone ||
-        (fullBleedArt && playerFillsWindow(windowWidth))
+        (fullBleedArt && forkBigArtFits(playerFillsWindow(windowWidth), windowWidth, windowHeight) && forkArtAwake) // fork: was playerFillsWindow(windowWidth); paused, the small cover
 
     // Whether there's a still image to blow out — a placeholder tile is a card
     // or it is nothing, and going full-bleed with one would just tint the top

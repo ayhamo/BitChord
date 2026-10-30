@@ -9,6 +9,10 @@ Everything this fork adds lives in new files where possible. This file lists eve
 | `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/navidrome/NavidromePlatform.kt` | What the shared Navidrome code needs from each app: key-value stores, what is kept offline, offline mode, scrobble switch |
 | `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeAndroid.kt` | The phone's side of `NavidromePlatform`; starts the Navidrome objects |
 | `desktopApp/src/main/kotlin/com/music/bitchord/desktop/ForkNavidrome.kt` | The desktop's side of `NavidromePlatform` (Java Preferences, password sealed with Windows DPAPI), the sidebar page and login |
+| `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/spotify/ForkSpotifyMadeForYou.kt` | Reads Spotify's mixes, for both apps (moved from the phone's `ForkSpotifyMixes`) |
+| `desktopApp/src/main/kotlin/com/music/bitchord/desktop/ForkSpotifyHome.kt` | The mixes as Home's "Made for you" shelf |
+| `desktopApp/src/main/kotlin/com/music/bitchord/desktop/ForkNotice.kt` | A short message over the window, the phone's toast |
+| `desktopApp/src/main/kotlin/com/music/bitchord/desktop/ForkPlayerMenu.kt` | The player menu's three switches (`ForkPlayerMenuRows`) and their wording, shared with Settings |
 | `desktopApp/src/main/kotlin/com/music/bitchord/desktop/ForkDebugBridge.kt` | Test door: off unless `-Dbitchord.debugBridge=<port>`, loopback only, input goes to the app's window |
 | `docker/pc-build.sh`, `docker/pc-run.sh`, `docker/pc-shot.ps1` | Cross-build the Windows zip, run it isolated in `out/pc-run`, screenshot only its window |
 | `docker/` | Docker build (`build.ps1`, `Dockerfile`); `docker/keys` holds the debug key (gitignored) |
@@ -125,8 +129,12 @@ Upstream removed `desktopApp` and `desktopUi` in `e4dd63d8`; `pc` restores them 
 | `desktopApp/.../DesktopApp.kt` | `ForkDebugBridge.queue` and `.engine`. `DesktopDestination.NAVIDROME` with its sidebar row and page. `rate()`: a Navidrome song's heart is its star on the server |
 | `desktopApp/.../DesktopApp.kt` (pages) | `startRadio`: `forkStation = true`. `openArtist` and the collection loader: `ForkNavidrome` answers a server page. `loadHome`: the server's shelves lead Home |
 | `desktopApp/.../DesktopAutoplay.kt` | `tracksFor`: `forkStation`, a Navidrome seed takes `ForkNavidrome.tracks` |
-| `desktopApp/.../DesktopSongMenuUi.kt` | "Start radio (Instant Mix)" on a Navidrome song |
-| `desktopUi/.../player/NowPlayingScreen.kt` | The heart also shows for a Navidrome song (and in `LandscapePlayer.kt`). `forkCanvases`, `ForkLandscapeBackdrop` and `fillsPhone`, as on the phone (copies of `ForkSleeveClip`, `ForkBackdropIntro`, `ForkLandscapeBackdrop` live in `desktopUi`) |
+| `desktopApp/.../DesktopSongMenuUi.kt` | "Start radio (Instant Mix)" on a Navidrome song. `DesktopMenuRow` is internal; the player's menu adds `ForkPlayerMenuRows` |
+| `desktopApp/.../DesktopApp.kt` (Home, library) | `loadHome`, `publishHomeShelves`: Spotify's mixes close Home, reloaded on sign-in. `DesktopLocalMusicPage.forkPlayFrom`: the Navidrome page plays the list on screen (an album, not the whole library) |
+| `desktopApp/.../DesktopPlayerHost.kt` (auto-hide) | `spotifyCanvasAutoHide` off, the phone's default |
+| `desktopApp/.../DesktopApp.kt` (notice) | `ForkNotice.Host()`. `startRadio`: "No similar songs found" on a Navidrome song |
+| `desktopApp/.../DesktopApp.kt` (switches) | `ForkPlayerMenu.onFullBleedChange`. Settings: "Fullscreen cover art" renamed, "Backdrop videos" and "Animated covers" under "Animated canvas". Album headers follow "Animated covers" |
+| `desktopUi/.../player/NowPlayingScreen.kt` | The heart also shows for a Navidrome song (and in `LandscapePlayer.kt`). `forkCanvases`, `ForkLandscapeBackdrop` and `fillsPhone`, as on the phone (copies of `ForkSleeveClip`, `ForkBackdropIntro`, `ForkLandscapeBackdrop` live in `desktopUi`). `heroMode` as on the phone: `forkFillsScreen`, `forkBigArtFits`, `rememberForkArtAwake`; publishes `ForkCanvasSwitch.bigArtFits` for the menu |
 | `desktopApp/.../DesktopCanvas.kt` | `fileFor`: the server's clips go through `ForkNavidrome.fetchClip`; a failed download is deleted (**fixes upstream**) |
 | `desktopApp/.../DesktopSourceRegistry.kt` | `resolveLive()`: `ForkNavidrome.stream(song)` first |
 | `desktopApp/.../DesktopPlaybackTracker.kt` | `onPlaying`, `onProgress`: `ForkYouTubeHistory` first (Navidrome plays into YouTube history; the switch is on the Navidrome page) |

@@ -453,6 +453,7 @@ internal fun DesktopSongMenu(
                     value = if (lyricsOffsetMs != 0) formatLyricsOffset(lyricsOffsetMs) else "",
                 ) { pickingLyricsOffset = true }
             }
+            if (onSwitchLyricsQueue != null) ForkPlayerMenuRows() // fork: only the player's menu
         }
 
         val albumId = song.albumId
@@ -697,7 +698,7 @@ private fun DesktopMenuDivider() {
 
 /** One menu row. */
 @Composable
-private fun DesktopMenuRow(
+internal fun DesktopMenuRow( // fork: was private, ForkPlayerMenuRows uses it
     icon: ImageVector,
     label: String,
     tint: Color? = null,

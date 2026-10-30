@@ -29,6 +29,13 @@ object ForkCanvasSwitch {
      * tall full-picture kind, Tidal, the community's), and album headers.
      */
     val covers = MutableStateFlow(true)
+
+    /**
+     * Whether the player's window can run the still cover to the edges
+     * ([forkBigArtFits]), so the menu can say so instead of a switch that quietly
+     * does nothing in a wide window.
+     */
+    val bigArtFits = MutableStateFlow(true)
 }
 
 /**
