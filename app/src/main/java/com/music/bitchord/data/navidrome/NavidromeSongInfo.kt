@@ -21,7 +21,7 @@ object NavidromeSongInfo {
     private suspend fun load(song: Song): SongInfo? {
         if (!NavidromeSettings.isNavidromeId(song.videoId)) return null
         val id = song.videoId.removePrefix(NavidromeSettings.ID_PREFIX)
-        return runCatching { NavidromeRepository.client().songDetails(id) }.fold(
+        return runCatching { NavidromeRepository.client().songDetails(id) }.onFailure { if (it is kotlin.coroutines.cancellation.CancellationException) throw it }.fold(
             onSuccess = { d ->
                 SongInfo(
                     album = song.albumName,

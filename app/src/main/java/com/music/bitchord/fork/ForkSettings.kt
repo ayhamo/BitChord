@@ -61,6 +61,11 @@ object ForkSettings {
     /** Only what is on the phone is shown, as with no network; see `ForkNetwork.offline`. */
     val offlineMode: StateFlow<Boolean> = _offlineMode.asStateFlow()
 
+    /** The clip cache's saved size, read on its own: the cache opens on another thread before [init] runs. */
+    fun applySavedClipLimit(context: Context) {
+        ForkClipCache.applyLimit(context.getSharedPreferences("bitchord_fork", Context.MODE_PRIVATE).getInt(KEY_CLIP_CACHE_MB, DEFAULT_CLIP_CACHE_MB))
+    }
+
     fun init(context: Context) {
         prefs = context.getSharedPreferences("bitchord_fork", Context.MODE_PRIVATE)
         _crossfadeOnSkip.value = prefs.getBoolean(KEY_CROSSFADE_ON_SKIP, true)

@@ -102,7 +102,7 @@ object NavidromeRepository {
             emptyList()
         }
         similar.ifEmpty { client.randomSongs(count) }.map { it.toSong(client) }
-    }
+    }.onFailure { if (it is kotlin.coroutines.cancellation.CancellationException) throw it }
 
     /**
      * "Start radio (Instant Mix)" on a Navidrome song: the server's similar songs (AudioMuse, when

@@ -89,7 +89,9 @@ internal fun ForkOfflineRow(target: BrowseTarget, accent: Color) {
         },
         accent = accent,
     ) {
-        if ((kept && missing == 0) || running != null) {
+        if (running != null) {
+            com.music.bitchord.data.navidrome.NavidromeOffline.stop(id) // a tap on "37%" stops it; a kept page re-syncing stays kept
+        } else if (kept && missing == 0) {
             com.music.bitchord.data.navidrome.NavidromeOffline.remove(id)
         } else {
             com.music.bitchord.data.navidrome.NavidromeOffline.keep(

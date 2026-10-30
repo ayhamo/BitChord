@@ -31,9 +31,12 @@ internal const val FORK_BACKDROP_FADE_MS = 1_200
  */
 internal class ForkBackdropIntro(
     private val key: String?,
-    private val enabled: Boolean,
+    enabled: Boolean,
     private val scope: CoroutineScope,
 ) : RememberObserver {
+    /** Whether the clip waits. May change while the clip is up: one already on screen stays on screen. */
+    var enabled: Boolean = enabled
+
     private val fade = Animatable(if (enabled && key != shownFor) 0f else 1f)
     private var hold: Job? = null
 
@@ -76,5 +79,7 @@ internal class ForkBackdropIntro(
 @Composable
 internal fun rememberForkBackdropIntro(key: String?, enabled: Boolean): ForkBackdropIntro {
     val scope = rememberCoroutineScope()
-    return remember(key, enabled) { ForkBackdropIntro(key, enabled, scope) }
+    // Not keyed on [enabled]: the clip only says it is rendered when that changes, so a new intro
+    // made for a clip already up would hold it invisible until the next song.
+    return remember(key) { ForkBackdropIntro(key, enabled, scope) }.also { it.enabled = enabled }
 }

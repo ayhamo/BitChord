@@ -19,4 +19,7 @@
     <exclude domain="sharedpref" path="bitchord_last_played.xml" />
     <exclude domain="sharedpref" path="bitchord_bounded_context.xml" />
     <exclude domain="sharedpref" path="bitchord_party_queue_stash.xml" />
+    <!-- Kept songs are gigabytes and past the backup quota, and these two hold cover addresses with the server login's token. -->
+    <exclude domain="file" path="navidrome_offline/" />
+    <exclude domain="file" path="fork_queues.json" />
 </full-backup-content>

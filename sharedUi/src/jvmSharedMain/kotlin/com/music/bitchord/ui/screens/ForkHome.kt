@@ -89,12 +89,14 @@ internal fun LazyListScope.forkHomeFeed(
     state: ForkHomeState,
     shelves: List<HomeShelf>,
     leadHero: Boolean,
+    recentsLoading: Boolean,
     draw: LazyListScope.(List<HomeShelf>, Boolean, String) -> Unit,
 ) {
-    val sections = state.sections(shelves) ?: return draw(shelves, leadHero, "")
+    val sections = state.sections(shelves) ?: return draw(shelves, leadHero && !recentsLoading, "")
     val firstOpen = sections.indexOfFirst { it.open }
     sections.forEachIndexed { index, section ->
         forkHomeHeading(section)
-        if (section.open) draw(section.shelves, index == firstOpen && leadHero, section.key + ":")
+        // "Recently played" lands in the YouTube section, so only that section waits for it to be the hero.
+        if (section.open) draw(section.shelves, index == firstOpen && leadHero && (section.key != "youtube" || !recentsLoading), section.key + ":")
     }
 }

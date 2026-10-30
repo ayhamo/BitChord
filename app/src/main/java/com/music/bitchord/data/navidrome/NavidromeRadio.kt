@@ -91,6 +91,9 @@ object NavidromeRadio {
      * ("none" too), so the page doesn't ask again on every open. SVG logos are
      * skipped: the image loader here doesn't draw them.
      */
+    /** A station's address as a public directory may see it: a private one's login or token stays here. */
+    private fun String.publicPart(): String = substringBefore('?').replace(Regex("(?<=://)[^/@]*@"), "")
+
     private suspend fun logo(station: NavidromeClient.RadioRow, stream: String): String? = withContext(Dispatchers.IO) {
         val key = station.id + "|" + station.streamUrl
         if (::logos.isInitialized) {
@@ -101,8 +104,8 @@ object NavidromeRadio {
         }
         val found = runCatching {
             serverLogo(station)
-                ?: directory("byurl", "url" to stream)
-                ?: directory("byurl", "url" to station.streamUrl)
+                ?: directory("byurl", "url" to stream.publicPart())
+                ?: directory("byurl", "url" to station.streamUrl.publicPart())
                 ?: directory("byname/" + station.name.substringBefore(" (").trim(), "order" to "votes", "reverse" to "true", "limit" to "10")
         }.onFailure { Log.d(TAG, "radio logo ${station.name}: ${it.message}") }
         // A failed lookup (no network) is not remembered; only a real answer is.
