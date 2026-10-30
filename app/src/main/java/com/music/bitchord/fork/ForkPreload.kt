@@ -40,6 +40,15 @@ object ForkPreload {
     private var job: Job? = null
     @Volatile private var pending: List<Uri> = emptyList()
 
+    /**
+     * Ids upstream's YouTube read-ahead must leave alone: Navidrome songs stream from their own
+     * server, a live station has nothing to read ahead, and (fixes upstream) files on a WebDAV or
+     * SMB share have no YouTube stream to fetch.
+     */
+    fun skipsReadAhead(id: String): Boolean =
+        NavidromeSettings.isNavidromeId(id) || com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(id) ||
+            com.music.bitchord.data.webdav.WebDavConfig.isWebDavId(id) || com.music.bitchord.data.smb.SmbConfig.isSmbId(id)
+
     /** Called with the player whenever upstream's read-ahead is (`PlaybackService.prefetchAround`). */
     fun around(player: Player) {
         val count = ForkSettings.preloadSongs.value

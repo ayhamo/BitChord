@@ -9,3 +9,12 @@ const val NAVIDROME_ID_PREFIX = "navidrome:"
  * URL (so `localUri` is set) yet can still be starred, on the server.
  */
 val Song.isNavidrome: Boolean get() = videoId.startsWith(NAVIDROME_ID_PREFIX)
+
+private val SUBSONIC_SIZE = Regex("""([?&])size=\d+""")
+
+/**
+ * fork: a Navidrome cover (Subsonic getCoverArt) is sized by its `size` parameter, so a row
+ * downloads a row-sized cover and the player a sharp one, instead of 600 px everywhere.
+ */
+internal fun String.forkSubsonicSized(px: Int): String =
+    if ("/rest/getCoverArt" in this) replace(SUBSONIC_SIZE, "$1size=$px") else this

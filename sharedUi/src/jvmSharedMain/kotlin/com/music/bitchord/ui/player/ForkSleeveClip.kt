@@ -27,7 +27,8 @@ object ForkCanvasSwitch {
 }
 
 /**
- * Fork: the clip the player shows for [raw].
+ * Fork: the clip the player shows for [raw], and the clip behind the landscape
+ * player ([ForkLandscapeBackdrop]), read once from both switches.
  *
  * A Navidrome backdrop (`.background.mp4`, 9:16) is made to fill a phone. It
  * plays only where it can fill the screen ([forkFillsScreen]) and while the
@@ -38,14 +39,19 @@ object ForkCanvasSwitch {
  * Whatever fills the screen needs "Backdrop videos", whatever plays in the
  * square needs "Animated covers" ([ForkCanvasSwitch]). Both read live, so
  * flipping either mid-song changes the player at once.
+ *
+ * In portrait a backdrop fills the screen; landscape had none (the sleeve
+ * played the cover clip instead, and upstream played a Spotify Canvas cropped in
+ * the sleeve). There the second clip plays on the right of the screen, where the
+ * controls are, while the cover stays on the left.
  */
 @Composable
-internal fun forkCanvas(raw: CanvasArtwork?, phoneWidth: Boolean, windowWidth: Dp, windowHeight: Dp): CanvasArtwork? {
+internal fun forkCanvases(raw: CanvasArtwork?, phoneWidth: Boolean, windowWidth: Dp, windowHeight: Dp): Pair<CanvasArtwork?, CanvasArtwork?> {
     val backdrops by ForkCanvasSwitch.backdrops.collectAsStateWithLifecycle()
     val covers by ForkCanvasSwitch.covers.collectAsStateWithLifecycle()
     val fills = forkFillsScreen(raw, phoneWidth, windowWidth, windowHeight)
-    val shown = raw.forkInSleeve(backdrops && fills) ?: return null
-    return shown.takeIf { if (it.source.fillsPhone && fills) backdrops else covers }
+    val shown = raw.forkInSleeve(backdrops && fills)?.takeIf { if (it.source.fillsPhone && fills) backdrops else covers }
+    return shown to raw?.takeIf { backdrops && it.source.fillsPhone }
 }
 
 private fun CanvasArtwork?.forkInSleeve(backdropShown: Boolean): CanvasArtwork? = when {

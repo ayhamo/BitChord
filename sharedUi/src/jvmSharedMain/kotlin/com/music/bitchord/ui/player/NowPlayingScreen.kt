@@ -808,9 +808,7 @@ fun NowPlayingScreen(
     // track" check lives.
     val spotifyCanvasAutoHide by PlayerSettings.spotifyCanvasAutoHide.collectAsStateWithLifecycle()
     val mixing by PlayerSettings.smartMixInProgress.collectAsStateWithLifecycle()
-    val forkRawCanvas = rememberCanvasArtwork(song) // fork
-    val canvas = forkCanvas(forkRawCanvas, playerFillsWindow(windowWidth), windowWidth, windowHeight) // fork: backdrop switch, no backdrop in the sleeve
-    val forkLandscapeClip = forkLandscapeBackdrop(forkRawCanvas) // fork: landscape backdrop
+    val (canvas, forkLandscapeClip) = forkCanvases(rememberCanvasArtwork(song), playerFillsWindow(windowWidth), windowWidth, windowHeight) // fork: the two switches, landscape's backdrop
     var canvasAspect by remember(canvas) { mutableFloatStateOf(0f) }
     // Whether the clip actually has a frame on screen right now, and one of
     // them — used to blow the sleeve out to the full-bleed hero treatment and
@@ -2316,8 +2314,7 @@ fun NowPlayingScreen(
                             .background(Color.Black),
                     )
                 }
-                // fork: paused, the cover comes back over the full-screen clip
-                ForkPausedCover(visible = spotifyCanvasPresentation && !isPlaying && !lyricsOpen && !queueOpen, artUrl = remoteArt)
+                ForkPausedCover(visible = spotifyCanvasPresentation && !isPlaying && !lyricsOpen && !queueOpen, artUrl = remoteArt) // fork: paused, the cover comes back over the full-screen clip
 
                 Column(
                     modifier = Modifier

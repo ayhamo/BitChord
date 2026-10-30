@@ -78,3 +78,23 @@ internal fun LazyListScope.forkHomeHeading(section: ForkHomeSection) {
         PanelHeading(section.title, section.open, section::toggle)
     }
 }
+
+/**
+ * Upstream's feed, drawn by [draw], section by section under the headings, or
+ * whole with no sections. Only the first open section leads with the big cards
+ * ([leadHero]); the rest keep ordinary ones. [draw] gets the section's shelves,
+ * whether they lead, and a prefix for their keys (the sections share one list).
+ */
+internal fun LazyListScope.forkHomeFeed(
+    state: ForkHomeState,
+    shelves: List<HomeShelf>,
+    leadHero: Boolean,
+    draw: LazyListScope.(List<HomeShelf>, Boolean, String) -> Unit,
+) {
+    val sections = state.sections(shelves) ?: return draw(shelves, leadHero, "")
+    val firstOpen = sections.indexOfFirst { it.open }
+    sections.forEachIndexed { index, section ->
+        forkHomeHeading(section)
+        if (section.open) draw(section.shelves, index == firstOpen && leadHero, section.key + ":")
+    }
+}

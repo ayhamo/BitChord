@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -125,6 +126,16 @@ object NavidromeHome {
             Log.d(TAG, "genres: ${e.message}")
         }
         NavidromeOffline.syncPlaylists() // kept playlists follow the server
+    }
+
+    /** The Navidrome page ([reload]) and Home shelves follow the server settings, once per save. */
+    fun follow(scope: CoroutineScope, context: Context, reload: () -> Unit) {
+        scope.launch {
+            NavidromeSettings.saved.drop(1).collect {
+                reload()
+                launch { load(context) }
+            }
+        }
     }
 
     /** Home's "Made for you" shelf title, set as Home loads. */

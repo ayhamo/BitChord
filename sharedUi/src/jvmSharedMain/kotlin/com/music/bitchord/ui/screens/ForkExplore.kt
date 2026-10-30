@@ -67,15 +67,14 @@ internal fun rememberForkExplore(): ForkExploreState {
 
 /**
  * Above upstream's grid: the "Navidrome" panel, then the "YouTube" heading
- * (only when there is another panel). Tiles in rows of [columns], drawn by
- * [row] (upstream's tile row).
+ * (only when there is another panel). Tiles in rows of [columns], upstream's tile rows.
  */
 internal fun LazyListScope.forkPanelsAbove(
     state: ForkExploreState,
     columns: Int,
-    row: @Composable (List<MoodGenre>) -> Unit,
+    onClick: (MoodGenre) -> Unit,
 ) {
-    panel("navidrome", "Navidrome", state.genres, state.navidromeOpen, ForkExplore.navidromeOpen, columns, row)
+    panel("navidrome", "Navidrome", state.genres, state.navidromeOpen, ForkExplore.navidromeOpen, columns, onClick)
     if (!state.panels) return
     item(key = "fork:explore:youtube") {
         PanelHeading("YouTube", state.youtubeOpen) { ForkExplore.youtubeOpen.value = !state.youtubeOpen }
@@ -86,9 +85,9 @@ internal fun LazyListScope.forkPanelsAbove(
 internal fun LazyListScope.forkPanelsBelow(
     state: ForkExploreState,
     columns: Int,
-    row: @Composable (List<MoodGenre>) -> Unit,
+    onClick: (MoodGenre) -> Unit,
 ) {
-    panel("spotify", "Spotify", state.mixes, state.spotifyOpen, ForkExplore.spotifyOpen, columns, row)
+    panel("spotify", "Spotify", state.mixes, state.spotifyOpen, ForkExplore.spotifyOpen, columns, onClick)
 }
 
 private fun LazyListScope.panel(
@@ -98,12 +97,12 @@ private fun LazyListScope.panel(
     open: Boolean,
     flag: MutableStateFlow<Boolean>,
     columns: Int,
-    row: @Composable (List<MoodGenre>) -> Unit,
+    onClick: (MoodGenre) -> Unit,
 ) {
     if (tiles.isEmpty()) return
     item(key = "fork:explore:$key") { PanelHeading(title, open) { flag.value = !open } }
     if (!open) return
-    items(tiles.chunked(columns), key = { "fork:$key:" + it.first().browseId }) { row(it) }
+    items(tiles.chunked(columns), key = { "fork:$key:" + it.first().browseId }) { MoodGenreRow(row = it, columns = columns, onCategoryClick = onClick) }
 }
 
 @Composable

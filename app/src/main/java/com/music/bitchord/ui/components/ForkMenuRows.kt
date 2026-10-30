@@ -212,3 +212,11 @@ internal fun ForkAnimatedCoversMenuRow(accent: Color) {
         accent = accent,
     ) { ForkSettings.setAnimatedCovers(!on) }
 }
+
+/** The fork's rows in the player's menu: the two video switches and saved queues. */
+@Composable
+internal fun ForkPlayerMenuRows(song: com.music.bitchord.data.model.Song, accent: Color) {
+    if (com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(song.videoId)) ForkBackdropMenuRow(accent)
+    if (!com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(song.videoId)) ForkAnimatedCoversMenuRow(accent)
+    ForkSavedQueuesRow(accent)
+}

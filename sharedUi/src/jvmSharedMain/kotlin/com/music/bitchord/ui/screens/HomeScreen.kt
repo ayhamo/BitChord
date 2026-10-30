@@ -196,7 +196,7 @@ fun HomeScreen(
                     // The loading skeleton already owns the hero slot. Until
                     // Recently Played lands, every real shelf must retain its
                     // compact-card layout instead of briefly becoming a hero.
-                    fun shelves(list: List<HomeShelf>, firstIsHero: Boolean, keyPrefix: String = "") = itemsIndexedShelves( // fork: wrapped for ForkHome's sections
+                    forkHomeFeed(forkHome, state.data, leadHero && !recentlyPlayedLoading) { list, firstIsHero, keyPrefix -> itemsIndexedShelves( // fork: per ForkHome section
                         shelves = list,
                         onItemClick = onItemClick,
                         onItemLongPress = onItemLongPress,
@@ -214,19 +214,7 @@ fun HomeScreen(
                             )
                         },
                         keyPrefix = keyPrefix,
-                    )
-                    // fork: "Navidrome", "Spotify" and "YouTube" sections, each folding away (see ForkHome)
-                    val sections = forkHome.sections(state.data)
-                    if (sections == null) {
-                        shelves(state.data, leadHero && !recentlyPlayedLoading)
-                    } else {
-                        val firstOpen = sections.indexOfFirst { it.open }
-                        sections.forEachIndexed { index, section ->
-                            forkHomeHeading(section)
-                            // Only the first open section leads with the big cards; the rest keep ordinary ones.
-                            if (section.open) shelves(section.shelves, index == firstOpen && leadHero && !recentlyPlayedLoading, section.key + ":")
-                        }
-                    }
+                    ) }
                     if (loadingMore) feedMoreSkeleton()
                 }
             }

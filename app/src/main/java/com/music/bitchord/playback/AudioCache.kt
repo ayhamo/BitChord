@@ -1120,9 +1120,7 @@ object AudioCache {
 
             override fun open(dataSpec: DataSpec): Long {
                 val scheme = dataSpec.uri.scheme
-                activeDs = if (scheme == "file" || scheme == "content" ||
-                    com.music.bitchord.data.navidrome.NavidromeRadio.isStream(dataSpec.uri.toString()) // fork: a live radio stream isn't cached
-                ) {
+                activeDs = if (scheme == "file" || scheme == "content" || com.music.bitchord.data.navidrome.NavidromeRadio.isStream(dataSpec.uri.toString())) { // fork: a live radio stream isn't cached
                     upstreamDs
                 } else {
                     cacheDs
@@ -1224,9 +1222,7 @@ object AudioCache {
         // typically a good deal closer than googlevideo anyway.
         //
         val videoIds = mediaIds.filter { SourceRegistry.parseTrackKey(it) == null }
-            .filterNot(com.music.bitchord.data.navidrome.NavidromeSettings::isNavidromeId) // fork: streams from its own server
-            .filterNot(com.music.bitchord.data.navidrome.NavidromeRadio::isRadio) // fork: a live station has nothing to read ahead
-            .filterNot { com.music.bitchord.data.webdav.WebDavConfig.isWebDavId(it) || com.music.bitchord.data.smb.SmbConfig.isSmbId(it) } // fork (fixes upstream): files from a share have no YouTube stream to warm
+            .filterNot(com.music.bitchord.fork.ForkPreload::skipsReadAhead) // fork
             // A track already on disk needs no reading ahead, and read-ahead
             // speaks only to googlevideo: warming one would spend mobile data
             // fetching a second copy of a file the listener deliberately saved,

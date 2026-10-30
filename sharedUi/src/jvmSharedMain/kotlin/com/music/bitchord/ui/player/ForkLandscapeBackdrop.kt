@@ -23,23 +23,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.canvas.CanvasArtwork
-
-/**
- * Fork: the full-screen clip for the landscape player (a Navidrome backdrop,
- * or a Spotify Canvas), or null.
- *
- * In portrait a backdrop fills the screen; landscape had none (the sleeve
- * played the cover clip instead, see [forkCanvas], and upstream played a
- * Spotify Canvas cropped in the sleeve). Here it plays on the right of the
- * screen, where the controls are, while the cover stays on the left.
- */
-@Composable
-internal fun forkLandscapeBackdrop(raw: CanvasArtwork?): CanvasArtwork? {
-    val backdrops by ForkCanvasSwitch.backdrops.collectAsStateWithLifecycle()
-    return raw?.takeIf { backdrops && it.source.fillsPhone }
-}
 
 /**
  * Fork: the landscape player's backdrop, drawn as its background over the

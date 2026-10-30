@@ -157,7 +157,7 @@ import com.music.bitchord.ui.components.ExplicitSongTitle
 import com.music.bitchord.ui.components.LIBRARY_GRID_SPACING
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
-import com.music.bitchord.ui.components.ForkRowFill
+import com.music.bitchord.ui.components.forkRowMax
 import com.music.bitchord.ui.components.NUMBERED_ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.RowMoreButton
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
@@ -814,7 +814,8 @@ fun DetailScreen(
             }
 
             // Albums / Singles & EPs carousels (artist pages).
-            items(page.sections) { shelf -> ForkRowFill(ARTIST_ROW_MAX_ITEMS, 14.dp) { maxItems -> // fork: the cap follows the row's width
+            items(page.sections) { shelf ->
+                val maxItems = forkRowMax(ARTIST_ROW_MAX_ITEMS, 14.dp) // fork: the cap follows the window's width
                 val canShowAll = shelf.items.size > maxItems
                 val displayItems = remember(shelf.items, maxItems) {
                     if (canShowAll) shelf.items.take(maxItems) else shelf.items
@@ -843,7 +844,7 @@ fun DetailScreen(
                         }
                     }
                 }
-            } }
+            }
             if (isArtist) aboutItem()
         }
 

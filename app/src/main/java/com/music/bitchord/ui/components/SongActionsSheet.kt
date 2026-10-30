@@ -363,9 +363,7 @@ fun SongActionsSheet(
                 accent = palette.accent,
             ) { pickingSleepTimer = true }
         }
-        if (showSleepTimer && com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(song.videoId)) ForkBackdropMenuRow(palette.accent) // fork
-        if (showSleepTimer && !com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(song.videoId)) ForkAnimatedCoversMenuRow(palette.accent) // fork: online animated covers
-        if (showSleepTimer) ForkSavedQueuesRow(palette.accent) // fork: saved queues
+        if (showSleepTimer) ForkPlayerMenuRows(song, palette.accent) // fork
         // Deliberately outside the online-only block below. Local files and
         // completed downloads use the same player lyric clock (including
         // embedded synced lyrics), so they need this control just as much as

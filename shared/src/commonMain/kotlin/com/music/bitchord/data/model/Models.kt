@@ -296,10 +296,7 @@ fun String?.durationMillis(): Long {
 /** As [Song.artworkAt], for artwork that isn't a track's. */
 fun String?.artworkAt(px: Int): String? {
     if (this == null) return null
-    var sized = this.replace(SIZE_HINT, "w$px-h$px")
-    // fork: a Navidrome cover (Subsonic getCoverArt) is sized by its `size` parameter, so a row
-    // downloads a row-sized cover and the player a sharp one, instead of 600 px everywhere.
-    if ("/rest/getCoverArt" in this) sized = sized.replace(SUBSONIC_SIZE, "$1size=$px")
+    val sized = this.replace(SIZE_HINT, "w$px-h$px").forkSubsonicSized(px) // fork
     return if (isGoogleImageHost(this)) {
         sized.replace(PARAM_SIZE_HINT, "=s$px")
     } else {
@@ -320,7 +317,6 @@ private fun isGoogleImageHost(url: String): Boolean {
 
 private val SIZE_HINT = Regex("""w\d+-h\d+""")
 private val PARAM_SIZE_HINT = Regex("""=s\d+""")
-private val SUBSONIC_SIZE = Regex("""([?&])size=\d+""") // fork
 
 /**
  * Artwork for a list row — 52dp at most, so about 140px on a 3x screen.
