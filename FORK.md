@@ -80,7 +80,7 @@ Everything this fork adds lives in new files where possible. This file lists eve
 | `BitChordApplication.kt` | `NavidromeSettings.init(this)` and `ForkSettings.init(this)` after `AppSettings.init`; `coilHttpClient`: first interceptor runs `Http.forkInterceptor` (kept Navidrome covers come from disk) |
 | `AndroidManifest.xml` | `.fork.ForkOfflineService` (dataSync) after upstream's DownloadService |
 | `app/build.gradle.kts` | `prod` flavor: `applicationId = "com.ayhamo.bitchord"`, `app_name` "BitChord Fork" |
-| `res/xml/backup_rules.xml`, `res/xml/data_extraction_rules.xml` | Exclude `bitchord_navidrome.xml` and `bitchord_navidrome_plain.xml`, next to the `bitchord_sources` lines |
+| `res/xml/backup_rules.xml`, `res/xml/data_extraction_rules.xml` | Exclude `bitchord_navidrome.xml`, `bitchord_navidrome_plain.xml`, `bitchord_widget.xml`, `bitchord_radio_logos.xml`, `navidrome_offline/`, `fork_queues.json`, next to the `bitchord_sources` lines (all can hold a server login or are too big to back up) |
 | `.gitignore` | `CLAUDE.md`, `graphify-out/`, `/out/` |
 | `.github/workflows/fork-sync-release.yml` (new) | Daily: merge upstream's latest release, fork tests, `assembleProdRelease` signed with the fork's release key, certificate check, attestation, `fork-v<version>` release; on failure an issue + GitHub's failure email |
 | `README.md` | A "This fork" note and "What this fork adds" section above upstream's header (a likely but easy merge conflict when upstream edits its top) |

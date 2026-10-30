@@ -19,6 +19,7 @@
         <exclude domain="file" path="navidrome_offline/" />
         <exclude domain="file" path="fork_queues.json" />
         <exclude domain="sharedpref" path="bitchord_widget.xml" />
+        <exclude domain="sharedpref" path="bitchord_radio_logos.xml" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="bitchord_auth.xml" />
@@ -35,5 +36,6 @@
         <exclude domain="file" path="navidrome_offline/" />
         <exclude domain="file" path="fork_queues.json" />
         <exclude domain="sharedpref" path="bitchord_widget.xml" />
+        <exclude domain="sharedpref" path="bitchord_radio_logos.xml" />
     </device-transfer>
 </data-extraction-rules>

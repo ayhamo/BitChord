@@ -103,7 +103,7 @@ object NavidromeRadio {
         if (::logos.isInitialized) {
             logos.string(key)?.split('\n')?.let { parts ->
                 val at = parts.getOrNull(1)?.toLongOrNull() ?: 0L
-                if (System.currentTimeMillis() - at < LOGO_MS) return@withContext parts[0].ifEmpty { null }
+                if (System.currentTimeMillis() - at < LOGO_MS) return@withContext NavidromeRepository.live(parts[0].ifEmpty { null })
             }
         }
         val found = runCatching {
@@ -114,7 +114,8 @@ object NavidromeRadio {
         }.onFailure { Log.d(TAG, "radio logo ${station.name}: ${it.message}") }
         // A failed lookup (no network) is not remembered; only a real answer is.
         val url = found.getOrElse { return@withContext null }
-        if (::logos.isInitialized) logos.putStrings(mapOf(key to "${url.orEmpty()}\n${System.currentTimeMillis()}"))
+        // The server's own logo address has the login in it; that stays out of this plain store.
+        if (::logos.isInitialized) logos.putStrings(mapOf(key to "${NavidromeRepository.atRest(url).orEmpty()}\n${System.currentTimeMillis()}"))
         url
     }
 

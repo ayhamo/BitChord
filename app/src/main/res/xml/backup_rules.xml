@@ -24,4 +24,6 @@
     <exclude domain="file" path="fork_queues.json" />
     <!-- The playing song's cover address, a server's with its login. -->
     <exclude domain="sharedpref" path="bitchord_widget.xml" />
+    <!-- Station logo addresses; older ones hold a server login. -->
+    <exclude domain="sharedpref" path="bitchord_radio_logos.xml" />
 </full-backup-content>
