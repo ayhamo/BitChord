@@ -23,6 +23,11 @@ else()
     target_include_directories(bitchord_window PRIVATE ${JNI_INCLUDE_DIRS})
 endif()
 
+if(CMAKE_CROSSCOMPILING AND WIN32)
+    # A Linux JDK has no Windows jni_md.h: the same stand-in the analyser uses.
+    target_include_directories(bitchord_window PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../win32)
+endif()
+
 target_link_libraries(bitchord_window PRIVATE user32 dwmapi ole32 uuid)
 
 if(MINGW)
