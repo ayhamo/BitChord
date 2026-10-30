@@ -5,6 +5,7 @@ import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.lyrics.LrcLib
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.toEnhancedLrc
+import com.music.bitchord.data.lyrics.toLrc
 import com.music.bitchord.data.lyrics.withBackgroundVocals
 import com.music.bitchord.data.model.Song
 import kotlinx.coroutines.CoroutineScope
@@ -125,7 +126,7 @@ object NavidromeLyrics {
 
     /** LRC for keeping [song] offline: the server's timed lyrics, else the online sources', as a download embeds them. */
     internal suspend fun lrcFor(songId: String, song: Song): String? =
-        forSong(songId)?.toEnhancedLrc()?.takeIf { it.isNotBlank() }
+        forSong(songId)?.asLrc()?.takeIf { it.isNotBlank() }
             ?: com.music.bitchord.download.LyricsTag.forTrack(song)?.let { it.enhanced ?: it.plain }
 
     /** Bytes the lyrics cache takes. */
@@ -136,12 +137,16 @@ object NavidromeLyrics {
         answers.clear()
     }
 
-    private fun cacheFile(songId: String): File? = cacheDir?.let { File(it, "$songId.lrc") }?.takeIf { it.isFile }
+    // Not an empty one: an earlier build saved line-synced lyrics as empty files, and those are no answer.
+    private fun cacheFile(songId: String): File? = cacheDir?.let { File(it, "$songId.lrc") }?.takeIf { it.isFile && it.length() > 0 }
+
+    /** Word stamps when there are any, else plain line stamps: [toEnhancedLrc] is empty for line-synced lyrics, by design. */
+    private fun List<LyricLine>.asLrc(): String = toEnhancedLrc().ifBlank { toLrc() }
 
     private fun write(songId: String, lines: List<LyricLine>) {
         val dir = cacheDir ?: return
         runCatching {
-            File(dir, "$songId.lrc").writeText(lines.toEnhancedLrc())
+            File(dir, "$songId.lrc").writeText(lines.asLrc())
             val files = dir.listFiles() ?: return@runCatching
             if (files.size > CACHE_FILES) files.sortedBy { it.lastModified() }.take(CACHE_FILES / 4).forEach { it.delete() }
         }.onFailure { Log.d(TAG, "lyrics cache $songId: ${it.message}") }

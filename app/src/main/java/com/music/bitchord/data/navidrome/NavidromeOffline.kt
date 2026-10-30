@@ -177,6 +177,19 @@ object NavidromeOffline {
     fun localFile(songId: String): File? =
         if (::dir.isInitialized && songId in onDiskIds) File(dir, songId) else null
 
+    /**
+     * Where a Navidrome song plays from when the address it carried is no good: its kept file,
+     * else a stream from the server. A queue saved while offline remembers `file://` addresses,
+     * and once the page is removed the player would otherwise take the id for a YouTube one and
+     * fail on every song ("URL not accepted"). Null for any other song.
+     */
+    fun uriFor(videoId: String): String? {
+        if (!NavidromeSettings.isNavidromeId(videoId)) return null
+        val id = videoId.removePrefix(NavidromeSettings.ID_PREFIX)
+        return localFile(id)?.let { Uri.fromFile(it).toString() }
+            ?: runCatching { NavidromeRepository.client().streamUrl(id) }.getOrNull()
+    }
+
     /** The kept lyrics for a Navidrome song id, or null. */
     fun lyricsFile(songId: String): File? =
         if (::dir.isInitialized) File(lyricsDir, "$songId.lrc").takeIf { it.isFile } else null

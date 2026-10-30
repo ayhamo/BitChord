@@ -120,6 +120,15 @@ object NavidromeHome {
         } catch (e: IllegalArgumentException) {
             Log.d(TAG, "home shelves: ${e.message}")
         }
+        // The stars too: otherwise only a page listing a song says it is starred, and the song
+        // restored at start shows an empty star until one is opened.
+        try {
+            NavidromeStars.seed(client.starredSongIds().mapTo(HashSet()) { NavidromeSettings.ID_PREFIX + it })
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.d(TAG, "stars: ${e.message}")
+        }
         // The Explore panel's genres, after the shelves are up (a failure there leaves them alone).
         try {
             NavidromeGenres.load(client)

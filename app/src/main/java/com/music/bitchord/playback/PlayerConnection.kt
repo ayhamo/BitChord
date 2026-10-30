@@ -672,6 +672,7 @@ fun Song.toMediaItem(): MediaItem {
     // leaves that path unguarded.
     val offlineUri = localUri?.takeUnless(Downloads::isMissingLocalFile)
         ?: Downloads.verifiedSavedUri(videoId)
+        ?: com.music.bitchord.data.navidrome.NavidromeOffline.uriFor(videoId) // fork: a removed kept file falls back to the server, not YouTube
     val uriString = offlineUri ?: when {
         videoId.startsWith("content://") || videoId.startsWith("file://") -> videoId
         // Title, artist and runtime ride along in the URI because they are what

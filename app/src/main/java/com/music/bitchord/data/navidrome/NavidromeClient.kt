@@ -76,6 +76,10 @@ class NavidromeClient(
     }
 
     /** Songs the server's agents (Last.fm and the like) call similar; empty when it has none configured. */
+    /** The ids of every starred song. */
+    suspend fun starredSongIds(): List<String> =
+        songRows(call("getStarred2")["starred2"]?.jsonObject?.get("song")).map { it.id }
+
     suspend fun similarSongs(id: String, count: Int): List<SongRow> {
         val result = call("getSimilarSongs2", "id" to id, "count" to count.toString())
         return songRows(result["similarSongs2"]?.jsonObject?.get("song"))

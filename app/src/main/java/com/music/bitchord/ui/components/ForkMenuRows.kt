@@ -54,7 +54,7 @@ internal fun ForkOfflineRow(target: BrowseTarget, accent: Color) {
     val running = progress[id]
     // What it takes (kept) or will take (not yet), so a big album is no surprise.
     // null until measured, so a kept page never flashes "0 MB".
-    val keptBytes by produceState<Long?>(null, id, kept) {
+    val keptBytes by produceState<Long?>(null, id, kept, running == null) {
         value = if (kept) {
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 com.music.bitchord.data.navidrome.NavidromeOffline.pageBytes(id)

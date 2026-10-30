@@ -4111,7 +4111,7 @@ private fun BitChordApp(
             }
             val onToggleVersion: (() -> Unit)? = if (fromPlayer &&
                 hasAlternateVersion &&
-                !com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(song.videoId) && // fork: a Navidrome file has no video version
+                !com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(song.videoId) && !com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(song.videoId) && // fork: a Navidrome file or a station has no video version
                 !switchingAudioVersion &&
                 controller?.currentMediaItem?.mediaId == song.videoId
             ) {
