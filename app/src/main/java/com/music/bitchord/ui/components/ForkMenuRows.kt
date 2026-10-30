@@ -66,7 +66,8 @@ internal fun ForkOfflineRow(target: BrowseTarget, accent: Color) {
     // Songs that failed to download: a partly kept page offers to fetch the rest (removing it is in the storage page).
     val missing = remember(id, pages, running == null) { com.music.bitchord.data.navidrome.NavidromeOffline.missing(id) }
     // Again after a keep or a remove: the files on the phone are what it is measured against.
-    val estimate = remember(target.songs, pages, running == null) {
+    val swept by com.music.bitchord.data.navidrome.NavidromeOffline.swept.collectAsStateWithLifecycle()
+    val estimate = remember(target.songs, pages, running == null, swept) {
         com.music.bitchord.data.navidrome.NavidromeOffline.estimate(target.songs)
     }
     ActionRow(
@@ -168,7 +169,7 @@ private fun ForkSavedQueuesDialog(
                                         R.string.fork_queues_entry,
                                         androidx.compose.ui.res.pluralStringResource(R.plurals.navidrome_playlist_songs, queue.songs.size, queue.songs.size),
                                         queue.current?.title.orEmpty(),
-                                        "%d:%02d".format(queue.positionMs / 60_000, queue.positionMs / 1_000 % 60),
+                                        String.format(java.util.Locale.ROOT, "%d:%02d", queue.positionMs / 60_000, queue.positionMs / 1_000 % 60),
                                     ),
                                     style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
                                     color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,

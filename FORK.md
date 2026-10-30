@@ -39,7 +39,7 @@ Everything this fork adds lives in new files where possible. This file lists eve
 | `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeOffline.kt` | "Available offline": whole albums/playlists kept in `files/navidrome_offline` (original files, covers at 1200 px, backdrops and cover clips with `clips.json`, timed lyrics as `.lrc`), never evicted; two files at a time, waiting for a network the "Download over" switches allow; covers and clips answered from disk by `serve()` in the HTTP clients; sizes before and after keeping; `offline.json` list; offline-mode listing (`keptSongs`); Library "Available offline" row |
 | `app/src/main/java/com/music/bitchord/fork/ForkYouTubeHistory.kt` | Navidrome plays into the YouTube Music history: strict YouTube match (title, artists, length ±5 s), then upstream's `PlaybackTracker` with that id (switch, off by default) |
 | `app/src/main/java/com/music/bitchord/fork/ForkClipCache.kt` | Clip cache size (adjustable evictor) and clearing by the switches' two kinds: backdrop videos (server backdrops, Spotify Canvas) and animated covers (server cover clips, Apple Music etc.); `clearWithSongs()` empties both and the lyrics cache, and clearing also forgets the server's "no clip" notes |
-| `app/src/main/java/com/music/bitchord/ui/components/ForkMenuRows.kt` | "Backdrop videos" row in the player's song menu; "Available offline" row in an album/playlist sheet |
+| `app/src/main/java/com/music/bitchord/ui/components/ForkMenuRows.kt` | The player's song menu rows (`ForkPlayerMenuRows`: "Backdrop videos", "Animated covers", saved queues); "Available offline" row in an album/playlist sheet |
 | `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeArtists.kt` | Navidrome artist pages from one paged `search3` (exact artist tag), not the whole library |
 | `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeGenres.kt` | The server's genres as Explore tiles (`getGenres`, a `byGenre` album cover each) and genre pages (`getSongsByGenre`, id `local:group:genre:navidrome:<genre>`) |
 | `sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/screens/ForkExplore.kt` | Explore's "YouTube", "Navidrome" (server genres) and "Spotify" (mixes) panels, each collapsible |
@@ -54,6 +54,8 @@ Everything this fork adds lives in new files where possible. This file lists eve
 | `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeRadio.kt` | The server's internet radio stations (`getInternetRadioStations`) as the Library "Internet radio" page; `.pls`/`.m3u` resolved to the stream; a `#bitchord-radio` mark keeps streams out of the song cache; logos: the server's `ra-<id>` cover (what psysonic uploads), else radio-browser.info, kept a week (`bitchord_radio_logos` prefs) |
 | `app/src/main/java/com/music/bitchord/fork/ForkQueues.kt` | Saved queues (try-out): the queue, its song and second, saved under a name in `files/fork_queues.json` (max 20), played back from there |
 | `docker/keys/release/` (gitignored) | The fork's release key `bitchord-release.jks` + `keystore.properties` (random password). Back it up: without it no update installs over a release |
+
+`STATUS.md` and `FORK_PLAN.md` are this fork's own notes (where the work stands, and the plan); upstream has neither.
 
 ## Hooks in upstream files
 

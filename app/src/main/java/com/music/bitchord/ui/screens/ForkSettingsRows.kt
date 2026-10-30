@@ -137,23 +137,22 @@ internal fun ForkClearCoverClipsRow() = ForkClearClipsRow(
     title = stringResource(R.string.fork_clear_cover_clips),
 )
 
-/** Drops one kind of Navidrome clip from the clip cache, showing what it holds now. */
+/** A cache row's size: lyrics are a few KB each, and would read "0.0 MB" for hundreds of songs. */
+private fun forkCacheSize(bytes: Long): String =
+    if (bytes in 1 until 1048576L) "${(bytes + 1023) / 1024} KB" else "%.1f MB".format(bytes / 1048576.0)
+
+/** Drops one kind of clip from the clip cache, showing what it holds now. */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 private fun ForkClearClipsRow(kind: com.music.bitchord.fork.ForkClipCache.Kind, title: String) {
     val scope = rememberCoroutineScope()
-    var refresh by remember { mutableIntStateOf(0) }
-    val bytes by produceState(0L, refresh) { value = com.music.bitchord.fork.ForkClipCache.size(kind) }
+    val cleared by com.music.bitchord.fork.ForkClipCache.cleared.collectAsStateWithLifecycle()
+    val bytes by produceState(0L, cleared) { value = com.music.bitchord.fork.ForkClipCache.size(kind) }
     SettingsRow(
         icon = Icons.Rounded.DeleteSweep,
         title = title,
-        subtitle = stringResource(R.string.fork_clear_clips_subtitle, "%.1f MB".format(bytes / 1048576.0)),
-        onClick = {
-            scope.launch {
-                com.music.bitchord.fork.ForkClipCache.clear(kind)
-                refresh++
-            }
-        },
+        subtitle = stringResource(R.string.fork_clear_clips_subtitle, forkCacheSize(bytes)),
+        onClick = { scope.launch { com.music.bitchord.fork.ForkClipCache.clear(kind) } },
     )
 }
 
@@ -202,8 +201,8 @@ internal fun ForkPreloadRow() {
 @Composable
 internal fun ForkClearLyricsRow() {
     val scope = rememberCoroutineScope()
-    var refresh by remember { mutableIntStateOf(0) }
-    val bytes by produceState(0L, refresh) {
+    val cleared by com.music.bitchord.fork.ForkClipCache.cleared.collectAsStateWithLifecycle()
+    val bytes by produceState(0L, cleared) {
         value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             com.music.bitchord.data.navidrome.NavidromeLyrics.cacheBytes()
         }
@@ -211,11 +210,11 @@ internal fun ForkClearLyricsRow() {
     SettingsRow(
         icon = Icons.Rounded.DeleteSweep,
         title = stringResource(R.string.fork_clear_lyrics),
-        subtitle = stringResource(R.string.fork_clear_lyrics_subtitle, "%.1f MB".format(bytes / 1048576.0)),
+        subtitle = stringResource(R.string.fork_clear_lyrics_subtitle, forkCacheSize(bytes)),
         onClick = {
             scope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 com.music.bitchord.data.navidrome.NavidromeLyrics.clearCache()
-                refresh++
+                com.music.bitchord.fork.ForkClipCache.cleared.value++
             }
         },
     )

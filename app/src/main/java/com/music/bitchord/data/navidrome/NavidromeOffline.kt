@@ -263,6 +263,8 @@ object NavidromeOffline {
                         }
                     }.awaitAll()
                 }
+                // Nothing at all came down (the server or the network is gone): there is no page to keep.
+                if (songs.none(::hasFile)) throw IOException("no song could be downloaded")
                 // Removed (or replaced) while its last song finished: don't bring it back.
                 if (jobs[id] !== me) throw CancellationException("offline $id was removed")
                 _pages.update { it + (id to page) }
@@ -279,7 +281,8 @@ object NavidromeOffline {
             } finally {
                 // Stopped by Android, not by the user: kept as far as it got. Recorded while the
                 // page is still [active], so no other page's sweep can take its files meanwhile.
-                val keepPartial = !kept && keepOnStop.remove(id) && jobs[id] === me
+                val stoppedByAndroid = keepOnStop.remove(id) // whatever else: a finished page must not leave its id for a later Cancel
+                val keepPartial = !kept && stoppedByAndroid && jobs[id] === me
                 if (keepPartial) {
                     _pages.update { it + (id to page) }
                     writeManifest()
@@ -475,7 +478,12 @@ object NavidromeOffline {
         clipDir.listFiles()?.filter { it.name.endsWith(".mp4") && it.name !in clipFiles }?.forEach { it.delete() }
         coverDir.listFiles()?.filter { !it.name.endsWith(".part") && it.name !in coverIds }?.forEach { it.delete() }
         writeClipsLocked()
+        _swept.value++
     }
+
+    /** Bumped when [sweep] has deleted what it could, so a row measuring what's on the phone measures again. */
+    private val _swept = MutableStateFlow(0)
+    val swept: StateFlow<Int> = _swept.asStateFlow()
 
     /** The kept pages as the Library's "Available offline" row, shown with or without the server. */
     private fun publishRow() {

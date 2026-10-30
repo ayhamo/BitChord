@@ -60,8 +60,11 @@ object NavidromeHome {
      * rather than blanking it; one that is no longer configured clears them.
      */
     suspend fun load(context: Context): Unit = coroutineScope {
-        // Offline mode: what is shown stays, nothing goes out.
-        if (com.music.bitchord.fork.ForkNetwork.offline.value) return@coroutineScope
+        // Offline mode: what is shown stays, nothing goes out (a server just disconnected still clears its shelves).
+        if (com.music.bitchord.fork.ForkNetwork.offline.value) {
+            if (!NavidromeSettings.isConfigured()) lock.withLock { loadServer(context) }
+            return@coroutineScope
+        }
         // The Spotify mixes load with Home too, server or not (they have their own section),
         // alongside the server's shelves rather than ahead of them.
         spotifyTitle = context.getString(R.string.fork_spotify_mixes)

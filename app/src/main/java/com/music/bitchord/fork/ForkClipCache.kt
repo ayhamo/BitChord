@@ -5,6 +5,7 @@ import com.music.bitchord.data.canvas.CanvasCache
 import com.music.bitchord.playback.DynamicLruCacheEvictor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -27,6 +28,9 @@ object ForkClipCache {
     val evictor = DynamicLruCacheEvictor(ForkSettings.DEFAULT_CLIP_CACHE_MB * MB, headBytes = 0L, headBudgetBytes = 0L)
 
     enum class Kind { BACKDROPS, COVER_CLIPS }
+
+    /** Bumped after every clear, so each row showing a size (they appear twice in Settings) measures again. */
+    val cleared = MutableStateFlow(0)
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -51,6 +55,7 @@ object ForkClipCache {
             if (kind == Kind.BACKDROPS) com.music.bitchord.data.navidrome.NavidromeClips.Kind.BACKDROP
             else com.music.bitchord.data.navidrome.NavidromeClips.Kind.COVER,
         )
+        cleared.value++
     }
 
     private fun String.forKind(kind: Kind): Boolean {
@@ -68,6 +73,7 @@ object ForkClipCache {
         scope.launch {
             Kind.entries.forEach { clear(it) }
             com.music.bitchord.data.navidrome.NavidromeLyrics.clearCache()
+            cleared.value++
         }
     }
 
