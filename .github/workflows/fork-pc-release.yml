@@ -30,7 +30,7 @@ jobs:
         id: build
         run: |
           set -euo pipefail
-          version=$(sed -n 's/.*bitchordVersionName"\] = "\(.*\)"//p' build.gradle.kts)
+          version=$(sed -n 's/.*bitchordVersionName"\] = "\(.*\)"/\1/p' build.gradle.kts)
           echo "version=$version" >> "$GITHUB_OUTPUT"
           mkdir out
           docker run --rm -v "$PWD:/work" -v "$PWD/out:/out" eclipse-temurin:21-jdk bash /work/docker/pc-build.sh
