@@ -44,10 +44,12 @@ import com.music.bitchord.data.navidrome.NavidromeAlbums
 import com.music.bitchord.data.navidrome.NavidromeArtists
 import com.music.bitchord.data.navidrome.NavidromeClient
 import com.music.bitchord.data.navidrome.NavidromeClips
+import com.music.bitchord.data.navidrome.NavidromeGenres
 import com.music.bitchord.data.navidrome.NavidromeLyrics
 import com.music.bitchord.data.navidrome.NavidromeOffline
 import com.music.bitchord.data.navidrome.NavidromePlatform
 import com.music.bitchord.data.navidrome.NavidromePlaylists
+import com.music.bitchord.data.navidrome.NavidromeRadio
 import com.music.bitchord.data.navidrome.NavidromeRepository
 import com.music.bitchord.data.navidrome.NavidromeSettings
 import com.music.bitchord.data.navidrome.NavidromeSongInfo
@@ -106,12 +108,17 @@ internal object ForkNavidrome {
         ForkYouTubeHistory.enabled.value = settings.string(KEY_YT_HISTORY) != "off"
         ForkCanvasSwitch.backdrops.value = settings.string(KEY_BACKDROPS) != "off"
         ForkCanvasSwitch.covers.value = settings.string(KEY_COVERS) != "off"
+        ForkNavidromeSettings.install()
+        ForkNavidromeGenres.install()
+        ForkRadio.install(PrefsStore("com/music/bitchord/navidrome_radio_logos", sealed = emptySet()))
     }
 
     fun owns(song: Song): Boolean = NavidromeSettings.isNavidromeId(song.videoId)
 
     /** Where a Navidrome song plays from, built from the current login rather than the address it was queued with. */
     fun stream(song: Song): DesktopStream? {
+        // A station's own address: the server only lists it, the audio doesn't come from there.
+        NavidromeRadio.streamUrl(song)?.let { return DesktopStream(it) }
         if (!owns(song) || !NavidromeSettings.isConfigured()) return null
         // The plain path, as the engine gives its own saved files: FFmpeg doesn't decode a file:// address.
         NavidromeOffline.localFile(song.videoId.removePrefix(NavidromeSettings.ID_PREFIX))?.let { return DesktopStream(it.absolutePath) }
@@ -141,6 +148,7 @@ internal object ForkNavidrome {
      * other seed, which goes to YouTube.
      */
     suspend fun tracks(existing: List<Song>, seed: Song, limit: Int, station: Boolean): Result<List<Song>>? {
+        if (NavidromeRadio.isRadio(seed.videoId)) return Result.success(emptyList()) // nothing to seed on: its id isn't YouTube's, its name no song's
         if (!owns(seed)) return null
         if (ForkOffline.offline.value) return Result.success(emptyList()) // the queue ends with what is kept: the server's songs wouldn't play
         if (station) return NavidromeRepository.instantMix(seed)
@@ -152,9 +160,9 @@ internal object ForkNavidrome {
     }
 
     fun ownsPage(browseId: String): Boolean =
-        browseId.startsWith(NavidromeAlbums.PREFIX) || browseId.startsWith(NavidromeArtists.PREFIX) || browseId.startsWith(NavidromePlaylists.PREFIX)
+        browseId.startsWith(NavidromeAlbums.PREFIX) || browseId.startsWith(NavidromeArtists.PREFIX) || browseId.startsWith(NavidromePlaylists.PREFIX) || NavidromeGenres.isGenre(browseId)
 
-    /** The page for a Navidrome album, artist or playlist id, or null for any other id. */
+    /** The page for a Navidrome album, artist, playlist or genre id, or null for any other id. */
     suspend fun collection(pending: DesktopCollection): Result<DesktopCollection>? {
         val browseId = pending.browseId
         if (!ownsPage(browseId)) return null
@@ -162,6 +170,7 @@ internal object ForkNavidrome {
         val answer = NavidromeAlbums.pageState(browseId, empty)
             ?: NavidromeArtists.pageState(browseId, empty)
             ?: NavidromePlaylists.pageState(browseId, empty)
+            ?: NavidromeGenres.pageState(browseId, empty)
             ?: return Result.failure(IllegalStateException("Nothing here"))
         return when (answer) {
             is UiState.Success -> {
@@ -186,9 +195,11 @@ internal object ForkNavidrome {
     /** The server's album and playlist shelves for the top of Home; none without a login or a server. */
     suspend fun homeShelves(): List<HomeShelf> {
         if (!NavidromeSettings.isConfigured()) return emptyList()
+        val shown = ForkNavidromeSettings.homeShelves.value // "Navidrome on Home"
         // Offline: what is kept here, in place of the server's shelves, as on the phone.
-        if (ForkOffline.offline.value) return listOfNotNull(NavidromeOffline.shelf("Available offline").takeIf { it.items.isNotEmpty() })
+        if (ForkOffline.offline.value) return listOfNotNull(NavidromeOffline.shelf("Available offline").takeIf { shown && it.items.isNotEmpty() })
         NavidromeOffline.syncPlaylists() // kept playlists follow the server
+        if (!shown) return emptyList() // after the sync: as on the phone, the switch only hides the shelves
         val client = NavidromeRepository.client()
         fun albums(rows: List<NavidromeClient.AlbumRow>) = rows.map { row ->
             NavidromeAlbums.remember(row.name, row.id)
@@ -291,13 +302,14 @@ internal object ForkNavidrome {
 
 /**
  * The sidebar's "Navidrome" page: the login until there is one, then [page] with the
- * library's songs. [onStars] gets the stars the listing brought with it.
+ * library's songs, or [radio] with the stations. [onStars] gets the stars the listing brought with it.
  */
 @Composable
 internal fun ForkNavidromeScreen(
     contentPadding: PaddingValues,
     onStars: (Set<String>) -> Unit,
     onOpenPage: (String) -> Unit,
+    radio: @Composable () -> Unit,
     page: @Composable (List<Song>) -> Unit,
 ) {
     val url by NavidromeSettings.url.collectAsState()
@@ -310,6 +322,7 @@ internal fun ForkNavidromeScreen(
     var attempt by remember(saved) { mutableStateOf(0) }
     var songs by remember(saved) { mutableStateOf<List<Song>?>(null) }
     var failure by remember(saved) { mutableStateOf<String?>(null) }
+    var stations by remember(saved) { mutableStateOf(false) }
     val offline by ForkOffline.offline.collectAsState()
     LaunchedEffect(saved, attempt, offline) { // offline: the kept songs, back online: the library
         failure = null
@@ -328,6 +341,12 @@ internal fun ForkNavidromeScreen(
         ) {
             Text("$username on $url", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (!offline) { // radio needs the network: the phone's Library drops the link too
+                    TextButton(onClick = { stations = !stations }) {
+                        Text(if (stations) "Library" else ForkRadio.TITLE, style = MaterialTheme.typography.bodySmall)
+                    }
+                    Spacer(Modifier.widthIn(min = 8.dp))
+                }
                 ForkOfflineControls(onOpenPage)
                 Spacer(Modifier.widthIn(min = 16.dp))
                 val history by ForkYouTubeHistory.enabled.collectAsState()
@@ -341,6 +360,7 @@ internal fun ForkNavidromeScreen(
         Box(Modifier.weight(1f).fillMaxWidth()) {
             val loaded = songs
             when {
+                stations && !offline -> radio()
                 loaded != null -> page(loaded)
                 // The whole library is several requests: one failing shouldn't need a restart.
                 failure != null -> Column(Modifier.align(Alignment.Center).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {

@@ -13,7 +13,13 @@ Everything this fork adds lives in new files where possible. This file lists eve
 | `desktopApp/src/main/kotlin/com/music/bitchord/desktop/ForkSpotifyHome.kt` | The mixes as Home's "Made for you" shelf |
 | `desktopApp/src/main/kotlin/com/music/bitchord/desktop/ForkNotice.kt` | A short message over the window, the phone's toast |
 | `desktopApp/src/main/kotlin/com/music/bitchord/desktop/ForkOffline.kt` | "Available offline" and offline mode on the desktop: keeps pages with the shared `NavidromeOffline`, offline when switched on or the server can't be reached |
+| `desktopApp/src/main/kotlin/com/music/bitchord/desktop/ForkSpotifyToken.kt` | Spotify's token from its real page in a hidden JavaFX browser, as the phone does |
+| `desktopApp/src/main/kotlin/com/music/bitchord/desktop/ForkNavidromeSearch.kt` | Search: the server's songs (kept songs only, offline) for a typed search, read beside YouTube's request |
+| `desktopApp/src/main/kotlin/com/music/bitchord/desktop/ForkNavidromeGenres.kt` | Reads Explore's genre tiles, following the login and offline |
+| `desktopUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/screens/ForkExplore.kt` | The desktop's copy of Explore's panels: "Navidrome" (hidden offline) and "YouTube", no "Spotify" |
 | `desktopApp/src/main/kotlin/com/music/bitchord/desktop/ForkPlayerMenu.kt` | The player menu's three switches (`ForkPlayerMenuRows`) and their wording, shared with Settings |
+| `desktopApp/src/main/kotlin/com/music/bitchord/desktop/ForkNavidromeSettings.kt` | "Report plays to Navidrome", "Navidrome on Home" and the clip cache's size, saved; Settings' "Navidrome" group |
+| `desktopApp/src/main/kotlin/com/music/bitchord/desktop/ForkClipCache.kt` | The clips' own size limit and the "Clear backdrop videos" / "Clear animated covers" rows, which also forget the "no clip" notes; kept offline files are in another folder |
 | `desktopApp/src/main/kotlin/com/music/bitchord/desktop/ForkDebugBridge.kt` | Test door: off unless `-Dbitchord.debugBridge=<port>`, loopback only, input goes to the app's window |
 | `docker/pc-build.sh`, `docker/pc-run.sh`, `docker/pc-shot.ps1` | Cross-build the Windows zip, run it isolated in `out/pc-run`, screenshot only its window |
 | `docker/` | Docker build (`build.ps1`, `Dockerfile`); `docker/keys` holds the debug key (gitignored) |
@@ -51,7 +57,7 @@ Everything this fork adds lives in new files where possible. This file lists eve
 | `app/src/main/java/com/music/bitchord/fork/ForkClipCache.kt` | Clip cache size (adjustable evictor) and clearing by the switches' two kinds: backdrop videos (server backdrops, Spotify Canvas) and animated covers (server cover clips, Apple Music etc.); `clearWithSongs()` empties both and the lyrics cache, and clearing also forgets the server's "no clip" notes |
 | `app/src/main/java/com/music/bitchord/ui/components/ForkMenuRows.kt` | The player's song menu rows (`ForkPlayerMenuRows`: "Backdrop videos", "Animated covers", saved queues); "Available offline" row in an album/playlist sheet |
 | `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/navidrome/NavidromeArtists.kt` | Navidrome artist pages from one paged `search3` (exact artist tag), not the whole library |
-| `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeGenres.kt` | The server's genres as Explore tiles (`getGenres`, a `byGenre` album cover each) and genre pages (`getSongsByGenre`, id `local:group:genre:navidrome:<genre>`) |
+| `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/navidrome/NavidromeGenres.kt` | The server's genres as Explore tiles (`getGenres`, a `byGenre` album cover each, handed to the app by `NavidromePlatform.onGenres`) and genre pages (`getSongsByGenre`, id `local:group:genre:navidrome:<genre>`) |
 | `sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/screens/ForkExplore.kt` | Explore's "YouTube", "Navidrome" (server genres) and "Spotify" (mixes) panels, each collapsible |
 | `sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/screens/ForkHome.kt` | Home in collapsible "Navidrome", "Spotify" and "YouTube" sections (`NavidromeHome.onTop` says how many leading shelves are the server's and Spotify's) |
 | `app/src/main/java/com/music/bitchord/fork/ForkSpotifyMixes.kt` | The signed-in Spotify account's mixes ("Made For You" category via the Web API, plus Spotify-owned playlists in the library) as a Home shelf and Explore tiles; they open as upstream's Spotify playlist page (tracks matched to YouTube) |
@@ -61,7 +67,7 @@ Everything this fork adds lives in new files where possible. This file lists eve
 | `app/src/main/java/com/music/bitchord/fork/ForkOfflineService.kt` | Foreground service (dataSync) keeping "Available offline" downloads going in the background, with a progress notification and Cancel |
 | `app/src/main/java/com/music/bitchord/fork/ForkPreload.kt` | "Pre-load next songs": the next N Navidrome songs read whole into the song cache (upstream's read-ahead writer), on allowed networks |
 | `app/src/main/java/com/music/bitchord/ui/components/ForkOfflineBanner.kt` | Strip above the mini player in offline mode ("Go online" when switched on by hand; "No network" otherwise) |
-| `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeRadio.kt` | The server's internet radio stations (`getInternetRadioStations`) as the Library "Internet radio" page; `.pls`/`.m3u` resolved to the stream; a `#bitchord-radio` mark keeps streams out of the song cache; logos: the server's `ra-<id>` cover (what psysonic uploads), else radio-browser.info, kept a week (`bitchord_radio_logos` prefs) |
+| `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/navidrome/NavidromeRadio.kt` | The server's internet radio stations (`getInternetRadioStations`) as the Library "Internet radio" page; `.pls`/`.m3u` resolved to the stream; a `#bitchord-radio` mark keeps streams out of the song cache; logos: the server's `ra-<id>` cover (what psysonic uploads), else radio-browser.info, kept a week (`bitchord_radio_logos` prefs) |
 | `app/src/main/java/com/music/bitchord/fork/ForkQueues.kt` | Saved queues (try-out): the queue, its song and second, saved under a name in `files/fork_queues.json` (max 20), played back from there |
 | `docker/keys/release/` (gitignored) | The fork's release key `bitchord-release.jks` + `keystore.properties` (random password). Back it up: without it no update installs over a release |
 
@@ -137,15 +143,35 @@ Upstream removed `desktopApp` and `desktopUi` in `e4dd63d8`; `pc` restores them 
 | `desktopApp/.../DesktopArtwork.kt` | `load()`: a kept cover first. Budget a tenth of the heap, was a sixth |
 | `desktopApp/.../DesktopCanvasVideo.kt` | One copy per frame, not three, and a replaced frame is closed: `forkHandedOut` |
 | `desktopApp/.../DesktopTrackAnalyzer.kt` | `results` keeps 12 analyses in RAM (from PC-Continued `c310d0e3`) |
+| `desktopApp/.../DesktopSpotifyCanvas.kt` | `accessToken()`: the page's own token first (`ForkSpotifyToken`) |
 | `desktopApp/.../DesktopApp.kt` (notice) | `ForkNotice.Host()`. `startRadio`: "No similar songs found" on a Navidrome song |
 | `desktopApp/.../DesktopApp.kt` (switches) | `ForkPlayerMenu.onFullBleedChange`. Settings: "Fullscreen cover art" renamed, "Backdrop videos" and "Animated covers" under "Animated canvas". Album headers follow "Animated covers" |
 | `desktopUi/.../player/NowPlayingScreen.kt` | The heart also shows for a Navidrome song (and in `LandscapePlayer.kt`). `forkCanvases`, `ForkLandscapeBackdrop` and `fillsPhone`, as on the phone (copies of `ForkSleeveClip`, `ForkBackdropIntro`, `ForkLandscapeBackdrop` live in `desktopUi`). `heroMode` as on the phone: `forkFillsScreen`, `forkBigArtFits`, `rememberForkArtAwake`; publishes `ForkCanvasSwitch.bigArtFits` for the menu |
-| `desktopApp/.../DesktopCanvas.kt` | `fileFor`: the server's clips go through `ForkNavidrome.fetchClip`; a failed download is deleted (**fixes upstream**) |
-| `desktopApp/.../DesktopSourceRegistry.kt` | `resolveLive()`: `ForkNavidrome.stream(song)` first |
+| `desktopApp/.../DesktopCanvas.kt` | `fileFor`: the server's clips go through `ForkNavidrome.fetchClip`; a failed download is deleted (**fixes upstream**); the file's extension from `ForkClipCache.extension`, so a backdrop can be told from a cover |
+| `desktopApp/.../DesktopMediaCache.kt` | `trim()`: `ForkClipCache.trim()` first, and the song limit leaves `.mp4` clips alone |
+| `desktopApp/.../DesktopApp.kt` (settings) | `DesktopSettingsSection.NAVIDROME` and its `ForkNavidromeSettingsGroup()`. Storage: `ForkClipCacheRows()` after "Clear image cache", `ForkClipCache.afterSongCacheCleared()` in "Clear song cache". `SettingsGroup`, `SettingsToggle`, `SettingsRow` are internal. Home reloads when "Navidrome on Home" changes |
+| `desktopApp/.../DesktopSourceRegistry.kt` | `resolveLive()` and `resolve()`: `ForkNavidrome.stream(song)` first |
 | `desktopApp/.../DesktopPlaybackTracker.kt` | `onPlaying`, `onProgress`: `ForkYouTubeHistory` first (Navidrome plays into YouTube history; the switch is on the Navidrome page) |
 | `desktopApp/.../DesktopLyricsClient.kt` | `lookup()`: the server's timed lyrics first |
 | `desktopApp/.../DesktopPlayerHost.kt` | `canvasFor()`: `NavidromeClips.canvasFor(song)` first |
-| `desktopApp/.../DesktopScrobbling.kt` | `updateNowPlaying()`, `onPlaybackEnded()`: `NavidromeScrobble` |
+| `desktopApp/.../DesktopScrobbling.kt` | `updateNowPlaying()`, `onPlaybackEnded()`: `NavidromeScrobble`; both do nothing for a radio station |
+| `desktopApp/.../ForkRadio.kt` (new) | Internet radio, the phone's Library page: stations from the shared `NavidromeRadio` (moved from `app`, its logo prefs now a `NavidromePlatform.Store`), a page in place of the library on the Navidrome page, hidden offline; logo keys hashed for Java Preferences' 80 characters |
+| `desktopApp/.../DesktopApp.kt` (radio) | `ForkNavidromeScreen`: `radio = { ForkRadioPage(…) }`. `playPrevious`: on a station, always the previous row |
+| `desktopApp/.../DesktopAudioEngine.kt` (radio) | `load`: a station starts at 0. `seekTo`: nothing on a station. `prepareNext`: no read-ahead deck for a station |
+| `desktopApp/.../DesktopSongMenuUi.kt` (radio) | No "Start radio" and no `ForkPlayerMenuRows` on a station, as on the phone |
+| `desktopApp/.../DesktopCanvas.kt` (radio) | `lookup`: none for a station |
+| `desktopApp/.../DesktopAudioEngine.kt` (Crossfade on skip) | `Command.ForkSkip` and its `drainCommands` line. `loadInternal`: drops `forkSkipTicket`. `prepareNext`: held while one is set. `finishTrack`: no `onEnded()` while one is set. `ClearUpcoming`: past the switch, `promoteUpcoming()` first. The section `forkSkipTicket`, `forkSkipTo`, `forkSkipPlainly`, `forkStartSkip` |
+| `desktopApp/.../DesktopApp.kt` (Crossfade on skip) | `playCurrent(forkSkipSeconds)`: above 0 it calls `forkSkipTo` instead of `load()`. `playNext` (two lines), `playPrevious` pass it. Settings: the "Crossfade on skip" switch after "Automix on skip" |
+| `desktopApp/.../ForkCrossfadeOnSkip.kt` (new) | The switch (on by default, as on the phone), the skip's fade length and plan |
+| `desktopUi/.../player/NowPlayingScreen.kt` (covers) | `ForkPreloadCovers(queue, song)` |
+| `desktopUi/.../player/ForkPreloadCovers.kt` (new) | Copy of the `sharedUi` file: the next two covers warmed at the player's size |
+| `desktopApp/.../DesktopApp.kt` (search) | `forkSearchRows`. `search()`: `ForkNavidromeSearch.start`. `SearchScreen` call: `results` shows the server's songs while YouTube loads or fails and ahead of its rows, `loadingMore = searchLoading`, `onSongClick`: a Navidrome row plays the server's rows in order and isn't recorded in recents |
+| `desktopUi/.../screens/SearchScreen.kt` | `searchSections()`: the server's songs under a "Navidrome" heading, first |
+| `desktopApp/.../DesktopApp.kt` (Explore) | `openMoodGenre()`: a server genre's tile opens as a collection page |
+| `desktopUi/.../screens/ExploreScreen.kt` | `val fork = rememberForkExplore()`; `forkPanelsAbove(…)` and `if (!fork.panels \|\| fork.youtubeOpen)` before `when (state)`; `MoodGenreRow` is `internal` |
+| `desktopApp/.../ForkQueues.kt` (new) | Saved queues, the phone's `ForkQueues` and its row: `bitchord/fork_queues.json` in the data folder (max 20); a Navidrome row keeps no address, only its cover's id, and gets both from today's login when played |
+| `desktopApp/.../DesktopApp.kt` (saved queues) | `playCurrent`: `startAtMs`, passed to `playbackEngine.load`. After `playSongs`: `ForkQueues.currentQueue`, `.playingAtMs`, `.restore` |
+| `desktopApp/.../DesktopSongMenuUi.kt` (saved queues) | `forkSavedQueues` and its drawer at the top of `DesktopMenuSurface`; `ForkSavedQueuesRow` after `ForkPlayerMenuRows` |
 
 ## Upstream bugs the fork fixes
 

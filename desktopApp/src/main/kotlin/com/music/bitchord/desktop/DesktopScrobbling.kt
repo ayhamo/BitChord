@@ -118,6 +118,7 @@ object DesktopScrobbling {
     }
 
     suspend fun updateNowPlaying(song: Song): Result<Unit> = runCatching {
+        if (com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(song.videoId)) return@runCatching // fork: a station is not a track
         com.music.bitchord.data.navidrome.NavidromeScrobble.nowPlaying(song, scope) // fork
         if (lastFmConfigured) updateLastFm(song)
         if (listenBrainzConfigured) submitListenBrainz(song, "playing_now", 0L, song.durationMillis(), 0L)
@@ -177,6 +178,7 @@ object DesktopScrobbling {
 
     /** Sends ListenBrainz's finished listen and avoids duplicate Last.fm sends. */
     fun onPlaybackEnded(song: Song) {
+        if (com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(song.videoId)) return // fork: a station is not a track
         val startedAt = synchronized(this) {
             scrobbleJob?.cancel()
             timerStartedAtMs = 0L

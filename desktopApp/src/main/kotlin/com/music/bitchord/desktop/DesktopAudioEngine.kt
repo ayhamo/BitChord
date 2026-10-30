@@ -199,6 +199,8 @@ class DesktopPlaybackEngine(
         class SeekTo(val millis: Long) : Command
         /** Blend into the already-prepared next track right now, over [fadeSeconds]. */
         class MixNow(val fadeSeconds: Int) : Command
+        /** fork: a manual skip's blend; see [forkSkipTo]. [track] is null for the deck already open. */
+        class ForkSkip(val song: Song, val track: Track?, val fadeSeconds: Int, val ticket: Any) : Command
         data object ClearUpcoming : Command
         data object Reconfigure : Command
         data object Flush : Command
@@ -218,7 +220,7 @@ class DesktopPlaybackEngine(
             song,
             playWhenReady,
             excludedSourceId = refusedSources[song.videoId],
-            startAtMs = startAtMs.coerceAtLeast(0L),
+            startAtMs = if (com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(song.videoId)) 0L else startAtMs.coerceAtLeast(0L), // fork: a restored station starts live, see seekTo
         )
     }
 
@@ -238,6 +240,7 @@ class DesktopPlaybackEngine(
         /** Why the first attempt failed, when this call is the retry. */
         priorFailure: Throwable? = null,
     ) {
+        forkSkipTicket = null // fork: whatever a skip was still opening is no longer wanted
         resolveJob?.cancel()
         nextResolveJob?.cancel()
         upgradeJob?.cancel()
@@ -451,6 +454,8 @@ class DesktopPlaybackEngine(
     }
 
     fun seekTo(positionMs: Long) {
+        // fork: nothing to seek in a live stream, and FFmpeg's generic seek reads forward to its target.
+        if (com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(_state.value.song?.videoId)) return
         // TEMP seek diagnostics: who asked, so a seek undone by a second one shows up.
         DesktopTrackLog.log(
             "seek requested: ${positionMs}ms (at ${_state.value.positionMs}ms) from " +
@@ -520,7 +525,7 @@ class DesktopPlaybackEngine(
         // answers that by asking for the track *after* it — which would clear the upcoming track
         // this blend is still playing. Held until the blend ends, and then carried out.
         synchronized(blendLock) {
-            if (displaySwitched) {
+            if (displaySwitched || forkSkipTicket != null) { // fork: a skip's deck is on its way, and this would open another
                 deferredNext = song
                 hasDeferredNext = true
                 return
@@ -529,6 +534,7 @@ class DesktopPlaybackEngine(
         nextResolveJob?.cancel()
         clearUpcoming()
         if (song == null || transitionSecondsFor(song) == 0) return
+        if (com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(song.videoId)) return // fork: nothing to read ahead on a live stream (`ForkPreload.skipsReadAhead` on the phone); it opens when it plays
         nextSong = song
         // A download plays from its file, here as in [loadInternal] — never from whichever source
         // would have answered for it.
@@ -1118,6 +1124,7 @@ class DesktopPlaybackEngine(
         _state.update {
             it.copy(isPlaying = false, positionMs = it.durationMs, positionSampledAtNanos = System.nanoTime())
         }
+        if (forkSkipTicket != null) return // fork: the old song ran out under a skip that has already moved the queue; ending it would move it again
         onEnded()
     }
 
@@ -1296,8 +1303,11 @@ class DesktopPlaybackEngine(
                 }
                 is Command.SeekTo -> performSeek(command.millis)
                 is Command.MixNow -> startSkipMix(command.fadeSeconds)
+                is Command.ForkSkip -> forkStartSkip(command)
                 Command.Reconfigure -> reconfigureSink()
                 Command.ClearUpcoming -> {
+                    // fork: past the switch the listener is on the incoming song (a skip's blend is from its first frame); a setting turned off mid-blend ends the blend there rather than dropping that song and playing on the old one under its title.
+                    if (displaySwitched && upcoming != null) promoteUpcoming()
                     upcoming?.decoder?.close()
                     upcoming = null
                     nextDeckOpenId = null
@@ -1812,6 +1822,122 @@ class DesktopPlaybackEngine(
             // The last/first 30 s window; the phone's planner calls leave it off.
             mixWindow = true,
         )
+    }
+
+    // ---- fork: Crossfade on skip, see ForkCrossfadeOnSkip ----------------
+
+    /**
+     * Who owns the skip being opened: set at the press, gone once the audio thread has taken it or
+     * anything newer has replaced it. Everything on the way checks it rather than being cancelled:
+     * a cancelled coroutine loses a decoder that finished opening under it, with its thread.
+     */
+    @Volatile private var forkSkipTicket: Any? = null
+
+    /**
+     * Next or Previous, the queue already moved onto [song] by the caller. The player moves at once
+     * while the old song keeps playing, and the two blend over [fadeSeconds] once [song] is open.
+     *
+     * Only from a song really playing with nothing in flight; everything else, and everything that
+     * goes wrong on the way, is an ordinary [load]. That is what makes a skip impossible to lose:
+     * the queue is already right, so any path that cannot blend just opens the same song.
+     */
+    fun forkSkipTo(song: Song, playWhenReady: Boolean, fadeSeconds: Int) {
+        val now = _state.value
+        val playingId = now.song?.videoId.takeIf { now.isPlaying && !now.isLoading }
+        // A press during a blend, or while one is opening, ends it with a cut, as on the phone.
+        if (fadeSeconds <= 0 || !playWhenReady || paused || playingId == null || playingId == song.videoId ||
+            blendActive || displaySwitched || fadeRemaining > 0
+        ) {
+            load(song, playWhenReady)
+            return
+        }
+        retryingSongId = null
+        val ticket = Any()
+        forkSkipTicket = ticket
+        resolveJob?.cancel()
+        upgradeJob?.cancel()
+        searchingBetterFor = null
+        val deckOpen = nextDeckOpenId == song.videoId
+        if (!deckOpen) {
+            nextResolveJob?.cancel()
+            incomingSearchingFor = null
+            // The deck that was meant to follow the old song must not be what its end falls into.
+            clearUpcoming()
+        }
+        // Still "playing": something is. Until the blend starts the old song's own ticks stop here,
+        // [publishPosition] answering only for the song on the state.
+        _state.value = DesktopPlaybackState(song = song, isPlaying = true, volume = volume, isLoading = true, seeks = now.seeks + 1)
+        if (deckOpen) {
+            commands += Command.ForkSkip(song, null, fadeSeconds, ticket)
+            return
+        }
+        scope.launch {
+            delay(ForkCrossfadeOnSkip.ARM_TIMEOUT_MS)
+            forkSkipPlainly(song, ticket)
+        }
+        scope.launch {
+            val localUrl = DesktopDownloadManager.savedFile(song)?.toAbsolutePath()?.toString()
+            val live = (
+                localUrl?.let { Result.success(DesktopLiveResolution(DesktopStream(it))) }
+                    ?: DesktopMusicSources.resolveLive(song, audioQuality, refusedSources[song.videoId])
+                ).getOrNull()
+            if (live == null || forkSkipTicket !== ticket) {
+                live?.pendingSubstitute?.cancel()
+                forkSkipPlainly(song, ticket)
+                return@launch
+            }
+            val track = openTrack(song, live.stream, startAtMs = 0).getOrNull()
+            if (track == null || forkSkipTicket !== ticket) {
+                track?.decoder?.close()
+                live.pendingSubstitute?.cancel()
+                forkSkipPlainly(song, ticket)
+                return@launch
+            }
+            commands += Command.ForkSkip(song, track, fadeSeconds, ticket)
+            live.pendingSubstitute?.let { upgradeIncoming(song, track.stream, it) }
+        }
+    }
+
+    /** The cut, unless something newer has taken over; the failure itself is [load]'s to report. */
+    private fun forkSkipPlainly(song: Song, ticket: Any) {
+        if (forkSkipTicket === ticket) load(song, playWhenReady = !paused)
+    }
+
+    /** On the audio thread: the blend [forkSkipTo] asked for, or the cut when it can't run now. */
+    private fun forkStartSkip(command: Command.ForkSkip) {
+        if (forkSkipTicket !== command.ticket) {
+            command.track?.decoder?.close()
+            return
+        }
+        val outgoing = current
+        val incoming = command.track ?: upcoming?.takeIf { it.song.videoId == command.song.videoId }
+        if (outgoing == null || incoming == null || paused || fadeRemaining > 0 || outgoing.song.videoId == command.song.videoId) {
+            // A deck it brought along is closed; an open one goes with the [load]'s flush.
+            command.track?.decoder?.close()
+            load(command.song, playWhenReady = !paused)
+            return
+        }
+        if (incoming !== upcoming) {
+            upcoming?.decoder?.close()
+            upcoming = incoming
+        }
+        nextDeckOpenId = incoming.song.videoId
+        val plan = ForkCrossfadeOnSkip.plan(
+            positionMs = (outgoingHeardUs() / 1_000).coerceAtLeast(0L),
+            outgoingUs = outgoing.decoder.durationUs,
+            incomingUs = incoming.decoder.durationUs,
+            seconds = command.fadeSeconds,
+        )
+        armIncomingBlend(incoming, plan)
+        // The blend's halfway switch, made at its first frame: the rest of the engine already knows
+        // what that means, [prepareNext] held, seeks landing on this song, position counted on it.
+        // No [onCrossfaded]: the caller has moved the queue, and moving it again would step on past
+        // a song queued twice in a row. The ticket goes last, so [prepareNext] finds one or the other.
+        synchronized(blendLock) {
+            displaySwitched = true
+            forkSkipTicket = null
+        }
+        publishTrack(incoming, isPlaying = true, positionUs = incomingHeardUs(incoming))
     }
 
     private fun closeEverything() {

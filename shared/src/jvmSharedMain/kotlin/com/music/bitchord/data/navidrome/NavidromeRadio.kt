@@ -1,7 +1,5 @@
 package com.music.bitchord.data.navidrome
 
-import android.content.Context
-import android.content.SharedPreferences
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.model.PlaybackSourceType
@@ -46,12 +44,18 @@ object NavidromeRadio {
     /** Whether [url] is a station's stream (not cached). */
     fun isStream(url: String): Boolean = url.endsWith(MARK)
 
-    private lateinit var logos: SharedPreferences
+    /**
+     * A station's stream, or null for any other song. Without the mark: FFmpeg, on the desktop,
+     * sends everything after the host to the server, a fragment included.
+     */
+    fun streamUrl(song: Song): String? = song.localUri?.takeIf { isRadio(song.videoId) }?.removeSuffix(MARK)
+
+    private lateinit var logos: NavidromePlatform.Store
     private val json = Json { ignoreUnknownKeys = true }
 
-    fun init(context: Context) {
-        // Plain prefs: station logo addresses (or "none"), nothing secret.
-        logos = context.getSharedPreferences("bitchord_radio_logos", Context.MODE_PRIVATE)
+    /** [store] holds station logo addresses (or "none"). */
+    fun init(store: NavidromePlatform.Store) {
+        logos = store
     }
 
     suspend fun pageState(browseId: String, emptyText: () -> String): UiState<List<Song>>? {
@@ -97,7 +101,7 @@ object NavidromeRadio {
     private suspend fun logo(station: NavidromeClient.RadioRow, stream: String): String? = withContext(Dispatchers.IO) {
         val key = station.id + "|" + station.streamUrl
         if (::logos.isInitialized) {
-            logos.getString(key, null)?.split('\n')?.let { parts ->
+            logos.string(key)?.split('\n')?.let { parts ->
                 val at = parts.getOrNull(1)?.toLongOrNull() ?: 0L
                 if (System.currentTimeMillis() - at < LOGO_MS) return@withContext parts[0].ifEmpty { null }
             }
@@ -110,7 +114,7 @@ object NavidromeRadio {
         }.onFailure { Log.d(TAG, "radio logo ${station.name}: ${it.message}") }
         // A failed lookup (no network) is not remembered; only a real answer is.
         val url = found.getOrElse { return@withContext null }
-        if (::logos.isInitialized) logos.edit().putString(key, "${url.orEmpty()}\n${System.currentTimeMillis()}").apply()
+        if (::logos.isInitialized) logos.putStrings(mapOf(key to "${url.orEmpty()}\n${System.currentTimeMillis()}"))
         url
     }
 
@@ -159,7 +163,7 @@ object NavidromeRadio {
                         .map { line -> line.trim().let { if (it.startsWith("http")) it else it.substringAfter('=') } } // pls: "File1=http://…"
                         .firstOrNull { it.startsWith("http://") || it.startsWith("https://") }
                 }
-            }.onFailure { Log.d(TAG, "radio playlist $url: ${it.message}") }.getOrNull() ?: url
+            }.onFailure { Log.d(TAG, "radio playlist ${url.publicPart()}: ${it.message}") }.getOrNull() ?: url
         }
     }
 }

@@ -3,19 +3,19 @@ package com.music.bitchord.data.navidrome
 import com.music.bitchord.data.model.MoodGenre
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
-import com.music.bitchord.ui.screens.ForkExplore
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 
 /**
  * The server's genres on Explore (fork-only): the Navidrome panel's tiles,
- * each opening a page of that genre's songs.
+ * each opening a page of that genre's songs. Each app draws its own panel, so
+ * the tiles go out through [NavidromePlatform.onGenres].
  *
  * A tile is a [MoodGenre] whose browse id is a page id here,
  * `local:group:genre:navidrome:<genre>` (under `local:group:` like the
- * playlists, with a kind `LocalGroups` doesn't parse), so the view model opens
- * it as a page ([pageState]) instead of asking YouTube for a mood.
+ * playlists, with a kind `LocalGroups` doesn't parse), so the app opens it as
+ * a page ([pageState]) instead of asking YouTube for a mood.
  */
 object NavidromeGenres {
 
@@ -28,23 +28,25 @@ object NavidromeGenres {
     /** Fills the Explore panel: the biggest genres, each with one of its albums' covers. */
     suspend fun load(client: NavidromeClient) = coroutineScope {
         val genres = client.genres().filter { it.songCount > 0 }.sortedByDescending { it.songCount }.take(TILES)
-        ForkExplore.navidromeGenres.value = genres.map { genre ->
-            async {
-                val cover = runCatching { client.albumsByGenre(genre.name, 1).firstOrNull()?.coverArt }.getOrNull()
-                MoodGenre(title = genre.name, browseId = PREFIX + genre.name, params = null, thumbnailUrl = cover?.let { client.coverUrl(it) })
-            }
-        }.awaitAll()
+        NavidromePlatform.onGenres(
+            genres.map { genre ->
+                async {
+                    val cover = runCatching { client.albumsByGenre(genre.name, 1).firstOrNull()?.coverArt }.getOrNull()
+                    MoodGenre(title = genre.name, browseId = PREFIX + genre.name, params = null, thumbnailUrl = cover?.let { client.coverUrl(it) })
+                }
+            }.awaitAll(),
+        )
     }
 
     fun clear() {
-        ForkExplore.navidromeGenres.value = emptyList()
+        NavidromePlatform.onGenres(emptyList())
     }
 
     /** A genre page's songs, or null when [browseId] isn't one. */
     suspend fun pageState(browseId: String, emptyText: () -> String): UiState<List<Song>>? {
         if (!isGenre(browseId)) return null
         val genre = browseId.removePrefix(PREFIX)
-        if (com.music.bitchord.fork.ForkNetwork.offline.value) return UiState.Error(emptyText())
+        if (NavidromePlatform.offline.value) return UiState.Error(emptyText())
         return runCatching {
             val client = NavidromeRepository.client()
             val rows = buildList {

@@ -288,6 +288,7 @@ internal fun DesktopSongMenu(
     var pickingSleepTimer by remember { mutableStateOf(false) }
     var pickingLyricsProvider by remember { mutableStateOf(false) }
     var pickingLyricsOffset by remember { mutableStateOf(false) }
+    var forkSavedQueues by remember { mutableStateOf(false) } // fork
     val liked = likeStatus == LikeStatus.LIKE
     val disliked = likeStatus == LikeStatus.DISLIKE
     // A local file or a finished download has no YouTube identity behind it to rate, queue into a
@@ -295,6 +296,12 @@ internal fun DesktopSongMenu(
     val isOffline = song.localUri != null
 
     DesktopMenuSurface(onDismiss = onDismiss) {
+        if (forkSavedQueues) { // fork
+            DesktopMenuHeader(ForkQueues.TITLE) { forkSavedQueues = false }
+            DesktopMenuDivider()
+            ForkSavedQueuesDrawer(onClose = onDismiss)
+            return@DesktopMenuSurface
+        }
         // One drawer for both: the manual search box on top, and under it every
         // provider with what its lookup turned up — the lyric sheet's old footer
         // and its provider picker, folded into the song menu.
@@ -413,7 +420,7 @@ internal fun DesktopSongMenu(
                 onClick = onDownload,
             )
         }
-        DesktopMenuRow(Icons.Rounded.Radio, if (com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(song.videoId)) "Start radio (Instant Mix)" else DesktopStrings["start_radio", "Start radio"], onClick = onStartRadio)
+        if (!com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(song.videoId)) DesktopMenuRow(Icons.Rounded.Radio, if (com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(song.videoId)) "Start radio (Instant Mix)" else DesktopStrings["start_radio", "Start radio"], onClick = onStartRadio)
         DesktopMenuRow(Icons.AutoMirrored.Rounded.PlaylistPlay, DesktopStrings["play_next", "Play next"], onClick = onPlayNext)
         DesktopMenuRow(Icons.AutoMirrored.Rounded.QueueMusic, DesktopStrings["add_to_queue", "Add to queue"], onClick = onAddToQueue)
         // What the player's content column shows, and the ways of reading the
@@ -453,7 +460,8 @@ internal fun DesktopSongMenu(
                     value = if (lyricsOffsetMs != 0) formatLyricsOffset(lyricsOffsetMs) else "",
                 ) { pickingLyricsOffset = true }
             }
-            if (onSwitchLyricsQueue != null) ForkPlayerMenuRows() // fork: only the player's menu
+            if (onSwitchLyricsQueue != null && !com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(song.videoId)) ForkPlayerMenuRows() // fork: only the player's menu, and not for a station, as on the phone
+            if (onSwitchLyricsQueue != null) ForkSavedQueuesRow { forkSavedQueues = true } // fork
         }
 
         val albumId = song.albumId

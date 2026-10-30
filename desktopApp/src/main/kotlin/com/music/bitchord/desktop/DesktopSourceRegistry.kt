@@ -212,6 +212,7 @@ internal object DesktopSourceRegistry {
         /** A download: addons that said `allowDownloads: 0` are left out, see [adapters]. */
         forDownload: Boolean = false,
     ): Result<DesktopStream> = runCatching {
+        ForkNavidrome.stream(song)?.let { return@runCatching it } // fork: the next song's read-ahead comes this way, and YouTube can't resolve a server's id
         val available = playbackAdapters(quality, forDownload)
         val moduleReference = DesktopModuleSource.parseTrack(song.videoId)
         val addonReference = DesktopAddonSource.parseTrack(song.videoId)

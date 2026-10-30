@@ -116,6 +116,7 @@ object DesktopCanvasClient {
      */
     suspend fun lookup(song: Song): DesktopCanvasArtwork? {
         if (song.videoId.isBlank() && (song.localUri != null || song.localPath != null)) return null
+        if (com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(song.videoId)) return null // fork: a station's name is no song's, a hit would be another track's video
         val title = song.title.cleanedForCanvas()
         val artist = song.artist.cleanedForCanvas()
         if (title.isBlank() || artist.isBlank()) return null
@@ -219,9 +220,9 @@ internal object DesktopCanvasCache {
         .build()
 
     fun fileFor(url: String): java.nio.file.Path? {
-        DesktopMediaCache.existing(url, "mp4")?.let { return it }
+        DesktopMediaCache.existing(url, ForkClipCache.extension(url))?.let { return it } // fork: the name says backdrop or cover, for the clear buttons
         return runCatching {
-            val target = DesktopMediaCache.pathFor(url, "mp4")
+            val target = DesktopMediaCache.pathFor(url, ForkClipCache.extension(url)) // fork
             if (ForkNavidrome.fetchClip(url, target)) { // fork: the server's clips need its login
                 DesktopMediaCache.trim()
                 return@runCatching target
@@ -243,7 +244,7 @@ internal object DesktopCanvasCache {
         }.onFailure {
             // fork: fixes upstream. A refused download left the error page at the clip's path, and the
             // check at the top then handed that to the decoder for good.
-            runCatching { java.nio.file.Files.deleteIfExists(DesktopMediaCache.pathFor(url, "mp4")) }
+            runCatching { java.nio.file.Files.deleteIfExists(DesktopMediaCache.pathFor(url, ForkClipCache.extension(url))) }
             DesktopTrackLog.log("canvas: could not fetch the clip — ${it.message}")
         }.getOrNull()
     }

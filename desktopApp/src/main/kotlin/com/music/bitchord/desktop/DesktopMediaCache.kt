@@ -54,10 +54,12 @@ internal object DesktopMediaCache {
      * is just after something was added to it.
      */
     fun trim() {
+        ForkClipCache.trim() // fork: clips have their own limit, as on the phone, which may be the larger of the two
+        val others = files().filterNot(ForkClipCache::isClip) // fork
         val limit = limitBytes()
-        var total = sizeBytes()
+        var total = others.sumOf { runCatching { Files.size(it) }.getOrDefault(0L) } // fork
         if (total <= limit) return
-        files()
+        others // fork
             .sortedBy { path ->
                 runCatching {
                     Files.readAttributes(path, BasicFileAttributes::class.java).lastAccessTime().toMillis()

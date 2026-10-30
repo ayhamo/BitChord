@@ -30,6 +30,7 @@ object NavidromeAndroid {
         }
         NavidromePlatform.onlineLyrics = { song -> LyricsTag.forTrack(song)?.let { it.enhanced ?: it.plain } }
         NavidromePlatform.onKeptRow = { com.music.bitchord.ui.screens.ForkLibraryPlaylists.offline.value = it }
+        NavidromePlatform.onGenres = { com.music.bitchord.ui.screens.ForkExplore.navidromeGenres.value = it }
         NavidromePlatform.onSong = com.music.bitchord.fork.ForkYouTubeHistory::remember
         NavidromePlatform.scrobble = { com.music.bitchord.fork.ForkSettings.navidromeScrobble.value }
         NavidromeSettings.init(PrefsStore(EncryptedPrefs.open(context, "bitchord_navidrome", "bitchord_navidrome_plain")))
@@ -42,7 +43,8 @@ object NavidromeAndroid {
             context.getString(R.string.fork_offline_gone),
         )
         NavidromeLyrics.init(File(context.cacheDir, "navidrome_lyrics"))
-        NavidromeRadio.init(context)
+        // Plain prefs: station logo addresses (or "none"), nothing secret.
+        NavidromeRadio.init(PrefsStore(context.getSharedPreferences("bitchord_radio_logos", Context.MODE_PRIVATE)))
     }
 
     private class PrefsStore(private val prefs: SharedPreferences) : NavidromePlatform.Store {

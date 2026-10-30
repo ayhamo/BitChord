@@ -552,6 +552,7 @@ fun BitChordDesktopApp() {
     var searchRows by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
     // What has been searched before, and what YouTube thinks is being typed.
     val searchHistory by DesktopSearchHistory.recent.collectAsState()
+    val forkSearchRows by ForkNavidromeSearch.rows.collectAsState() // fork: the server's songs for the search
     // Whether anything has been searched for since the field was last emptied: until then the
     // page shows recent searches rather than a result set.
     var searchCommitted by remember { mutableStateOf(false) }
@@ -840,13 +841,13 @@ fun BitChordDesktopApp() {
     }
 
     /** Opens whatever the queue is currently pointing at. */
-    fun playCurrent(startPlaying: Boolean = true) {
+    fun playCurrent(startPlaying: Boolean = true, startAtMs: Long = 0L, forkSkipSeconds: Int = 0) { // fork: startAtMs, a saved queue's second; forkSkipSeconds, a skip's blend
         val song = liveQueue.current ?: return
         selectedSong = song
         history = (listOf(song) + history.filterNot { it.videoId == song.videoId }).take(50)
         saveQueue()
         persistence.saveHistory(history)
-        playbackEngine.load(song, startPlaying)
+        if (forkSkipSeconds > 0) playbackEngine.forkSkipTo(song, startPlaying, forkSkipSeconds) else playbackEngine.load(song, startPlaying, startAtMs) // fork
         partySyncHolder[0]?.onLocalIntent(song.videoId)
         scope.launch { DesktopScrobbling.updateNowPlaying(song) }
     }
@@ -972,6 +973,20 @@ fun BitChordDesktopApp() {
         }
         preShuffleOrder = if (shuffle) built.timeline.map(DesktopQueue::orderKey) else emptyList()
         playCurrent()
+    }
+
+    // fork: saved queues. playSongs would keep what was queued by hand, and a saved queue replaces
+    // it; only a party, whose queue isn't this computer's, takes the rules for a pick.
+    ForkQueues.currentQueue = { liveQueue }
+    ForkQueues.playingAtMs = { playbackEngine.state.value.let { if (it.song?.videoId == liveQueue.current?.videoId) it.positionMs else 0L } }
+    ForkQueues.restore = { songs, index, startAtMs ->
+        if (DesktopListenTogether.state.value.inParty) {
+            playSongs(songs, index)
+        } else {
+            liveQueue = DesktopQueue.restored(songs, index)
+            preShuffleOrder = emptyList()
+            playCurrent(startAtMs = startAtMs)
+        }
     }
 
     /** Moves within the queue, dropping whatever a forward jump passed over. */
@@ -1408,11 +1423,11 @@ fun BitChordDesktopApp() {
         when {
             liveQueue.hasNext -> {
                 liveQueue = liveQueue.next()
-                playCurrent()
+                playCurrent(forkSkipSeconds = ForkCrossfadeOnSkip.seconds(crossfadeSeconds, automix)) // fork
             }
             repeatMode == DesktopRepeatMode.ALL && liveQueue.songs.isNotEmpty() -> {
                 liveQueue = liveQueue.copy(index = 0)
-                playCurrent()
+                playCurrent(forkSkipSeconds = ForkCrossfadeOnSkip.seconds(crossfadeSeconds, automix)) // fork
             }
             DesktopAutoplay.enabled(DesktopListenTogether.state.value, autoplay) ->
                 loadAutoplaySongs(playFirst = true)
@@ -1424,7 +1439,7 @@ fun BitChordDesktopApp() {
         val positionMs = playbackEngine.state.value.positionMs
 
         // After 10 seconds, Previous restarts the current song.
-        if (positionMs > BACK_RESTARTS_AFTER_MS) {
+        if (positionMs > BACK_RESTARTS_AFTER_MS && !com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(selectedSong?.videoId)) { // fork: a station has no start to go back to, Previous is the last station
             playbackEngine.seekTo(0L)
             partySyncHolder[0]?.onLocalIntent()
             return
@@ -1433,7 +1448,7 @@ fun BitChordDesktopApp() {
         // Within 10 seconds, Previous goes to the previous song in queue.
         if (!liveQueue.hasPrevious) return
         liveQueue = liveQueue.previous()
-        playCurrent()
+        playCurrent(forkSkipSeconds = ForkCrossfadeOnSkip.seconds(crossfadeSeconds, automix)) // fork
     }
 
     /**
@@ -2266,6 +2281,7 @@ fun BitChordDesktopApp() {
         searchScrollReset++
         searchLoading = true
         searchError = null
+        ForkNavidromeSearch.start(scope, query, searchFilter) // fork: beside YouTube's request, not part of it
         scope.launch {
             try {
                 DesktopMusicSources.search(query, searchFilter).fold(
@@ -2637,6 +2653,7 @@ fun BitChordDesktopApp() {
     LaunchedEffect(Unit) { com.music.bitchord.data.navidrome.NavidromeSettings.saved.drop(1).collect { loadHome() } } // fork: a new login, a new Home
     LaunchedEffect(Unit) { snapshotFlow { spotifyCanvasCookie.isNotBlank() }.drop(1).collect { loadHome() } } // fork: Spotify's mixes come and go with its sign-in
     LaunchedEffect(Unit) { ForkOffline.offline.drop(1).collect { loadHome() } } // fork: offline, the kept pages; back, the server's shelves
+    LaunchedEffect(Unit) { ForkNavidromeSettings.homeShelves.drop(1).collect { loadHome() } } // fork: "Navidrome on Home"
     LaunchedEffect(youtubeSignedIn, activeAccountId) {
         val identity = "${DesktopYouTubeAuth.isSignedIn}/${DesktopAccounts.activeAccountId()}"
         if (homeIdentity != null && identity != homeIdentity) loadHome()
@@ -2970,6 +2987,10 @@ fun BitChordDesktopApp() {
     }
 
     fun openMoodGenre(item: MoodGenre) {
+        if (ForkNavidrome.ownsPage(item.browseId)) { // fork: a server genre's tile is a page of its songs, as on the phone
+            openCollection(item.browseId, BrowseItem(browseId = item.browseId, title = item.title, subtitle = "Navidrome", thumbnailUrl = item.thumbnailUrl, type = BrowseType.PLAYLIST))
+            return
+        }
         selectedMoodGenre = item
         moodGenreShelves = UiState.Loading
     }
@@ -4202,12 +4223,13 @@ fun BitChordDesktopApp() {
                                 if (query.isNotBlank()) search()
                             },
                             results = when {
+                                searchCommitted && (searchLoading || searchError != null) && forkSearchRows.isNotEmpty() -> UiState.Success(forkSearchRows) // fork: the server's songs don't wait for YouTube, or fail with it
                                 searchLoading -> UiState.Loading
                                 searchError != null -> UiState.Error(searchError!!)
-                                searchCommitted -> UiState.Success(searchRows)
+                                searchCommitted -> UiState.Success(forkSearchRows + searchRows) // fork: was searchRows
                                 else -> null
                             },
-                            loadingMore = false,
+                            loadingMore = searchLoading, // fork: was false; YouTube's rows are still coming under the server's
                             onLoadMore = {},
                             listState = searchListState,
                             scrollResetTrigger = searchScrollReset,
@@ -4215,6 +4237,11 @@ fun BitChordDesktopApp() {
                             onFocusHandled = { searchFocusRequested = false },
                             onSongClick = { songs, index ->
                                 songs.getOrNull(index)?.let { song ->
+                                    if (ForkNavidrome.owns(song)) { // fork: as the phone's Library source: a running order, not a station seed, and not recorded (a cover's address carries the login)
+                                        val ours = songs.filter(ForkNavidrome::owns)
+                                        playSongs(ours, ours.indexOf(song).coerceAtLeast(0), DesktopQueueSource("Navidrome", PlaybackSourceType.BROWSE, com.music.bitchord.data.navidrome.NavidromeSettings.BROWSE_ID))
+                                        return@let
+                                    }
                                     recordSongSearch(song)
                                     playSong(song, source = DesktopQueueSource(DesktopStrings["search", "Search"], PlaybackSourceType.SEARCH))
                                 }
@@ -4389,6 +4416,7 @@ fun BitChordDesktopApp() {
                             contentPadding = contentPadding,
                             onStars = { likedIds = likedIds + it },
                             onOpenPage = { openCollection(it) },
+                            radio = { ForkRadioPage(selectedSong?.videoId, onPlay = { stations, at -> playSongs(stations, at) }, menu = { song -> songMenu(song) }) },
                         ) { songs ->
                             DesktopLocalMusicPage(
                                 songs = songs,
@@ -5901,6 +5929,7 @@ private fun DesktopLibraryGroupingContent(
 /** Mobile's section order, with desktop-only groups placed beside their closest mobile counterpart. */
 private enum class DesktopSettingsSection {
     ACCOUNT,
+    NAVIDROME, // fork: after the account, as on the phone
     LISTEN_TOGETHER,
     SOURCES,
     AUDIO_QUALITY,
@@ -6044,6 +6073,7 @@ private fun DesktopSettingsScreen(
                     contentPadding = PaddingValues(top = 12.dp, bottom = 28.dp),
                 ) {
             DesktopSettingsSection.entries.forEach { section ->
+            if (section == DesktopSettingsSection.NAVIDROME) item { ForkNavidromeSettingsGroup() } // fork
             if (section == DesktopSettingsSection.PLAYBACK) item {
                     SettingsGroup(DesktopStrings["playback", "Playback"]) {
                     if (!automix) {
@@ -6083,6 +6113,10 @@ private fun DesktopSettingsScreen(
                         automixOnSkip,
                         onAutomixOnSkipChange,
                     )
+                    if (automix || crossfadeSeconds > 0) { // fork: nothing to blend with until one of them is set, as on the phone
+                        val forkSkipFade by ForkCrossfadeOnSkip.enabled.collectAsState()
+                        SettingsToggle(ForkCrossfadeOnSkip.TITLE, ForkCrossfadeOnSkip.SUBTITLE, forkSkipFade, ForkCrossfadeOnSkip::set)
+                    }
                     if (automix) {
                         val phraseTitle = DesktopStrings["automix_phrase_length", "Automix phrase length"]
                         val phraseSubtitle =
@@ -6317,6 +6351,7 @@ private fun DesktopSettingsScreen(
                         cleared ?: "Frees space used by downloaded audio",
                     ) {
                         DesktopMediaCache.clear()
+                        ForkClipCache.afterSongCacheCleared() // fork
                         cleared = "Song cache cleared"
                     }
                     var imagesCleared by remember { mutableStateOf(false) }
@@ -6328,6 +6363,7 @@ private fun DesktopSettingsScreen(
                         DesktopArtworkCache.clear()
                         imagesCleared = true
                     }
+                    ForkClipCacheRows() // fork
                 }
             }
             if (section == DesktopSettingsSection.LOCAL_MUSIC) item {
@@ -7939,7 +7975,7 @@ private fun DesktopEmptyPage(icon: androidx.compose.ui.graphics.vector.ImageVect
 
 /** A titled block of settings rows. */
 @Composable
-private fun SettingsGroup(title: String, content: @Composable () -> Unit) {
+internal fun SettingsGroup(title: String, content: @Composable () -> Unit) { // fork: internal, for ForkNavidromeSettings
     val query = LocalSettingsQuery.current
     // A group whose own name matches shows whole; otherwise only its matching rows do, and the
     // heading goes with them when none are left.
@@ -8060,7 +8096,7 @@ internal fun DesktopBareSlider(
 }
 
 @Composable
-private fun SettingsToggle(title: String, subtitle: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+internal fun SettingsToggle(title: String, subtitle: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) { // fork: internal
     if (!settingsRowVisible(title, subtitle)) return
     Row(
         Modifier
@@ -8079,7 +8115,7 @@ private fun SettingsToggle(title: String, subtitle: String, checked: Boolean, on
 }
 
 @Composable
-private fun SettingsRow(
+internal fun SettingsRow( // fork: internal
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     title: String,
     subtitle: String,

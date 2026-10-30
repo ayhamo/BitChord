@@ -357,6 +357,14 @@ internal object DesktopSpotifyToken {
         cachedAccessToken?.let { if (now < accessTokenExpiresAtMs - 30_000) return it }
         if (now < retryAfterMs) return null
 
+        // fork: the page's own token first, as on the phone; signing below is what's left without a browser
+        ForkSpotifyToken.mint(cookie)?.let { minted ->
+            cachedAccessToken = minted.token
+            accessTokenExpiresAtMs = minted.expiresAtMs ?: (now + 3_600_000)
+            minted.clientId?.let { cachedClientId = it }
+            return minted.token
+        }
+
         val secret = TOTP_SECRETS.maxByOrNull { it.key }
         val code = secret?.let { totp(it.value, now / 1000) }
         val query = buildList {

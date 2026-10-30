@@ -393,9 +393,12 @@ private data class SearchSection(val title: String?, val rows: List<SearchResult
 
 /** The unfiltered page is useful only when its mixed result types are readable at a glance. */
 private fun searchSections(rows: List<SearchResult>, filter: SearchFilter): List<SearchSection> {
-    if (filter != SearchFilter.ALL) return listOf(SearchSection(null, rows))
-    return listOf(
-        SearchSection("Songs", rows.filterIsInstance<SearchResult.Track>()),
+    // fork: the server's songs lead, under their own heading, so they read apart from YouTube's
+    val (forkServer, forkYouTube) = rows.partition { it is SearchResult.Track && com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(it.song.videoId) }
+    val forkHead = if (forkServer.isEmpty()) emptyList() else listOf(SearchSection("Navidrome", forkServer))
+    if (filter != SearchFilter.ALL) return forkHead + SearchSection(null, forkYouTube) // fork: was listOf(SearchSection(null, rows))
+    return forkHead + listOf( // fork: forkHead
+        SearchSection("Songs", forkYouTube.filterIsInstance<SearchResult.Track>()), // fork: was rows
         SearchSection("Artists", rows.filterIsInstance<SearchResult.Browse>().filter { it.item.type == BrowseType.ARTIST }),
         SearchSection("Albums", rows.filterIsInstance<SearchResult.Browse>().filter { it.item.type == BrowseType.ALBUM }),
         SearchSection("Playlists", rows.filterIsInstance<SearchResult.Browse>().filter { it.item.type == BrowseType.PLAYLIST }),

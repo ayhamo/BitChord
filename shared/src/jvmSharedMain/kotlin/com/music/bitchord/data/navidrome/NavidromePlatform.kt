@@ -1,6 +1,7 @@
 package com.music.bitchord.data.navidrome
 
 import com.music.bitchord.data.model.HomeShelf
+import com.music.bitchord.data.model.MoodGenre
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
 import java.io.File
@@ -58,6 +59,9 @@ object NavidromePlatform {
 
     /** The kept pages changed: the Library's "Available offline" row. */
     @Volatile var onKeptRow: (HomeShelf) -> Unit = {}
+
+    /** The server's genres as tiles for Explore's panel; empty when there is no server. */
+    @Volatile var onGenres: (List<MoodGenre>) -> Unit = {}
 
     /** Whether plays are reported to the server. */
     @Volatile var scrobble: () -> Boolean = { true }
