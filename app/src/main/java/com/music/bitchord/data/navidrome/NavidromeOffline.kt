@@ -186,7 +186,7 @@ object NavidromeOffline {
     fun uriFor(videoId: String): String? {
         if (!NavidromeSettings.isNavidromeId(videoId)) return null
         val id = videoId.removePrefix(NavidromeSettings.ID_PREFIX)
-        return localFile(id)?.let { Uri.fromFile(it).toString() }
+        return localFile(id)?.takeIf { it.exists() }?.let { Uri.fromFile(it).toString() }
             ?: runCatching { NavidromeRepository.client().streamUrl(id) }.getOrNull()
     }
 
@@ -295,7 +295,7 @@ object NavidromeOffline {
                 // Stopped by Android, not by the user: kept as far as it got. Recorded while the
                 // page is still [active], so no other page's sweep can take its files meanwhile.
                 val stoppedByAndroid = keepOnStop.remove(id) // whatever else: a finished page must not leave its id for a later Cancel
-                val keepPartial = !kept && stoppedByAndroid && jobs[id] === me
+                val keepPartial = !kept && stoppedByAndroid && jobs[id] === me && songs.any(::hasFile) // nothing down yet: no page
                 if (keepPartial) {
                     _pages.update { it + (id to page) }
                     writeManifest()

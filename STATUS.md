@@ -1,6 +1,36 @@
-# Fork status (2026-10-29)
+# Fork status
 
 Snapshot for picking the work up again. Plan: `FORK_PLAN.md`. Every touched upstream line: `FORK.md`.
+
+## Now (2026-10-30)
+
+Checkout is on branch `hooks`. PR https://github.com/ayhamo/BitChord/pull/1 (hooks into main) is open. CI's one Android packaging failure passed on re-run (it also passed when reproduced locally).
+
+Next steps, in order:
+
+1. The third emulator round (a short retest of the five round 2 fixes) was still running at this save. Tests 1-3 had passed (lyrics cache, removed kept queue, star after relaunch). Its log is `test-round3.md` in the session scratchpad. Any failure it reports gets fixed first.
+2. The final Code audit found nothing serious. Its small fixes are committed on `hooks` but **not built yet**: build, install, run the fork's unit tests, push `hooks`.
+3. Merge PR #1 into main. Then run `fork-sync-release.yml` by hand with `force=true`, which replaces `fork-v1.8.1` (the daily job skips while that tag exists; the owner okayed the force).
+4. New branch from main: **Start radio (Instant Mix)**. Same row, not a new button. On a Navidrome song the label is "Start radio (Instant Mix)" and it asks the server: `getSimilarSongs2` with count 100, the seed song plays first and isn't repeated, an empty answer says "no similar songs found" instead of random songs. YouTube songs keep upstream's path untouched, and AutoPlay keeps its random fallback. Hook points: `SongActionsSheet.kt` (label), `MainActivity.startRadio` (it calls `loadAutoplayTracks`). Test, PR, merge, force-publish again. Android is then finished.
+5. Graphify before any PC work. One graph covers both: run it on the `pc` branch once the desktop modules are restored, since `pc` holds everything `main` has. It's code-only, so it costs almost no tokens.
+6. PC, all inside this folder (recipe in `FORK_PLAN.md`), order at Claude's discretion:
+   - Restore the desktop app on `pc` (`git merge main` first).
+   - Build it. Upstream's build has a portable Windows zip (`windowsPortable`) and can cross-build with `-Pbitchord.target=windows` and mingw (`native/mingw-w64.cmake`), so try that in Docker with JDK 21 (`eclipse-temurin:21-jdk`). The Android image's JDK 17 is too old. Otherwise GitHub Actions on a Windows runner, copying upstream's old `release.yml` (from `e4dd63d8^`).
+   - Run the unchanged app on the owner's PC as a baseline; Claude may install and test it. Add hooks that make testing easier (for example a loopback-only debug bridge).
+   - Move the Navidrome code to `shared` (it uses Android prefs, Context and Uri, so those need abstracting), then retest Android.
+   - Connect it to the desktop library, audio engine, covers, clips, lyrics and stars.
+   - Pick PC-Continued commits. Start with their memory fixes (`c310d0e3`, about 430 lines). The owner should look at their app before deciding on the redesign.
+   - Then the rest of the fork's features: offline, radio, saved queues, Home sections.
+
+Facts worth keeping:
+
+- `desktopUi` is upstream's own copy of the player and pages (split on 2026-10-14 "so a desktop redesign can land without moving the phone"); `desktopApp` depends on `shared` + `desktopUi`, not `sharedUi`. Keep them separate. PC-Continued's `sharedUi` edits map onto `desktopUi`, because their fork predates the split. Today's `sharedUi` differs from that copy by little (Now Playing about 213 lines, Lyrics 287, Queue 40).
+- The release job merges upstream's release tag in CI only; it doesn't update `main`. After a new upstream release, merge the same tag into `main` by hand. Upstream's latest release is v1.8.1 (2026-10-19), and `main` has all of upstream's commits up to 2026-10-26. PC-Continued's tags (v1.8.3x) are local only; never push tags.
+- Local branches: `pc` (still at `00cd6cb1`, restore not committed anywhere), `pc-continued` (mirror of their `main`), `hooks`. Remotes: `origin`, `upstream`, `pc-continued`.
+- `svc wifi disable` over adb cuts adb on this emulator; use a detached guest shell that turns it back on. Round 1's emulator freeze was probably not the app, though that isn't proven.
+- Test logs from today: `test-round1.md`, `test-round2.md`, `test-round3.md` in the session scratchpad `C:\Users\ayham\AppData\Local\Temp\claude\C--Users-ayham-Desktop-Projects-BitChord\f08252f9-f9aa-4f8c-8ac0-c2e9c79b091f\scratchpad`.
+
+## Older snapshot (2026-10-29)
 
 ## Done (the last two rounds are not committed yet; nothing pushed)
 
