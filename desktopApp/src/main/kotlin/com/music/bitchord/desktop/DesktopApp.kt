@@ -2636,6 +2636,7 @@ fun BitChordDesktopApp() {
     // and Recently Played only exists with an account behind it.
     LaunchedEffect(Unit) { com.music.bitchord.data.navidrome.NavidromeSettings.saved.drop(1).collect { loadHome() } } // fork: a new login, a new Home
     LaunchedEffect(Unit) { snapshotFlow { spotifyCanvasCookie.isNotBlank() }.drop(1).collect { loadHome() } } // fork: Spotify's mixes come and go with its sign-in
+    LaunchedEffect(Unit) { ForkOffline.offline.drop(1).collect { loadHome() } } // fork: offline, the kept pages; back, the server's shelves
     LaunchedEffect(youtubeSignedIn, activeAccountId) {
         val identity = "${DesktopYouTubeAuth.isSignedIn}/${DesktopAccounts.activeAccountId()}"
         if (homeIdentity != null && identity != homeIdentity) loadHome()
@@ -4387,6 +4388,7 @@ fun BitChordDesktopApp() {
                         destination == DesktopDestination.NAVIDROME -> ForkNavidromeScreen( // fork
                             contentPadding = contentPadding,
                             onStars = { likedIds = likedIds + it },
+                            onOpenPage = { openCollection(it) },
                         ) { songs ->
                             DesktopLocalMusicPage(
                                 songs = songs,
@@ -5775,6 +5777,10 @@ private fun DesktopLocalMusicPage(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = { drillDown = null }) { Icon(Icons.Rounded.ArrowBack, DesktopStrings["back", "Back"]) }
                     Text(drillDown!!.first, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                    if (forkPlayFrom != null && selectedTab == 2) { // fork: an album on the Navidrome page
+                        Spacer(Modifier.width(16.dp))
+                        ForkOfflineButton(com.music.bitchord.data.navidrome.NavidromeSettings.albumPageId(drillDown!!.first), drillDown!!.first, drillDown!!.second.firstOrNull()?.artist.orEmpty(), drillDown!!.second.firstOrNull()?.thumbnailUrl, drillDown!!.second)
+                    }
                 }
                 Spacer(Modifier.height(6.dp))
                 val forkShown = drillDown!!.second
@@ -7157,6 +7163,7 @@ private fun DesktopCollectionPage(
                                     if (!searching) listQuery = ""
                                 },
                             )
+                            ForkOfflineButton(collection.browseId, collection.title, collection.subtitle.orEmpty(), collection.thumbnailUrl, collection.songs) // fork
                             Box {
                                 DesktopCircleButton(Icons.Rounded.MoreHoriz, DesktopStrings["more", "More"], onClick = { moreOpen = true })
                                 DropdownMenu(expanded = moreOpen, onDismissRequest = { moreOpen = false }) {

@@ -48,6 +48,9 @@ internal object DesktopArtworkCache {
     suspend fun load(url: String?): ImageBitmap? {
         if (url.isNullOrBlank()) return null
         images.get(url)?.let { return it }
+        ForkOffline.keptImage(url)?.let { kept -> // fork: a kept cover, which also works with no server
+            runCatching { kept.decodeToImageBitmap() }.getOrNull()?.let { images.put(url, it); return it }
+        }
         return runCatching {
             URI(url).toURL().openConnection().apply {
                 connectTimeout = 10_000

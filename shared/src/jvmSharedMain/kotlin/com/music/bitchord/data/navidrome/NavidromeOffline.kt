@@ -1,8 +1,5 @@
 package com.music.bitchord.data.navidrome
 
-import android.content.Context
-import android.net.Uri
-import androidx.core.content.ContextCompat
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.model.HomeShelf
@@ -10,8 +7,6 @@ import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
-import com.music.bitchord.fork.ForkNetwork
-import com.music.bitchord.fork.ForkOfflineService
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -63,10 +58,10 @@ import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Navidrome albums and playlists kept on the phone (fork-only), as psysonic's
+ * Navidrome albums and playlists kept on the device (fork-only), as psysonic's
  * "make offline": a whole page at a time, never single tracks.
  *
- * Everything a song needs with no server goes to `files/navidrome_offline/`,
+ * Everything a song needs with no server goes to the folder [init] is given,
  * outside every cache, so nothing evicts it:
  * - `<song id>`: the original file (`stream?format=raw`, FLAC stays FLAC);
  * - `covers/<cover id>`: the covers, at the player's size;
@@ -84,9 +79,9 @@ import java.util.concurrent.ConcurrentHashMap
  * HTTP client the image loader and the clip player use, so nothing else needs
  * to know they are kept.
  *
- * Downloads run two files at a time in the background, under a notification
- * ([ForkOfflineService]), and wait for a network downloads may use
- * ([ForkNetwork.awaitDownload]).
+ * Downloads run two files at a time in the background and wait for a network
+ * downloads may use ([NavidromePlatform.awaitDownload]); the phone shows them
+ * under a notification ([NavidromePlatform.onKeepStarted]).
  */
 object NavidromeOffline {
 
@@ -107,7 +102,6 @@ object NavidromeOffline {
         val active get() = titles.isNotEmpty()
     }
 
-    private lateinit var appContext: Context
     private lateinit var dir: File
     private val coverDir get() = File(dir, "covers")
     private val clipDir get() = File(dir, "clips")
@@ -155,14 +149,13 @@ object NavidromeOffline {
      */
     @Volatile private var manifestUnreadable = false
 
-    fun init(context: Context) {
-        appContext = context.applicationContext
-        dir = File(context.filesDir, "navidrome_offline").apply { mkdirs() }
+    fun init(directory: File, rowTitle: String, goneLabel: String) {
+        dir = directory.apply { mkdirs() }
         coverDir.mkdirs()
         clipDir.mkdirs()
         lyricsDir.mkdirs()
-        rowTitle = context.getString(com.music.bitchord.R.string.fork_offline_row)
-        goneLabel = context.getString(com.music.bitchord.R.string.fork_offline_gone)
+        this.rowTitle = rowTitle
+        this.goneLabel = goneLabel
         // Half-written files of a process that died mid-download: nothing is downloading yet.
         listOf(dir, coverDir, clipDir, lyricsDir).forEach { d -> d.listFiles()?.filter { it.name.endsWith(".part") }?.forEach { it.delete() } }
         // Song files are the only top-level files without a dot (offline.json, clips.json, *.part have one).
@@ -192,7 +185,7 @@ object NavidromeOffline {
     fun uriFor(videoId: String): String? {
         if (!NavidromeSettings.isNavidromeId(videoId)) return null
         val id = videoId.removePrefix(NavidromeSettings.ID_PREFIX)
-        return localFile(id)?.takeIf { it.exists() }?.let { Uri.fromFile(it).toString() }
+        return localFile(id)?.takeIf { it.exists() }?.let(::fileUri)
             ?: runCatching { NavidromeRepository.client().streamUrl(id) }.getOrNull()
     }
 
@@ -203,12 +196,28 @@ object NavidromeOffline {
     /** The song id of a kept file's `file://` address, or null. */
     fun songIdForFile(uri: String): String? {
         if (!::dir.isInitialized || !uri.startsWith("file:")) return null
-        val file = Uri.parse(uri).path?.let(::File) ?: return null
+        val file = runCatching { File(java.net.URI(uri)) }.getOrNull() ?: return null
         return file.name.takeIf { file.parentFile == dir }
     }
 
+    /** A kept file's address, `file:///…`, which is how the phone has always written it. */
+    private fun fileUri(file: File): String = file.toURI().toString().replaceFirst("file:/", "file:///")
+
+    /** [NavidromePlatform.Kept], for the app to plug in. */
+    object Files : NavidromePlatform.Kept {
+        override fun localUri(songId: String): String? = localFile(songId)?.let(::fileUri)
+        override fun lyricsFile(songId: String): File? = NavidromeOffline.lyricsFile(songId)
+        override fun songIdForFile(uri: String): String? = NavidromeOffline.songIdForFile(uri)
+        override fun clipUrl(songId: String, backdrop: Boolean): String? =
+            clipUrl(songId, if (backdrop) NavidromeClips.Kind.BACKDROP else NavidromeClips.Kind.COVER)
+        override fun keptSongs(): List<Song> = NavidromeOffline.keptSongs()
+        override fun noteSize(songId: String, bytes: Long) = NavidromeOffline.noteSize(songId, bytes)
+        override fun serve(request: Request): Response? = NavidromeOffline.serve(request)
+        override suspend fun pageState(browseId: String): UiState<List<Song>>? = NavidromeOffline.pageState(browseId)
+    }
+
     /** A kept clip's address for the song, or null; see [NavidromeClips]. */
-    internal fun clipUrl(songId: String, kind: NavidromeClips.Kind): String? = clips["$songId|${kind.name}"]
+    fun clipUrl(songId: String, kind: NavidromeClips.Kind): String? = clips["$songId|${kind.name}"]
 
     fun noteSize(songId: String, bytes: Long) {
         sizes[songId] = bytes
@@ -256,20 +265,14 @@ object NavidromeOffline {
         setProgress(id, 0f)
         counts[id] = Triple(title, 0, songs.size)
         publishStatus()
-        // Android 12+ refuses a foreground service started from the background (a playlist sync
-        // finishing after the app was left); the download still runs, just without the notification.
-        try {
-            ContextCompat.startForegroundService(appContext, android.content.Intent(appContext, ForkOfflineService::class.java))
-        } catch (e: IllegalStateException) {
-            Log.d(TAG, "offline $id: no foreground service (${e.message})")
-        }
+        NavidromePlatform.onKeepStarted()
         val job = scope.launch(start = CoroutineStart.LAZY) {
             val me = coroutineContext.job
             var kept = false
             try {
                 val client = NavidromeRepository.client()
                 cover?.let {
-                    ForkNetwork.awaitDownload()
+                    NavidromePlatform.awaitDownload()
                     bestEffort("cover") { keepCover(client, it) }
                 }
                 coroutineScope {
@@ -336,7 +339,7 @@ object NavidromeOffline {
      */
     private suspend fun keepSong(client: NavidromeClient, song: Song) {
         val songId = song.videoId.removePrefix(NavidromeSettings.ID_PREFIX)
-        ForkNetwork.awaitDownload() // covers and clips too, not only the audio, keep to the mobile-data switch
+        NavidromePlatform.awaitDownload() // covers and clips too, not only the audio, keep to the mobile-data switch
         var attempt = 0
         while (localFile(songId) == null) {
             try {
@@ -348,7 +351,7 @@ object NavidromeOffline {
                     break
                 }
                 delay(RETRY_MS * attempt)
-                ForkNetwork.awaitDownload()
+                NavidromePlatform.awaitDownload()
             }
         }
         song.thumbnailUrl?.let { bestEffort("cover") { keepCover(client, it) } }
@@ -370,7 +373,7 @@ object NavidromeOffline {
         }
         if (lyricsFile(songId) == null) {
             bestEffort("lyrics $songId") {
-                (NavidromeLyrics.serverLrc(songId) ?: com.music.bitchord.download.LyricsTag.forTrack(song)?.let { it.enhanced ?: it.plain })?.let { File(lyricsDir, "$songId.lrc").writeText(it) }
+                (NavidromeLyrics.serverLrc(songId) ?: NavidromePlatform.onlineLyrics(song))?.let { File(lyricsDir, "$songId.lrc").writeText(it) }
             }
         }
     }
@@ -388,7 +391,7 @@ object NavidromeOffline {
 
     private suspend fun keepCover(client: NavidromeClient, url: String) {
         val coverId = coverIdOf(url) ?: return
-        download(client.coverUrl(coverId, COVER_PX), File(coverDir, coverId))
+        download(client.coverUrl(coverId, COVER_PX), coverFile(coverId))
     }
 
     /**
@@ -403,7 +406,7 @@ object NavidromeOffline {
      * changing on the server is a retag, not something to follow.
      */
     fun syncPlaylists() {
-        if (!::dir.isInitialized || ForkNetwork.offline.value) return
+        if (!::dir.isInitialized || NavidromePlatform.offline.value) return
         val kept = _pages.value.values.filter { it.id.startsWith(NavidromePlaylists.PREFIX) }
         if (kept.isEmpty()) return
         scope.launch {
@@ -497,7 +500,7 @@ object NavidromeOffline {
         if (!::dir.isInitialized || manifestUnreadable) return@synchronized
         val pages = _pages.value.values + active.values
         val songIds = pages.flatMap { it.songs }.mapTo(HashSet()) { it.videoId.removePrefix(NavidromeSettings.ID_PREFIX) }
-        val coverIds = pages.flatMap { p -> p.songs.map { it.thumbnailUrl } + p.cover }.mapNotNullTo(HashSet()) { it?.let(::coverIdOf) }
+        val coverIds = pages.flatMap { p -> p.songs.map { it.thumbnailUrl } + p.cover }.mapNotNullTo(HashSet()) { url -> url?.let(::coverIdOf)?.let { coverFile(it).name } }
         dir.listFiles()?.filter { it.isFile && '.' !in it.name && it.name !in songIds }?.forEach {
             it.delete()
             onDiskIds -= it.name
@@ -517,7 +520,7 @@ object NavidromeOffline {
 
     /** The kept pages as the Library's "Available offline" row, shown with or without the server. */
     private fun publishRow() {
-        com.music.bitchord.ui.screens.ForkLibraryPlaylists.offline.value = shelf(rowTitle)
+        NavidromePlatform.onKeptRow(shelf(rowTitle))
     }
 
     /** Bytes everything kept takes. Disk reads: call off the main thread. */
@@ -603,7 +606,7 @@ object NavidromeOffline {
         if (url.host != base.host || url.port != base.port) return null
         val (file, type) = when {
             url.encodedPath.endsWith("/rest/getCoverArt") || url.encodedPath.endsWith("/rest/getCoverArt.view") ->
-                (url.queryParameter("id")?.let { File(coverDir, it) } ?: return null) to "image/jpeg"
+                (url.queryParameter("id")?.let(::coverFile) ?: return null) to "image/jpeg"
             "/rest/x-clip/" in url.encodedPath -> clipFile(url.toString()) to "video/mp4"
             else -> return null
         }
@@ -621,6 +624,19 @@ object NavidromeOffline {
     private fun coverIdOf(url: String): String? =
         url.toHttpUrlOrNull()?.takeIf { "getCoverArt" in it.encodedPath }?.queryParameter("id")
 
+    /**
+     * An album's cover id ends in `:<number>`, which Windows takes for a stream of a file with no
+     * data: nothing can be kept under that name. The phone's files keep the names they have.
+     */
+    private fun coverFile(id: String) = File(coverDir, if (File.separatorChar == '\\') id.replace(':', '_') else id)
+
+    /** Over a file already there, which [File.renameTo] refuses on Windows: the manifests stopped updating after their first write. */
+    private fun File.moveOver(target: File) {
+        if (!renameTo(target)) {
+            java.nio.file.Files.move(toPath(), target.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE)
+        }
+    }
+
     private fun clipFile(url: String): File {
         // By path: the login rides in a header, so the address names the clip alone.
         val path = url.toHttpUrlOrNull()?.encodedPath ?: url
@@ -633,7 +649,7 @@ object NavidromeOffline {
     /** [song] playing from its kept file, when there is one. */
     private fun onDisk(song: Song): Song =
         localFile(song.videoId.removePrefix(NavidromeSettings.ID_PREFIX))
-            ?.let { song.copy(localUri = Uri.fromFile(it).toString()) } ?: song
+            ?.let { song.copy(localUri = fileUri(it)) } ?: song
 
     private fun readClips() = runCatching {
         if (!clipManifest.isFile) return@runCatching
@@ -649,7 +665,7 @@ object NavidromeOffline {
         val obj = buildJsonObject { clips.forEach { (key, url) -> put(key, url) } }
         val tmp = File(dir, "clips.json.tmp")
         tmp.writeText(obj.toString())
-        tmp.renameTo(clipManifest)
+        tmp.moveOver(clipManifest)
     }
 
     private fun readManifest(): Map<String, Page> = runCatching {
@@ -695,7 +711,7 @@ object NavidromeOffline {
             out.write(array.toString().toByteArray())
             out.fd.sync()
         }
-        tmp.renameTo(manifest)
+        tmp.moveOver(manifest)
     }
 
     private fun Song.toJson() = buildJsonObject {

@@ -45,6 +45,7 @@ import com.music.bitchord.data.navidrome.NavidromeArtists
 import com.music.bitchord.data.navidrome.NavidromeClient
 import com.music.bitchord.data.navidrome.NavidromeClips
 import com.music.bitchord.data.navidrome.NavidromeLyrics
+import com.music.bitchord.data.navidrome.NavidromeOffline
 import com.music.bitchord.data.navidrome.NavidromePlatform
 import com.music.bitchord.data.navidrome.NavidromePlaylists
 import com.music.bitchord.data.navidrome.NavidromeRepository
@@ -96,6 +97,7 @@ internal object ForkNavidrome {
 
     fun install() {
         NavidromeSettings.init(PrefsStore("com/music/bitchord/navidrome", sealed = setOf("password")))
+        ForkOffline.install() // before the clips: its files answer them
         NavidromeClips.init(PrefsStore("com/music/bitchord/navidrome_clips", sealed = emptySet()))
         NavidromeSongInfo.init()
         NavidromeLyrics.init(DesktopMediaCache.directory.resolve("navidrome_lyrics").toFile())
@@ -111,6 +113,8 @@ internal object ForkNavidrome {
     /** Where a Navidrome song plays from, built from the current login rather than the address it was queued with. */
     fun stream(song: Song): DesktopStream? {
         if (!owns(song) || !NavidromeSettings.isConfigured()) return null
+        // The plain path, as the engine gives its own saved files: FFmpeg doesn't decode a file:// address.
+        NavidromeOffline.localFile(song.videoId.removePrefix(NavidromeSettings.ID_PREFIX))?.let { return DesktopStream(it.absolutePath) }
         return DesktopStream(NavidromeRepository.client().streamUrl(song.videoId.removePrefix(NavidromeSettings.ID_PREFIX)))
     }
 
@@ -138,6 +142,7 @@ internal object ForkNavidrome {
      */
     suspend fun tracks(existing: List<Song>, seed: Song, limit: Int, station: Boolean): Result<List<Song>>? {
         if (!owns(seed)) return null
+        if (ForkOffline.offline.value) return Result.success(emptyList()) // the queue ends with what is kept: the server's songs wouldn't play
         if (station) return NavidromeRepository.instantMix(seed)
         return NavidromeRepository.related(seed).map { related ->
             QueueBuilder.extend(existing, related, limit).map {
@@ -181,6 +186,9 @@ internal object ForkNavidrome {
     /** The server's album and playlist shelves for the top of Home; none without a login or a server. */
     suspend fun homeShelves(): List<HomeShelf> {
         if (!NavidromeSettings.isConfigured()) return emptyList()
+        // Offline: what is kept here, in place of the server's shelves, as on the phone.
+        if (ForkOffline.offline.value) return listOfNotNull(NavidromeOffline.shelf("Available offline").takeIf { it.items.isNotEmpty() })
+        NavidromeOffline.syncPlaylists() // kept playlists follow the server
         val client = NavidromeRepository.client()
         fun albums(rows: List<NavidromeClient.AlbumRow>) = rows.map { row ->
             NavidromeAlbums.remember(row.name, row.id)
@@ -289,6 +297,7 @@ internal object ForkNavidrome {
 internal fun ForkNavidromeScreen(
     contentPadding: PaddingValues,
     onStars: (Set<String>) -> Unit,
+    onOpenPage: (String) -> Unit,
     page: @Composable (List<Song>) -> Unit,
 ) {
     val url by NavidromeSettings.url.collectAsState()
@@ -301,7 +310,8 @@ internal fun ForkNavidromeScreen(
     var attempt by remember(saved) { mutableStateOf(0) }
     var songs by remember(saved) { mutableStateOf<List<Song>?>(null) }
     var failure by remember(saved) { mutableStateOf<String?>(null) }
-    LaunchedEffect(saved, attempt) {
+    val offline by ForkOffline.offline.collectAsState()
+    LaunchedEffect(saved, attempt, offline) { // offline: the kept songs, back online: the library
         failure = null
         runCatching { NavidromeRepository.getSongs() }
             .onSuccess {
@@ -318,6 +328,8 @@ internal fun ForkNavidromeScreen(
         ) {
             Text("$username on $url", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Row(verticalAlignment = Alignment.CenterVertically) {
+                ForkOfflineControls(onOpenPage)
+                Spacer(Modifier.widthIn(min = 16.dp))
                 val history by ForkYouTubeHistory.enabled.collectAsState()
                 Text("Plays count on YouTube Music", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.widthIn(min = 8.dp))

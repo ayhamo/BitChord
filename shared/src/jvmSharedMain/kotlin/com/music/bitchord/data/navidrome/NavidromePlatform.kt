@@ -1,5 +1,6 @@
 package com.music.bitchord.data.navidrome
 
+import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
 import java.io.File
@@ -45,6 +46,18 @@ object NavidromePlatform {
 
     /** Every song read from the server passes through here (the phone notes them for its YouTube history match). */
     @Volatile var onSong: (Song) -> Unit = {}
+
+    /** Suspends until the network allows "Available offline" downloads. */
+    @Volatile var awaitDownload: suspend () -> Unit = {}
+
+    /** A page has started downloading (the phone's notification). */
+    @Volatile var onKeepStarted: () -> Unit = {}
+
+    /** The song's lyrics from the online sources as LRC, for a song the server has none for. */
+    @Volatile var onlineLyrics: suspend (Song) -> String? = { null }
+
+    /** The kept pages changed: the Library's "Available offline" row. */
+    @Volatile var onKeptRow: (HomeShelf) -> Unit = {}
 
     /** Whether plays are reported to the server. */
     @Volatile var scrobble: () -> Boolean = { true }

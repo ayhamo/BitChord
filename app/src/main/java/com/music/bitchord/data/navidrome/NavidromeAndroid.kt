@@ -2,27 +2,45 @@ package com.music.bitchord.data.navidrome
 
 import android.content.Context
 import android.content.SharedPreferences
-import android.net.Uri
+import androidx.core.content.ContextCompat
+import com.music.bitchord.R
 import com.music.bitchord.auth.EncryptedPrefs
-import com.music.bitchord.data.model.Song
-import com.music.bitchord.data.model.UiState
+import com.music.bitchord.data.DebugLog
+import com.music.bitchord.download.LyricsTag
+import com.music.bitchord.fork.ForkNetwork
+import com.music.bitchord.fork.ForkOfflineService
 import java.io.File
-import okhttp3.Request
-import okhttp3.Response
 
 /** Fork: the phone's side of [NavidromePlatform]: its prefs, cache folder, offline files and switches. */
 object NavidromeAndroid {
 
     fun init(context: Context) {
-        NavidromePlatform.kept = KeptFiles
-        NavidromePlatform.offline = com.music.bitchord.fork.ForkNetwork.offline
+        val app = context.applicationContext
+        NavidromePlatform.kept = NavidromeOffline.Files
+        NavidromePlatform.offline = ForkNetwork.offline
+        NavidromePlatform.awaitDownload = ForkNetwork::awaitDownload
+        NavidromePlatform.onKeepStarted = {
+            // Android 12+ refuses a foreground service started from the background (a playlist sync
+            // finishing after the app was left); the download still runs, just without the notification.
+            try {
+                ContextCompat.startForegroundService(app, android.content.Intent(app, ForkOfflineService::class.java))
+            } catch (e: IllegalStateException) {
+                DebugLog.d("BitChordNavidrome", "offline: no foreground service (${e.message})")
+            }
+        }
+        NavidromePlatform.onlineLyrics = { song -> LyricsTag.forTrack(song)?.let { it.enhanced ?: it.plain } }
+        NavidromePlatform.onKeptRow = { com.music.bitchord.ui.screens.ForkLibraryPlaylists.offline.value = it }
         NavidromePlatform.onSong = com.music.bitchord.fork.ForkYouTubeHistory::remember
         NavidromePlatform.scrobble = { com.music.bitchord.fork.ForkSettings.navidromeScrobble.value }
         NavidromeSettings.init(PrefsStore(EncryptedPrefs.open(context, "bitchord_navidrome", "bitchord_navidrome_plain")))
         // Plain prefs: only "no clip for this song" notes, nothing secret.
         NavidromeClips.init(PrefsStore(context.getSharedPreferences("bitchord_navidrome_clips", Context.MODE_PRIVATE)))
         NavidromeSongInfo.init()
-        NavidromeOffline.init(context)
+        NavidromeOffline.init(
+            File(context.filesDir, "navidrome_offline"),
+            context.getString(R.string.fork_offline_row),
+            context.getString(R.string.fork_offline_gone),
+        )
         NavidromeLyrics.init(File(context.cacheDir, "navidrome_lyrics"))
         NavidromeRadio.init(context)
     }
@@ -43,17 +61,5 @@ object NavidromeAndroid {
         override fun clear() {
             prefs.edit().clear().apply()
         }
-    }
-
-    private object KeptFiles : NavidromePlatform.Kept {
-        override fun localUri(songId: String): String? = NavidromeOffline.localFile(songId)?.let { Uri.fromFile(it).toString() }
-        override fun lyricsFile(songId: String): File? = NavidromeOffline.lyricsFile(songId)
-        override fun songIdForFile(uri: String): String? = NavidromeOffline.songIdForFile(uri)
-        override fun clipUrl(songId: String, backdrop: Boolean): String? =
-            NavidromeOffline.clipUrl(songId, if (backdrop) NavidromeClips.Kind.BACKDROP else NavidromeClips.Kind.COVER)
-        override fun keptSongs(): List<Song> = NavidromeOffline.keptSongs()
-        override fun noteSize(songId: String, bytes: Long) = NavidromeOffline.noteSize(songId, bytes)
-        override fun serve(request: Request): Response? = NavidromeOffline.serve(request)
-        override suspend fun pageState(browseId: String): UiState<List<Song>>? = NavidromeOffline.pageState(browseId)
     }
 }

@@ -25,7 +25,7 @@ object NavidromeScrobble {
 
     private fun send(song: Song, scope: CoroutineScope, submission: Boolean, timeMs: Long?) {
         if (!NavidromePlatform.scrobble() || !NavidromeSettings.isNavidromeId(song.videoId)) return
-        if (!NavidromeSettings.isConfigured()) return
+        if (!NavidromeSettings.isConfigured() || NavidromePlatform.offline.value) return // offline mode: nothing goes to the server
         val id = song.videoId.removePrefix(NavidromeSettings.ID_PREFIX)
         scope.launch {
             runCatching { NavidromeRepository.client().scrobble(id, submission, timeMs) }
