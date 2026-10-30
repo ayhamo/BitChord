@@ -30,11 +30,11 @@ object ForkCanvasSwitch {
  * Fork: the clip the player shows for [raw], and the clip behind the landscape
  * player ([ForkLandscapeBackdrop]), read once from both switches.
  *
- * A Navidrome backdrop (`.background.mp4`, 9:16) is made to fill a phone. It
- * plays only where it can fill the screen ([forkFillsScreen]) and while the
- * backdrop switch is on; otherwise the song's square cover clip plays in the
- * sleeve ([CanvasArtwork.sleeveUrl]), or, without one, the still cover. A
- * backdrop never plays cropped in the cover square.
+ * A backdrop (a Navidrome `.background.mp4` or a Spotify Canvas, both 9:16) is
+ * made to fill a phone. It plays only where it can fill the screen
+ * ([forkFillsScreen]) and while the backdrop switch is on; otherwise the song's
+ * square cover clip plays in the sleeve ([CanvasArtwork.sleeveUrl]), or, without
+ * one, the still cover. A backdrop never plays cropped in the cover square.
  *
  * Whatever fills the screen needs "Backdrop videos", whatever plays in the
  * square needs "Animated covers" ([ForkCanvasSwitch]). Both read live, so
@@ -55,17 +55,26 @@ internal fun forkCanvases(raw: CanvasArtwork?, phoneWidth: Boolean, windowWidth:
 }
 
 private fun CanvasArtwork?.forkInSleeve(backdropShown: Boolean): CanvasArtwork? = when {
-    this == null || source != CanvasSource.BACKDROP || backdropShown -> this
+    this == null || !source.fillsPhone || backdropShown -> this
     else -> sleeveUrl?.let { copy(url = it, fallbackUrl = null, source = CanvasSource.OTHER, sleeveUrl = null) }
 }
 
 /**
  * Fork: whether a full-screen clip gets the screen. Upstream: only where the
- * player fills a phone-width window. A Navidrome backdrop also in any portrait
- * window wider than that (a big phone, a tablet held upright, the 720 dp
- * emulator), where upstream kept it in the sleeve. Never in a landscape window,
+ * player fills a phone-width window. A backdrop also in any portrait window
+ * wider than that (a big phone, a tablet held upright, the 720 dp emulator),
+ * where upstream kept it cropped in the sleeve. Never in a landscape window,
  * however narrow (split screen, a small phone): the landscape player draws
  * its own backdrop beside the cover ([ForkLandscapeBackdrop]).
  */
 internal fun forkFillsScreen(canvas: CanvasArtwork?, phoneWidth: Boolean, windowWidth: Dp, windowHeight: Dp): Boolean =
-    windowHeight >= windowWidth && (phoneWidth || canvas?.source == CanvasSource.BACKDROP)
+    windowHeight >= windowWidth && (phoneWidth || canvas?.source?.fillsPhone == true)
+
+/**
+ * Fork: where "Fullscreen cover art" runs the still cover to the edges. Upstream:
+ * only a phone-width window. Also any portrait window wider than that, the same
+ * windows a backdrop fills ([forkFillsScreen]), so the switch doesn't quietly do
+ * nothing there.
+ */
+internal fun forkBigArtFits(phoneWidth: Boolean, windowWidth: Dp, windowHeight: Dp): Boolean =
+    phoneWidth || windowHeight >= windowWidth
