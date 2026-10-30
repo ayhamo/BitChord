@@ -1789,7 +1789,7 @@ class PlaybackService : MediaLibraryService() {
         deferPlayToParty = { partySync?.shouldDeferPlay() == true },
         lockedTransport = { playing -> partySync?.onLockedTransport(playing) == true },
         cast = speakers,
-    ) { lastPublishedSubtitle }
+    ) { lastPublishedSubtitle }.forkMasked(crossfade) // fork: the chosen song reported while a skip arms
 
     /**
      * The stream a Cast receiver can open for [item], or null when there is none
@@ -1874,10 +1874,7 @@ class PlaybackService : MediaLibraryService() {
      * against, and a local file or a download has no YouTube identity to rate.
      */
     private fun canLike(item: MediaItem?): Boolean =
-        item != null && (
-            (SignedIn.state(this).value && item.toSong().localUri == null) ||
-                com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(item.mediaId) // fork: Navidrome stars
-            )
+        item != null && ((SignedIn.state(this).value && item.toSong().localUri == null) || com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(item.mediaId)) // fork: Navidrome stars
 
     /** Favorite and Shuffle: the only actions shown on the phone notification. */
     private fun notificationButtons(): List<CommandButton> {
@@ -3171,11 +3168,7 @@ class PlaybackService : MediaLibraryService() {
         LikeState.set(videoId, target)
         refreshCustomLayouts()
         favoriteActionJob = scope.launch {
-            (if (com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(videoId)) { // fork: Navidrome star
-                com.music.bitchord.data.navidrome.NavidromeStars.rate(videoId, target)
-            } else {
-                YtMusicRepository.rate(videoId, target)
-            })
+            com.music.bitchord.data.navidrome.NavidromeStars.rateOr(videoId, target) { YtMusicRepository.rate(videoId, target) } // fork: a Navidrome star
                 .onFailure {
                     LikeState.set(videoId, previous)
                     refreshCustomLayouts()
@@ -3251,9 +3244,7 @@ class PlaybackService : MediaLibraryService() {
             reason = if (skipBlend) Player.MEDIA_ITEM_TRANSITION_REASON_SEEK else Player.MEDIA_ITEM_TRANSITION_REASON_AUTO, // fork
             alreadyAudible = true,
         )
-        // fork: the incoming decoder started before this player was listened to; see PlayerDecoderNames
-        com.music.bitchord.fork.PlayerDecoderNames.of(incoming)?.let(AudioOutputStatus::publishDecoder)
-        publishNerdStats() // fork: its format is known already, don't wait for the next playing tick
+        com.music.bitchord.fork.PlayerDecoderNames.of(incoming)?.let(AudioOutputStatus::publishDecoder).also { publishNerdStats() } // fork: the incoming decoder started before this player was listened to
 
         // A crossfade starts the incoming item on the player that was idle, so
         // it never delivers onMediaItemTransition to playbackListener. Keep
@@ -7491,20 +7482,20 @@ class PlaybackService : MediaLibraryService() {
 
         override fun getPlaybackState() = if (cast.active) cast.playbackState else super.getPlaybackState()
 
-        override fun getCurrentPosition() = if (cast.active) cast.positionMs else if (forkSkipIndex() != C.INDEX_UNSET) 0L else super.getCurrentPosition() // fork: skip arming
+        override fun getCurrentPosition() = if (cast.active) cast.positionMs else super.getCurrentPosition()
 
-        override fun getContentPosition() = if (cast.active) cast.positionMs else if (forkSkipIndex() != C.INDEX_UNSET) 0L else super.getContentPosition() // fork: skip arming
+        override fun getContentPosition() = if (cast.active) cast.positionMs else super.getContentPosition()
 
-        override fun getBufferedPosition() = if (cast.active) cast.positionMs else if (forkSkipIndex() != C.INDEX_UNSET) 0L else super.getBufferedPosition() // fork: skip arming
+        override fun getBufferedPosition() = if (cast.active) cast.positionMs else super.getBufferedPosition()
 
         override fun getContentBufferedPosition() =
             if (cast.active) cast.positionMs else super.getContentBufferedPosition()
 
         override fun getDuration(): Long =
-            if (cast.active && cast.durationMs != C.TIME_UNSET) cast.durationMs else if (forkSkipIndex() != C.INDEX_UNSET) C.TIME_UNSET else super.getDuration() // fork: skip arming
+            if (cast.active && cast.durationMs != C.TIME_UNSET) cast.durationMs else super.getDuration()
 
         override fun getContentDuration(): Long =
-            if (cast.active && cast.durationMs != C.TIME_UNSET) cast.durationMs else if (forkSkipIndex() != C.INDEX_UNSET) C.TIME_UNSET else super.getContentDuration() // fork: skip arming
+            if (cast.active && cast.durationMs != C.TIME_UNSET) cast.durationMs else super.getContentDuration()
 
         // The receiver is a remote output with a volume of its own, which is
         // what makes the hardware keys move it instead of the phone's.
@@ -7725,17 +7716,9 @@ class PlaybackService : MediaLibraryService() {
                 castPrevious()
                 return
             }
-            if (crossfade.crossfadeSkip(forkPreviousTarget())) return // fork
+            if (crossfade.crossfadeSkip(wrappedPlayer.forkPreviousTarget())) return // fork
             super.seekToPrevious()
         }
-
-        /** fork: the item Previous goes to, or unset when it only restarts this one (Media3's 3 s rule). */
-        private fun forkPreviousTarget(): Int =
-            if (wrappedPlayer.currentPosition <= wrappedPlayer.maxSeekToPreviousPosition) {
-                wrappedPlayer.previousMediaItemIndex
-            } else {
-                C.INDEX_UNSET
-            }
 
         override fun seekToDefaultPosition() {
             if (locked()) return
@@ -7828,24 +7811,8 @@ class PlaybackService : MediaLibraryService() {
             super.clearMediaItems()
         }
 
-        // fork: while a crossfade skip arms, the chosen song is reported as current (see
-        // CrossfadeController.pendingSkipIndex), so the screen doesn't flip back to the old one.
-        private fun forkSkipIndex(): Int = crossfade.pendingSkipIndex()
-            .takeIf { it in 0 until wrappedPlayer.mediaItemCount } ?: C.INDEX_UNSET
-
-        override fun getCurrentMediaItemIndex(): Int =
-            forkSkipIndex().takeIf { it != C.INDEX_UNSET } ?: super.getCurrentMediaItemIndex()
-
-        override fun getCurrentPeriodIndex(): Int =
-            forkSkipIndex().takeIf { it != C.INDEX_UNSET } ?: super.getCurrentPeriodIndex()
-
-        override fun getCurrentMediaItem(): MediaItem? =
-            forkSkipIndex().takeIf { it != C.INDEX_UNSET }?.let { wrappedPlayer.getMediaItemAt(it) }
-                ?: super.getCurrentMediaItem()
-
         override fun getMediaMetadata(): MediaMetadata {
-            val base = forkSkipIndex().takeIf { it != C.INDEX_UNSET } // fork
-                ?.let { wrappedPlayer.getMediaItemAt(it).mediaMetadata } ?: wrappedPlayer.mediaMetadata
+            val base = wrappedPlayer.mediaMetadata
             val subtitle = getSubtitle()
             return if (!subtitle.isNullOrBlank()) {
                 base.buildUpon().setSubtitle(subtitle).build()
@@ -7888,7 +7855,7 @@ class PlaybackService : MediaLibraryService() {
         override fun seekToPreviousMediaItem() {
             if (locked()) return
             onUserIntent()
-            if (!cast.active && crossfade.crossfadeSkip(forkPreviousTarget())) return // fork
+            if (!cast.active && crossfade.crossfadeSkip(wrappedPlayer.forkPreviousTarget())) return // fork
             crossfade.onSkipRequested()
             if (cast.active) {
                 castPrevious()

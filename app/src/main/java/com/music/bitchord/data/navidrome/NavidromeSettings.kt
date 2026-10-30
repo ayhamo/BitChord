@@ -63,6 +63,10 @@ object NavidromeSettings {
     fun isConfigured(url: String, username: String): Boolean =
         normalizeUrl(url).isNotEmpty() && username.isNotBlank()
 
+    /** Bumped once per [save], after every value is in place: what screens reload on (one reload, never mixed credentials). */
+    private val _saved = MutableStateFlow(0)
+    val saved: StateFlow<Int> = _saved.asStateFlow()
+
     fun save(url: String, username: String, password: String) {
         _url.value = normalizeUrl(url)
         _username.value = username.trim()
@@ -75,6 +79,7 @@ object NavidromeSettings {
             .putString(KEY_SALT, salt)
             .apply()
         NavidromeRepository.invalidate()
+        _saved.value++
     }
 
     fun clear() = save("", "", "")
@@ -84,7 +89,7 @@ object NavidromeSettings {
         WebDavConfig.normalizeUrl(raw).takeIf(WebDavConfig::isConfigured).orEmpty()
 
     fun newSalt(): String =
-        ByteArray(8).also(java.security.SecureRandom()::nextBytes).joinToString("") { "%02x".format(it) }
+        ByteArray(8).also(java.security.SecureRandom()::nextBytes).joinToString("") { String.format(java.util.Locale.ROOT, "%02x", it) }
 
     private const val KEY_URL = "url"
     private const val KEY_USERNAME = "username"

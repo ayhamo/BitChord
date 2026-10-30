@@ -75,6 +75,10 @@ class NavidromeClient(
         return songRows(result["searchResult3"]?.jsonObject?.get("song"))
     }
 
+    /** The ids of every starred song. */
+    suspend fun starredSongIds(): List<String> =
+        songRows(call("getStarred2")["starred2"]?.jsonObject?.get("song")).map { it.id }
+
     /** Songs the server's agents (Last.fm and the like) call similar; empty when it has none configured. */
     suspend fun similarSongs(id: String, count: Int): List<SongRow> {
         val result = call("getSimilarSongs2", "id" to id, "count" to count.toString())
@@ -214,7 +218,7 @@ class NavidromeClient(
             ?: (o["releaseDate"] as? JsonObject)?.takeIf { it.int("year") != null }
         val releaseDate = date?.let { d ->
             listOfNotNull(d.int("year"), d.int("month"), d.int("day"))
-                .mapIndexed { i, part -> if (i == 0) part.toString() else "%02d".format(part) }
+                .mapIndexed { i, part -> if (i == 0) part.toString() else String.format(java.util.Locale.ROOT, "%02d", part) }
                 .joinToString("-")
         }
         return SongDetails(
@@ -373,6 +377,6 @@ class NavidromeClient(
         fun md5(text: String): String =
             MessageDigest.getInstance("MD5").digest(text.toByteArray(Charsets.UTF_8)).toHex()
 
-        fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
+        fun ByteArray.toHex(): String = joinToString("") { String.format(java.util.Locale.ROOT, "%02x", it) }
     }
 }

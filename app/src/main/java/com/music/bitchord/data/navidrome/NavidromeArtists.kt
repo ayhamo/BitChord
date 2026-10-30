@@ -42,7 +42,8 @@ object NavidromeArtists {
             with(NavidromeRepository) { rows.map { it.toSong(client) } }.sortedBy { it.title.lowercase() }
         }.fold(
             onSuccess = { songs -> UiState.Success(songs) },
-            onFailure = { UiState.Error(it.message ?: emptyText()) },
+            onFailure = { if (it is kotlin.coroutines.cancellation.CancellationException) throw it // left the page: not an error
+                UiState.Error(it.message ?: emptyText()) },
         )
     }
 }

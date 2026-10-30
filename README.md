@@ -1,3 +1,40 @@
+> 
+> **This is a personal fork of [BitChord](https://github.com/kushagrasinghx/BitChord)**, made to play my own [Navidrome](https://www.navidrome.org/) server alongside YouTube Music. It installs as **BitChord Fork** (`com.ayhamo.bitchord`), next to the official app, and updates from [this fork's releases](https://github.com/ayhamo/BitChord/releases). Each upstream release is merged and rebuilt automatically. Everything below this box is upstream's README.
+
+## What this fork adds
+
+**Navidrome library** (any Subsonic server)
+- Songs, albums, artists, playlists and genres from the server, original files (FLAC stays FLAC), each song's own cover.
+- Album, artist and playlist pages load straight from the server, even for very large libraries.
+- Navidrome shelves on Home (recently added, playlists, recent, most played, random) and in the Library; server genres in an "Explore Navidrome" panel next to "Explore YouTube"; Navidrome songs in Search.
+- Stars and playlists synced with the server; plays reported to it; Song Info (release date, play count, rating) from the server.
+- Timed lyrics from the server first, then the usual online sources.
+- AutoPlay continues from the library (similar songs), never a YouTube radio.
+- Internet radio stations from the server, with their logos.
+
+**Video**
+- Backdrops (`.background.mp4`) play full screen like Spotify's Canvas, after showing the cover for a moment; the cover comes back while paused (from navidrome server)
+- Cover clips (`.cover.mp4`) play in the cover square.
+- Clips freeze while the music is paused.
+- "Backdrop videos" (your server's clips) and "Animated covers" (Apple Music's and other services' moving covers) are separate switches, in Settings and in the player menu.
+
+**Offline**
+- "Available offline" on any album or playlist: the original files plus covers, clips and lyrics, downloaded in the background with a notification, with the size shown before and after.
+- Kept playlists follow the server (new songs downloaded, removed ones deleted; a playlist deleted on the server stays on the phone, marked).
+- Offline mode (switch, or automatic with no network) shows only what is on the phone.
+- Downloads over Wi-Fi always, over mobile data only if allowed; "Pre-load next songs" for smooth playback.
+- Settings page to see and remove what is kept; clip and lyrics cache sizes and clear buttons.
+
+**Playback**
+- Next and Previous crossfade instead of cutting, and switch the screen to the new song at once.
+- Next follows the page's sort (also fixes this for upstream's own sorts), including a new "Reverse order".
+- Saved queues: put the current queue aside and come back to it later at the same song and second.
+- Navidrome plays can be added to your YouTube Music history (off by default), so its recommendations learn from them.
+
+The full list of changes, with every line touched in upstream files, is in [FORK.md](FORK.md).
+
+---
+
 <div align="center">
 
 <br/>

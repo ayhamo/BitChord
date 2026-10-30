@@ -34,7 +34,8 @@ object NavidromePlaylists {
         }.fold(
             onSuccess = { songs -> if (songs.isEmpty()) UiState.Error(emptyText()) else UiState.Success(songs) },
             // No server (offline, unreachable): the kept copy, if the page is kept.
-            onFailure = { NavidromeOffline.pageState(browseId) ?: UiState.Error(it.message ?: emptyText()) },
+            onFailure = { if (it is kotlin.coroutines.cancellation.CancellationException) throw it // left the page: not an error
+                NavidromeOffline.pageState(browseId) ?: UiState.Error(it.message ?: emptyText()) },
         )
     }
 }

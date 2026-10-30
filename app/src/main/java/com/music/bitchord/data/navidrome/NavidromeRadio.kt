@@ -78,7 +78,8 @@ object NavidromeRadio {
             }
         }.fold(
             onSuccess = { songs -> if (songs.isEmpty()) UiState.Error(emptyText()) else UiState.Success(songs) },
-            onFailure = { UiState.Error(it.message ?: emptyText()) },
+            onFailure = { if (it is kotlin.coroutines.cancellation.CancellationException) throw it // left the page: not an error
+                UiState.Error(it.message ?: emptyText()) },
         )
     }
 

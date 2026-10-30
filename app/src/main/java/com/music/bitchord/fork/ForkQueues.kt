@@ -5,6 +5,9 @@ import androidx.media3.common.Player
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.navidrome.NavidromeOffline
+import com.music.bitchord.data.navidrome.NavidromeRepository
+import com.music.bitchord.data.navidrome.NavidromeSettings
 import com.music.bitchord.playback.QueueSource
 import com.music.bitchord.playback.toSong
 import kotlinx.coroutines.CoroutineScope
@@ -16,6 +19,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -74,11 +79,12 @@ object ForkQueues {
 
     fun init(context: Context) {
         file = File(context.filesDir, "fork_queues.json")
-        scope.launch { _saved.value = read() }
+        // Merged, not replaced: a queue saved before the file was read stays.
+        scope.launch { val read = read(); _saved.update { (it + read).distinctBy { q -> q.id }.take(MAX) } }
     }
 
-    /** The main screen's controller, its scope and its "play this list from here" (called on every composition; cheap). */
-    fun bind(player: Player?, scope: CoroutineScope, play: (List<Song>, Int, QueueSource) -> Unit) {
+    /** The main screen's controller, its scope and its "play this list from here"; see [ForkQueuesBinding]. */
+    internal fun bind(player: Player?, scope: CoroutineScope?, play: ((List<Song>, Int, QueueSource) -> Unit)?) {
         this.player = player
         this.appScope = scope
         this.play = play
@@ -138,14 +144,18 @@ object ForkQueues {
         persist()
     }
 
+    /** One writer at a time, writing the list as it is then: two quick saves or deletes never land out of order or interleave. */
+    private val writeLock = Mutex()
+
     private fun persist() {
-        val snapshot = _saved.value
         scope.launch {
-            runCatching {
-                val tmp = File(file.path + ".tmp")
-                tmp.writeText(buildJsonArray { snapshot.forEach { add(it.toJson()) } }.toString())
-                tmp.renameTo(file)
-            }.onFailure { Log.d(TAG, "saved queues: ${it.message}") }
+            writeLock.withLock {
+                runCatching {
+                    val tmp = File(file.path + ".tmp")
+                    tmp.writeText(buildJsonArray { _saved.value.forEach { add(it.toJson()) } }.toString())
+                    tmp.renameTo(file)
+                }.onFailure { Log.d(TAG, "saved queues: ${it.message}") }
+            }
         }
     }
 
@@ -185,7 +195,8 @@ object ForkQueues {
         albumName?.let { put("albumName", it) }
         thumbnailUrl?.let { put("thumbnailUrl", it) }
         durationText?.let { put("durationText", it) }
-        localUri?.let { put("localUri", it) }
+        // A Navidrome song's address carries the login (or points at a kept file that may go): rebuilt on read.
+        localUri?.takeUnless { NavidromeSettings.isNavidromeId(videoId) }?.let { put("localUri", it) }
         localPath?.let { put("localPath", it) }
         sourceQuality?.let { put("sourceQuality", it) }
         put("sourceHiRes", sourceHiRes)
@@ -196,8 +207,10 @@ object ForkQueues {
         playbackSourceId?.let { put("playbackSourceId", it) }
     }
 
-    private fun JsonObject.toSong(): Song? = Song(
-        videoId = str("videoId") ?: return null,
+    private fun JsonObject.toSong(): Song? {
+        val videoId = str("videoId") ?: return null
+        return Song(
+        videoId = videoId,
         title = str("title").orEmpty(),
         artist = str("artist").orEmpty(),
         artistId = str("artistId"),
@@ -205,7 +218,7 @@ object ForkQueues {
         albumName = str("albumName"),
         thumbnailUrl = str("thumbnailUrl"),
         durationText = str("durationText"),
-        localUri = str("localUri"),
+        localUri = if (NavidromeSettings.isNavidromeId(videoId)) navidromeUri(videoId) else str("localUri"),
         localPath = str("localPath"),
         sourceQuality = str("sourceQuality"),
         sourceHiRes = (get("sourceHiRes") as? JsonPrimitive)?.booleanOrNull ?: false,
@@ -214,7 +227,29 @@ object ForkQueues {
         playbackSource = str("playbackSource"),
         playbackSourceType = str("playbackSourceType")?.let { runCatching { PlaybackSourceType.valueOf(it) }.getOrNull() },
         playbackSourceId = str("playbackSourceId"),
-    )
+        )
+    }
+
+    /** A Navidrome song's address now: its kept file, else a stream with today's login. */
+    private fun navidromeUri(videoId: String): String? {
+        val id = videoId.removePrefix(NavidromeSettings.ID_PREFIX)
+        return NavidromeOffline.localFile(id)?.let { android.net.Uri.fromFile(it).toString() }
+            ?: runCatching { NavidromeRepository.client().streamUrl(id) }.getOrNull()
+    }
 
     private fun JsonObject.str(key: String) = (get(key) as? JsonPrimitive)?.contentOrNull
+}
+
+/**
+ * Binds [ForkQueues] to the main screen while it is shown, and lets it go with
+ * the screen: the playback service outlives the Activity, and an object holding
+ * a closed screen's controller, scope and callbacks would keep all of it alive.
+ */
+@androidx.compose.runtime.Composable
+fun ForkQueuesBinding(player: Player?, scope: CoroutineScope, play: (List<Song>, Int, QueueSource) -> Unit) {
+    val current = androidx.compose.runtime.rememberUpdatedState(play)
+    androidx.compose.runtime.DisposableEffect(player, scope) {
+        ForkQueues.bind(player, scope) { songs, index, source -> current.value(songs, index, source) }
+        onDispose { ForkQueues.bind(null, null, null) }
+    }
 }

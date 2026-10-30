@@ -144,6 +144,7 @@ fun HomeScreen(
     isPlaying: Boolean = false,
 ) {
     val recentsViewType by AppUi.host.homeRecentsViewType.collectAsStateWithLifecycle()
+    val forkHome = rememberForkHome() // fork
 
     PullToRefresh(
         refreshing = refreshing,
@@ -195,13 +196,13 @@ fun HomeScreen(
                     // The loading skeleton already owns the hero slot. Until
                     // Recently Played lands, every real shelf must retain its
                     // compact-card layout instead of briefly becoming a hero.
-                    itemsIndexedShelves(
-                        shelves = state.data,
+                    forkHomeFeed(forkHome, state.data, leadHero && !recentlyPlayedLoading) { list, firstIsHero, keyPrefix -> itemsIndexedShelves( // fork: per ForkHome section
+                        shelves = list,
                         onItemClick = onItemClick,
                         onItemLongPress = onItemLongPress,
                         currentSong = currentSong,
                         isPlaying = isPlaying,
-                        firstIsHero = leadHero && !recentlyPlayedLoading,
+                        firstIsHero = firstIsHero,
                         recentsViewType = recentsViewType,
                         onRecentsViewTypeToggle = {
                             AppUi.host.setHomeRecentsViewType(
@@ -212,14 +213,15 @@ fun HomeScreen(
                                 },
                             )
                         },
-                    )
+                        keyPrefix = keyPrefix,
+                    ) }
                     if (loadingMore) feedMoreSkeleton()
                 }
             }
         }
     }
 
-    if (onLoadMore != null && state is UiState.Success) {
+    if (onLoadMore != null && state is UiState.Success && forkHome.loadsMore) { // fork: && forkHome.loadsMore
         val loadMore by rememberUpdatedState(onLoadMore)
         // Re-checked on every layout change, rather than on the rising edge of
         // "the tail is in view". A page that appends only a shelf or two leaves
@@ -252,9 +254,10 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
     firstIsHero: Boolean = true,
     recentsViewType: LibraryViewType,
     onRecentsViewTypeToggle: () -> Unit,
+    keyPrefix: String = "", // fork: two sections of shelves in one list (ForkHome)
 ) {
     shelves.forEachIndexed { index, shelf ->
-        item(key = shelf.title + index) {
+        item(key = keyPrefix + shelf.title + index) { // fork: keyPrefix +
             val openItem: (ShelfItem) -> Unit = { item -> onItemClick(item, shelf.title) }
             if (index == 0 && shelf.title.equals(RECENTS_TITLE, ignoreCase = true)) {
                 RecentShelf(

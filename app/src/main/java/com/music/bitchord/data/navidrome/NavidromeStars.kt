@@ -2,6 +2,7 @@ package com.music.bitchord.data.navidrome
 
 import com.music.bitchord.data.LikeState
 import com.music.bitchord.data.model.LikeStatus
+import kotlinx.coroutines.launch
 
 /**
  * The app's heart (a star in this player) for Navidrome songs, kept on the
@@ -14,6 +15,25 @@ import com.music.bitchord.data.model.LikeStatus
  * [LikeState] each time the library is read.
  */
 object NavidromeStars {
+
+    /**
+     * A like on a Navidrome song is a star on the server: shown at once, rolled back if the
+     * server refuses. Returns whether it was one, so the caller's YouTube path is skipped.
+     */
+    fun setLike(videoId: String, status: LikeStatus, current: (String) -> LikeStatus, scope: kotlinx.coroutines.CoroutineScope): Boolean {
+        if (!NavidromeSettings.isNavidromeId(videoId)) return false
+        val previous = current(videoId)
+        if (previous == status) return true
+        LikeState.set(videoId, status)
+        scope.launch {
+            rate(videoId, status).onFailure { LikeState.set(videoId, previous) }
+        }
+        return true
+    }
+
+    /** [rate] for a Navidrome song, else [otherwise] (the YouTube path). */
+    suspend fun rateOr(videoId: String, status: LikeStatus, otherwise: suspend () -> Result<Unit>): Result<Unit> =
+        if (NavidromeSettings.isNavidromeId(videoId)) rate(videoId, status) else otherwise()
 
     suspend fun rate(videoId: String, status: LikeStatus): Result<Unit> = runCatching {
         val id = videoId.removePrefix(NavidromeSettings.ID_PREFIX)

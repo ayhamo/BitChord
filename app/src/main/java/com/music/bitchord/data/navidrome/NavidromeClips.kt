@@ -84,9 +84,21 @@ object NavidromeClips {
         if (::prefs.isInitialized) prefs.edit().clear().apply()
     }
 
+    /** Forgets the "no clip" notes of [kind] (the clip cache's clear button): the server is asked again. */
+    internal fun forgetMisses(kind: Kind) {
+        if (!::prefs.isInitialized) return
+        val suffix = "|${kind.name}"
+        prefs.edit().apply { prefs.all.keys.filter { it.endsWith(suffix) }.forEach(::remove) }.apply()
+    }
+
     /** The song's clip, cover first, or null (none, switched off, not a Navidrome song, or the server couldn't be asked). */
-    suspend fun canvasFor(song: Song): CanvasArtwork? = withContext(Dispatchers.IO) {
-        if (!NavidromeSettings.isNavidromeId(song.videoId) || !NavidromeSettings.isConfigured()) return@withContext null
+    suspend fun canvasFor(song: Song): CanvasArtwork? {
+        // Checked before the IO hop: every YouTube song comes through here first.
+        if (!NavidromeSettings.isNavidromeId(song.videoId) || !NavidromeSettings.isConfigured()) return null
+        return withContext(Dispatchers.IO) { serverClip(song) }
+    }
+
+    private fun serverClip(song: Song): CanvasArtwork? {
         val id = song.videoId.removePrefix(NavidromeSettings.ID_PREFIX)
         // A backdrop takes the whole phone (the Canvas presentation, cover back on top while
         // paused); without one, the cover clip plays over the sleeve. One clip plays at a time.
@@ -95,9 +107,9 @@ object NavidromeClips {
         // Looked up whatever the backdrop switch says: the player applies the switch live
         // (ForkCanvasSwitch), falling back to the cover clip, so flipping it needs no new lookup.
         val backdrop = clip(id, Kind.BACKDROP)
-        val cover = if (ForkSettings.coverClips.value) clip(id, Kind.COVER) else null
-        val url = backdrop ?: cover ?: return@withContext null
-        CanvasArtwork(
+        val cover = clip(id, Kind.COVER) // shown or not by "Animated covers", live in the player
+        val url = backdrop ?: cover ?: return null
+        return CanvasArtwork(
             url = url,
             title = song.title,
             artist = song.artist,

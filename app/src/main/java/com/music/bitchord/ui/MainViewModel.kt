@@ -112,9 +112,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val signedIn: StateFlow<Boolean> = _signedIn.asStateFlow()
 
     private val _home = MutableStateFlow<UiState<List<HomeShelf>>>(UiState.Loading)
-    // fork: Navidrome album shelves above YouTube's feed
-    val home: StateFlow<UiState<List<HomeShelf>>> =
-        com.music.bitchord.data.navidrome.NavidromeHome.onTop(_home, viewModelScope)
+    val home: StateFlow<UiState<List<HomeShelf>>> = com.music.bitchord.data.navidrome.NavidromeHome.onTop(_home, viewModelScope) // fork: was _home.asStateFlow()
 
     /**
      * Token for the next page of Home shelves; null once there's nothing
@@ -674,16 +672,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * registered, and people tap again.
      */
     fun setLike(videoId: String, status: LikeStatus) {
-        if (com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(videoId)) { // fork: a star on the Navidrome server
-            val previous = likeStatusOf(videoId)
-            if (previous == status) return
-            LikeState.set(videoId, status)
-            viewModelScope.launch {
-                com.music.bitchord.data.navidrome.NavidromeStars.rate(videoId, status)
-                    .onFailure { LikeState.set(videoId, previous) }
-            }
-            return
-        }
+        if (com.music.bitchord.data.navidrome.NavidromeStars.setLike(videoId, status, ::likeStatusOf, viewModelScope)) return // fork
         if (!requireSignIn()) return
         val previous = likeStatusOf(videoId)
         if (previous == status) return
@@ -1480,16 +1469,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 reloadRemoteDetail(com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID)
             }
         }
-        viewModelScope.launch { // fork: the Navidrome page and Home shelves follow its server settings
-            combine(
-                com.music.bitchord.data.navidrome.NavidromeSettings.url,
-                com.music.bitchord.data.navidrome.NavidromeSettings.username,
-                com.music.bitchord.data.navidrome.NavidromeSettings.password,
-            ) { url, user, password -> Triple(url, user, password) }.drop(1).collect {
-                reloadRemoteDetail(com.music.bitchord.data.navidrome.NavidromeSettings.BROWSE_ID)
-                launch { com.music.bitchord.data.navidrome.NavidromeHome.load(getApplication()) }
-            }
-        }
+        com.music.bitchord.data.navidrome.NavidromeHome.follow(viewModelScope, getApplication(), ::forkBackOnline) { reloadRemoteDetail(com.music.bitchord.data.navidrome.NavidromeSettings.BROWSE_ID) } // fork
         viewModelScope.launch {
             combine(
                 AppSettings.smbHost,
@@ -1641,10 +1621,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun openMoodGenre(item: MoodGenre) {
-        if (com.music.bitchord.data.navidrome.NavidromeGenres.isGenre(item.browseId)) { // fork: a Navidrome genre tile opens its songs
-            openDetail(item.browseId, item.title, "Navidrome", item.thumbnailUrl, BrowseType.PLAYLIST)
-            return
-        }
+        com.music.bitchord.data.navidrome.NavidromePages.tileSource(item.browseId)?.let { openDetail(item.browseId, item.title, it, item.thumbnailUrl, BrowseType.PLAYLIST); return } // fork
         _selectedMoodGenre.value = item
         _moodGenreShelves.value = UiState.Loading
         viewModelScope.launch {
@@ -1756,6 +1733,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val added = shelves.withoutRepeatsOf(existing)
             .filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) }
         if (added.isNotEmpty()) _home.value = UiState.Success(existing + added)
+    }
+
+    /** Fork: the network is back. Home loads what it couldn't, and a song left without lyrics asks again. */
+    private fun forkBackOnline() {
+        if (_home.value is UiState.Success) {
+            viewModelScope.launch { com.music.bitchord.data.navidrome.NavidromeHome.load(getApplication()) }
+        } else {
+            loadHome()
+        }
+        val request = currentLyricsRequest ?: return
+        if (_lyrics.value != null) return
+        lyricsFor = null
+        loadLyrics(request.videoId, request.title, request.artist, request.durationMs, request.album)
     }
 
     /** Refreshes the core feed without blanking the current Play page first. */
@@ -2849,16 +2839,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         com.music.bitchord.data.spotify.LocalPlaylistStore.getPlaylist(browseId)?.let { playlist ->
             return nonEmpty(playlist.songs) { text(R.string.spotify_import_empty_playlist) }
         }
-        com.music.bitchord.data.navidrome.NavidromePlaylists.pageState(browseId) { text(R.string.navidrome_playlist_empty) } // fork
-            ?.let { return it }
-        com.music.bitchord.data.navidrome.NavidromeAlbums.pageState(browseId) { text(R.string.no_tracks_here) } // fork
-            ?.let { return it }
-        com.music.bitchord.data.navidrome.NavidromeArtists.pageState(browseId) { text(R.string.no_tracks_here) } // fork
-            ?.let { return it }
-        com.music.bitchord.data.navidrome.NavidromeGenres.pageState(browseId) { text(R.string.no_tracks_here) } // fork
-            ?.let { return it }
-        com.music.bitchord.data.navidrome.NavidromeRadio.pageState(browseId) { text(R.string.fork_radio_empty) } // fork
-            ?.let { return it }
+        com.music.bitchord.data.navidrome.NavidromePages.pageState(browseId, ::text)?.let { return it } // fork
         remoteLibrary(browseId)?.let { return remoteSongsState(it) }
         LocalGroups.folderOf(browseId)?.let { folderId ->
             // Read off a fresh listing of the folder it came from: a grouping

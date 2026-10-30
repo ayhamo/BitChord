@@ -1,6 +1,36 @@
-# Fork status (2026-10-29)
+# Fork status
 
 Snapshot for picking the work up again. Plan: `FORK_PLAN.md`. Every touched upstream line: `FORK.md`.
+
+## Now (2026-10-30)
+
+Checkout is on branch `hooks`. PR https://github.com/ayhamo/BitChord/pull/1 (hooks into main) is open. CI's one Android packaging failure passed on re-run (it also passed when reproduced locally).
+
+Next steps, in order:
+
+1. Done: the third emulator round passed. Network return is fixed and tested: with airplane mode on, Home shows the kept page; once the network is back, the Navidrome section loads and a paused song gets its lyrics, with no relaunch. On this emulator `svc wifi disable` alone doesn't count as "no network" (it still reports one, so there's no Offline strip); test with `cmd connectivity airplane-mode enable`.
+2. Decided, no change: 4 songs skipped during a Wi-Fi drop with mobile data off. The same emulator effect explains it, since Android still reported a network, and the result is recoverable ("tap to keep the rest"). Not tested on a real phone.
+3. Merge PR #1 into main. Then run `fork-sync-release.yml` by hand with `force=true`, which replaces `fork-v1.8.1` (the daily job skips while that tag exists; the owner okayed the force).
+4. New branch from main: **Start radio (Instant Mix)**. Same row, not a new button. On a Navidrome song the label is "Start radio (Instant Mix)" and it asks the server: `getSimilarSongs2` with count 100, the seed song plays first and isn't repeated, an empty answer says "no similar songs found" instead of random songs. YouTube songs keep upstream's path untouched, and AutoPlay keeps its random fallback. Hook points: `SongActionsSheet.kt` (label), `MainActivity.startRadio` (it calls `loadAutoplayTracks`). Test, PR, merge, force-publish again. Android is then finished.
+5. Graphify before any PC work. One graph covers both: run it on the `pc` branch once the desktop modules are restored, since `pc` holds everything `main` has. It's code-only, so it costs almost no tokens.
+6. PC, all inside this folder (recipe in `FORK_PLAN.md`), order at Claude's discretion:
+   - Restore the desktop app on `pc` (`git merge main` first).
+   - Build it. Upstream's build has a portable Windows zip (`windowsPortable`) and can cross-build with `-Pbitchord.target=windows` and mingw (`native/mingw-w64.cmake`), so try that in Docker with JDK 21 (`eclipse-temurin:21-jdk`). The Android image's JDK 17 is too old. Otherwise GitHub Actions on a Windows runner, copying upstream's old `release.yml` (from `e4dd63d8^`).
+   - Run the unchanged app on the owner's PC as a baseline; Claude may install and test it. Add hooks that make testing easier (for example a loopback-only debug bridge).
+   - Move the Navidrome code to `shared` (it uses Android prefs, Context and Uri, so those need abstracting), then retest Android.
+   - Connect it to the desktop library, audio engine, covers, clips, lyrics and stars.
+   - Pick PC-Continued commits. Start with their memory fixes (`c310d0e3`, about 430 lines). The owner should look at their app before deciding on the redesign.
+   - Then the rest of the fork's features: offline, radio, saved queues, Home sections.
+
+Facts worth keeping:
+
+- `desktopUi` is upstream's own copy of the player and pages (split on 2026-10-14 "so a desktop redesign can land without moving the phone"); `desktopApp` depends on `shared` + `desktopUi`, not `sharedUi`. Keep them separate. PC-Continued's `sharedUi` edits map onto `desktopUi`, because their fork predates the split. Today's `sharedUi` differs from that copy by little (Now Playing about 213 lines, Lyrics 287, Queue 40).
+- The release job merges upstream's release tag in CI only; it doesn't update `main`. After a new upstream release, merge the same tag into `main` by hand. Upstream's latest release is v1.8.1 (2026-10-19), and `main` has all of upstream's commits up to 2026-10-26. PC-Continued's tags (v1.8.3x) are local only; never push tags.
+- Local branches: `pc` (still at `00cd6cb1`, restore not committed anywhere), `pc-continued` (mirror of their `main`), `hooks`. Remotes: `origin`, `upstream`, `pc-continued`.
+- `svc wifi disable` over adb cuts adb on this emulator; use a detached guest shell that turns it back on. Round 1's emulator freeze was probably not the app, though that isn't proven.
+- Test logs from today: `test-round1.md`, `test-round2.md`, `test-round3.md` in the session scratchpad `C:\Users\ayham\AppData\Local\Temp\claude\C--Users-ayham-Desktop-Projects-BitChord\f08252f9-f9aa-4f8c-8ac0-c2e9c79b091f\scratchpad`.
+
+## Older snapshot (2026-10-29)
 
 ## Done (the last two rounds are not committed yet; nothing pushed)
 
@@ -9,7 +39,7 @@ Snapshot for picking the work up again. Plan: `FORK_PLAN.md`. Every touched upst
 - Phase 2: crossfade on Next/Previous (the blend lasts as long as the Crossfade slider; switch "Crossfade on skip").
 - Phase 3: timed lyrics from Navidrome first, then the online chain.
 - Phase 3b: no YouTube lookups for Navidrome songs; AutoPlay from the library (similar songs, else random); Navidrome shelves on top of Home (Recently added, Playlists, Recents, Most played, Random albums).
-- Phase 4: covers sized per surface; cover clips (`.cover.mp4`) in the cover square, else Apple/Tidal/Community motion art, else still cover. No Spotify Canvas for Navidrome songs or album pages.
+- Phase 4: covers sized per surface; cover clips (`.cover.mp4`) in the cover square, else Apple/Tidal/Community motion art, else still cover. Spotify Canvas applies to Navidrome songs too (the server's own clips are tried first).
 - Phase 5: backdrops (`.background.mp4`) like Spotify Canvas: full screen on any portrait screen, video sharp (no blur/dim under the controls), controls stay until tapped away (auto-hide off by default), cover back while paused. "Backdrop videos" in the player menu (same switch as Settings) flips video / cover at once. Landscape/wide: cover clip or still cover in the sleeve.
 - Phase 6: plays + "now playing" reported to Navidrome (switch); stars synced with the server; Navidrome playlists; "Reverse order" in every page's sort menu.
 - Album pages from Navidrome: one `getAlbum` instead of the whole library, with the album's own cover and artist (from Home, the library, the player and menus).

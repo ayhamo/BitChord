@@ -32,6 +32,7 @@ object NavidromeRepository {
 
     /** Drops the cached listing only (a kept file changes how a song plays); the server answers the same. */
     fun invalidateListing() {
+        generation++ // a listing paging right now was made before the change: not kept either
         cached = null
     }
 
@@ -39,6 +40,7 @@ object NavidromeRepository {
         generation++
         cached = null
         NavidromeClips.reset()
+        NavidromeAlbums.clear() // album ids belong to the old server or account
     }
 
     suspend fun getSongs(): List<Song> = lock.withLock {
@@ -115,7 +117,7 @@ object NavidromeRepository {
             artistId = LocalGroups.artistPageId(NavidromeSettings.BROWSE_ID, artistName),
             albumId = album?.let { LocalGroups.albumPageId(NavidromeSettings.BROWSE_ID, it) },
             thumbnailUrl = coverArt?.let { client.coverUrl(it) },
-            durationText = durationSec?.takeIf { it > 0 }?.let { "%d:%02d".format(it / 60, it % 60) },
+            durationText = durationSec?.takeIf { it > 0 }?.let { String.format(java.util.Locale.ROOT, "%d:%02d", it / 60, it % 60) },
             albumName = album,
             // A song kept offline plays from its file (NavidromeOffline).
             localUri = NavidromeOffline.localFile(id)?.let { android.net.Uri.fromFile(it).toString() } ?: client.streamUrl(id),

@@ -23,56 +23,90 @@ import com.music.bitchord.ui.components.PAGE_GUTTER
 import kotlinx.coroutines.flow.MutableStateFlow
 
 /**
- * Fork: Explore in two panels, "YouTube" (upstream's moods and genres) and
- * "Navidrome" (the server's genres), each folding away under its heading.
- * The app fills [navidromeGenres]; with none (no server) there is no
- * Navidrome panel and no headings at all, so Explore is upstream's.
+ * Fork: Explore in panels, "Navidrome" (the server's genres), "YouTube"
+ * (upstream's moods and genres) and "Spotify" (the account's mixes), each
+ * folding away under its heading. The app fills [navidromeGenres] and
+ * [spotifyMixes]; with neither there are no headings at all, so Explore is
+ * upstream's.
  */
 object ForkExplore {
     val navidromeGenres = MutableStateFlow<List<MoodGenre>>(emptyList())
+    val spotifyMixes = MutableStateFlow<List<MoodGenre>>(emptyList())
     val youtubeOpen = MutableStateFlow(true)
     val navidromeOpen = MutableStateFlow(true)
+    val spotifyOpen = MutableStateFlow(true)
 }
 
 /** What the Explore list needs to know about the panels, read once per composition. */
-internal class ForkExploreState(val genres: List<MoodGenre>, val youtubeOpen: Boolean, val navidromeOpen: Boolean) {
-    val panels get() = genres.isNotEmpty()
+internal class ForkExploreState(
+    val genres: List<MoodGenre>,
+    val mixes: List<MoodGenre>,
+    val youtubeOpen: Boolean,
+    val navidromeOpen: Boolean,
+    val spotifyOpen: Boolean,
+) {
+    val panels get() = genres.isNotEmpty() || mixes.isNotEmpty()
 }
 
 @Composable
 internal fun rememberForkExplore(): ForkExploreState {
     val all by ForkExplore.navidromeGenres.collectAsStateWithLifecycle()
+    val mixes by ForkExplore.spotifyMixes.collectAsStateWithLifecycle()
     val offline by ForkLibraryPlaylists.offlineMode.collectAsStateWithLifecycle()
-    val genres = if (offline) emptyList() else all
     val youtube by ForkExplore.youtubeOpen.collectAsStateWithLifecycle()
     val navidrome by ForkExplore.navidromeOpen.collectAsStateWithLifecycle()
-    return ForkExploreState(genres, youtube, navidrome)
+    val spotify by ForkExplore.spotifyOpen.collectAsStateWithLifecycle()
+    return ForkExploreState(
+        genres = if (offline) emptyList() else all,
+        mixes = if (offline) emptyList() else mixes,
+        youtubeOpen = youtube,
+        navidromeOpen = navidrome,
+        spotifyOpen = spotify,
+    )
 }
 
-/** The "YouTube" heading, above upstream's grid; only when there is a Navidrome panel too. */
-internal fun LazyListScope.forkYouTubeHeading(state: ForkExploreState) {
+/**
+ * Above upstream's grid: the "Navidrome" panel, then the "YouTube" heading
+ * (only when there is another panel). Tiles in rows of [columns], upstream's tile rows.
+ */
+internal fun LazyListScope.forkPanelsAbove(
+    state: ForkExploreState,
+    columns: Int,
+    onClick: (MoodGenre) -> Unit,
+) {
+    panel("navidrome", "Navidrome", state.genres, state.navidromeOpen, ForkExplore.navidromeOpen, columns, onClick)
     if (!state.panels) return
     item(key = "fork:explore:youtube") {
         PanelHeading("YouTube", state.youtubeOpen) { ForkExplore.youtubeOpen.value = !state.youtubeOpen }
     }
 }
 
-/** The "Navidrome" heading and, open, the genre tiles in rows of [columns], drawn by [row] (upstream's tile row). */
-internal fun LazyListScope.forkNavidromePanel(
+/** Below upstream's grid: the "Spotify" panel. */
+internal fun LazyListScope.forkPanelsBelow(
     state: ForkExploreState,
     columns: Int,
-    row: @Composable (List<MoodGenre>) -> Unit,
+    onClick: (MoodGenre) -> Unit,
 ) {
-    if (!state.panels) return
-    item(key = "fork:explore:navidrome") {
-        PanelHeading("Navidrome", state.navidromeOpen) { ForkExplore.navidromeOpen.value = !state.navidromeOpen }
-    }
-    if (!state.navidromeOpen) return
-    items(state.genres.chunked(columns), key = { "fork:genre:" + it.first().browseId }) { tiles -> row(tiles) }
+    panel("spotify", "Spotify", state.mixes, state.spotifyOpen, ForkExplore.spotifyOpen, columns, onClick)
+}
+
+private fun LazyListScope.panel(
+    key: String,
+    title: String,
+    tiles: List<MoodGenre>,
+    open: Boolean,
+    flag: MutableStateFlow<Boolean>,
+    columns: Int,
+    onClick: (MoodGenre) -> Unit,
+) {
+    if (tiles.isEmpty()) return
+    item(key = "fork:explore:$key") { PanelHeading(title, open) { flag.value = !open } }
+    if (!open) return
+    items(tiles.chunked(columns), key = { "fork:$key:" + it.first().browseId }) { MoodGenreRow(row = it, columns = columns, onCategoryClick = onClick) }
 }
 
 @Composable
-private fun PanelHeading(title: String, open: Boolean, onToggle: () -> Unit) {
+internal fun PanelHeading(title: String, open: Boolean, onToggle: () -> Unit) { // also Home's (ForkHome)
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier

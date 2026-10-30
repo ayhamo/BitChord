@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.view.View
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import com.music.bitchord.ui.screens.forkDefaults // fork
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -587,7 +588,6 @@ private fun BitChordApp(
     var showLastfmLogin by remember { mutableStateOf(false) }
     var showWebDavEditor by remember { mutableStateOf(false) }
     var showSmbEditor by remember { mutableStateOf(false) }
-    var showNavidromeEditor by remember { mutableStateOf(false) } // fork
     /**
      * Whether the download manager is open.
      *
@@ -1383,7 +1383,7 @@ private fun BitChordApp(
             // Start playback in the mini-player; the user opens the full view by tapping it.
         }
     }
-    com.music.bitchord.fork.ForkQueues.bind(controller, scope) { songs, index, source -> playFrom(songs, index, source) } // fork: saved queues
+    com.music.bitchord.fork.ForkQueuesBinding(controller, scope) { songs, index, source -> playFrom(songs, index, source) } // fork: saved queues
     // Kept for entry points whose rows already carry their origin (notably a
     // collection action fetched before this callback). The explicit wrappers
     // below are preferred because a track's album is not necessarily where it
@@ -2786,7 +2786,6 @@ private fun BitChordApp(
                                 onEditSource = { editingSource = it },
                                 onEditWebDav = { showWebDavEditor = true },
                                 onEditSmb = { showSmbEditor = true },
-                                onEditNavidrome = { showNavidromeEditor = true }, // fork
                                 onConfirmJioSaavn = { confirmJioSaavn = true },
                             )
                         } else if (pageRoute == AppRoute.WearOs) {
@@ -2854,9 +2853,7 @@ private fun BitChordApp(
                                     if (isDownloads) Downloads.collectionsAmong(folderSongs) else emptyList()
                                 }
                                 LocalFolder(
-                                    state = localFolderStates.getOrPut(page.browseId) {
-                                        LocalFolderState().also { if (page.browseId == com.music.bitchord.data.navidrome.NavidromeSettings.BROWSE_ID) it.tab = com.music.bitchord.ui.screens.LocalFolderTab.ALBUMS } // fork: Navidrome opens on Albums
-                                    },
+                                    state = localFolderStates.getOrPut(page.browseId) { LocalFolderState().forkDefaults(page.browseId) }, // fork: .forkDefaults
                                     sort = folderSortOf(page.browseId),
                                     viewType = folderViewTypeOf(page.browseId),
                                     collections = downloadCollections,
@@ -2944,8 +2941,7 @@ private fun BitChordApp(
                                     ?.let { (it.songs as? UiState.Success)?.data.orEmpty() }
                                     ?.map(withAlbum)
                                     ?.takeIf { it.isNotEmpty() }
-                                    // fork (fixes upstream): Next follows the page's sort (upstream queued the running order whatever the sort)
-                                    ?.let { list -> forkSort?.let(list::sortedForDetail) ?: list }
+                                    ?.let { list -> forkSort?.let(list::sortedForDetail) ?: list } // fork (fixes upstream): Next follows the page's sort
                                 val queue = latestSongs ?: songs.map(withAlbum)
                                 if (queue.isEmpty()) return
                                 val queueIndex = selected?.let { tapped ->
@@ -2956,8 +2952,7 @@ private fun BitChordApp(
                                     queueIndex.coerceIn(queue.indices),
                                     source,
                                     boundedContext = useBounded,
-                                    // fork: a sorted page has no "next page" to continue into (it would follow in the running order)
-                                    continuationToken = (latestPage?.continuation ?: page.continuation).takeUnless { forkSort != null },
+                                    continuationToken = (latestPage?.continuation ?: page.continuation).takeUnless { forkSort != null }, // fork: a sorted page has no "next page" to continue into
                                 )
                             }
                             // This page's songs being rearranged, drawn in place of its list.
@@ -4116,7 +4111,7 @@ private fun BitChordApp(
             }
             val onToggleVersion: (() -> Unit)? = if (fromPlayer &&
                 hasAlternateVersion &&
-                !com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(song.videoId) && // fork: a Navidrome file has no video version
+                !com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(song.videoId) && !com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(song.videoId) && // fork: a Navidrome file or a station has no video version
                 !switchingAudioVersion &&
                 controller?.currentMediaItem?.mediaId == song.videoId
             ) {
@@ -5090,41 +5085,7 @@ private fun BitChordApp(
             )
         }
 
-        if (showNavidromeEditor) { // fork
-            BackHandler { showNavidromeEditor = false }
-            ServerEditorHost(
-                hazeState = hazeState,
-                title = stringResource(R.string.navidrome),
-                description = stringResource(R.string.navidrome_description),
-                fields = listOf(
-                    FieldConfig(
-                        initial = com.music.bitchord.data.navidrome.NavidromeSettings.url.value,
-                        placeholder = stringResource(R.string.navidrome_server_url_hint),
-                        keyboardType = KeyboardType.Uri,
-                    ),
-                    FieldConfig(
-                        initial = com.music.bitchord.data.navidrome.NavidromeSettings.username.value,
-                        placeholder = stringResource(R.string.username),
-                    ),
-                    FieldConfig(
-                        initial = com.music.bitchord.data.navidrome.NavidromeSettings.password.value,
-                        placeholder = stringResource(R.string.password),
-                        keyboardType = KeyboardType.Password,
-                        isPassword = true,
-                    ),
-                ),
-                canSubmit = { it[0].isNotBlank() && it[1].isNotBlank() },
-                testFailedRes = R.string.navidrome_test_failed,
-                onTest = { (url, username, password) ->
-                    com.music.bitchord.data.navidrome.NavidromeRepository.testConnection(url.trim(), username.trim(), password)
-                },
-                onSave = { (url, username, password) ->
-                    com.music.bitchord.data.navidrome.NavidromeSettings.save(url, username, password)
-                    showNavidromeEditor = false
-                },
-                onDismiss = { showNavidromeEditor = false },
-            )
-        }
+        com.music.bitchord.ui.screens.ForkNavidromeEditor(hazeState) // fork
 
         if (showSmbEditor) {
             BackHandler { showSmbEditor = false }

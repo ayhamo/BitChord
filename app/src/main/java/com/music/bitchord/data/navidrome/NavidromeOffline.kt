@@ -16,6 +16,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.job
@@ -92,6 +94,10 @@ object NavidromeOffline {
     private const val PARALLEL = 2
     private const val COVER_PX = 1200
 
+    /** Tries per song file before the page goes on without it; waits [RETRY_MS] times the attempt between them. */
+    private const val SONG_ATTEMPTS = 3
+    private const val RETRY_MS = 5_000L
+
     /** One page kept offline: its header and its songs in the page's order. */
     /** One page kept offline: its header and its songs in the page's order; [gone]: a playlist deleted on the server, still kept here. */
     data class Page(val id: String, val title: String, val subtitle: String, val cover: String?, val songs: List<Song>, val gone: Boolean = false)
@@ -151,6 +157,8 @@ object NavidromeOffline {
         lyricsDir.mkdirs()
         rowTitle = context.getString(com.music.bitchord.R.string.fork_offline_row)
         goneLabel = context.getString(com.music.bitchord.R.string.fork_offline_gone)
+        // Half-written files of a process that died mid-download: nothing is downloading yet.
+        listOf(dir, coverDir, clipDir, lyricsDir).forEach { d -> d.listFiles()?.filter { it.name.endsWith(".part") }?.forEach { it.delete() } }
         // Song files are the only top-level files without a dot (offline.json, clips.json, *.part have one).
         dir.listFiles()?.filter { it.isFile && '.' !in it.name }?.mapTo(onDiskIds) { it.name }
         _pages.value = readManifest()
@@ -168,6 +176,19 @@ object NavidromeOffline {
     /** The kept file for a Navidrome song id, or null. */
     fun localFile(songId: String): File? =
         if (::dir.isInitialized && songId in onDiskIds) File(dir, songId) else null
+
+    /**
+     * Where a Navidrome song plays from when the address it carried is no good: its kept file,
+     * else a stream from the server. A queue saved while offline remembers `file://` addresses,
+     * and once the page is removed the player would otherwise take the id for a YouTube one and
+     * fail on every song ("URL not accepted"). Null for any other song.
+     */
+    fun uriFor(videoId: String): String? {
+        if (!NavidromeSettings.isNavidromeId(videoId)) return null
+        val id = videoId.removePrefix(NavidromeSettings.ID_PREFIX)
+        return localFile(id)?.takeIf { it.exists() }?.let { Uri.fromFile(it).toString() }
+            ?: runCatching { NavidromeRepository.client().streamUrl(id) }.getOrNull()
+    }
 
     /** The kept lyrics for a Navidrome song id, or null. */
     fun lyricsFile(songId: String): File? =
@@ -201,18 +222,26 @@ object NavidromeOffline {
             NavidromeClips.Kind.entries.sumOf { kind -> clipUrl(songId, kind)?.let { clipFile(it).length() } ?: 0L }
     }
 
-    /** Every kept song once, for offline mode's library listing. */
+    /** Every kept song once that has its file, for offline mode's library listing. */
     fun keptSongs(): List<Song> =
-        _pages.value.values.flatMap { it.songs }.distinctBy { it.videoId }.map(::onDisk)
+        _pages.value.values.flatMap { it.songs }.distinctBy { it.videoId }.filter(::hasFile).map(::onDisk)
 
-    /** A kept page's songs, playing from their files; null when [browseId] isn't kept. */
+    /** A kept page's songs that have their files (the server can't be reached), or null when [browseId] isn't kept. */
     fun pageState(browseId: String): UiState<List<Song>>? =
-        _pages.value[browseId]?.songs?.map(::onDisk)?.let { UiState.Success(it) }
+        _pages.value[browseId]?.songs?.filter(::hasFile)?.map(::onDisk)?.let { UiState.Success(it) }
+
+    /** How many of a kept page's songs have no file yet (they failed to download); 0 when it is whole or not kept. */
+    fun missing(id: String): Int = _pages.value[id]?.songs.orEmpty().count { !hasFile(it) }
+
+    private fun hasFile(song: Song) = localFile(song.videoId.removePrefix(NavidromeSettings.ID_PREFIX)) != null
 
     /**
      * Downloads everything the page's songs need that isn't on the phone yet,
-     * then records the page. A page that fails or is cancelled is not
-     * recorded, and what it alone had fetched is swept away ([sweep]).
+     * then records the page, also when some songs failed ([missing]; keeping it
+     * again fetches them). A page that fails or that the user cancels is not
+     * recorded, and what it alone had fetched is swept away ([sweep]); one
+     * stopped by Android ([cancelAll] with `keepDone`, the service's time
+     * budget) is recorded with what it has, so nothing downloaded is lost.
      */
     fun keep(id: String, title: String, subtitle: String, cover: String?, songs: List<Song>) {
         if (jobs[id]?.isActive == true || songs.isEmpty()) return
@@ -221,13 +250,22 @@ object NavidromeOffline {
         setProgress(id, 0f)
         counts[id] = Triple(title, 0, songs.size)
         publishStatus()
-        ContextCompat.startForegroundService(appContext, android.content.Intent(appContext, ForkOfflineService::class.java))
+        // Android 12+ refuses a foreground service started from the background (a playlist sync
+        // finishing after the app was left); the download still runs, just without the notification.
+        try {
+            ContextCompat.startForegroundService(appContext, android.content.Intent(appContext, ForkOfflineService::class.java))
+        } catch (e: IllegalStateException) {
+            Log.d(TAG, "offline $id: no foreground service (${e.message})")
+        }
         val job = scope.launch(start = CoroutineStart.LAZY) {
             val me = coroutineContext.job
             var kept = false
             try {
                 val client = NavidromeRepository.client()
-                cover?.let { bestEffort("cover") { keepCover(client, it) } }
+                cover?.let {
+                    ForkNetwork.awaitDownload()
+                    bestEffort("cover") { keepCover(client, it) }
+                }
                 coroutineScope {
                     songs.map { song ->
                         async {
@@ -238,6 +276,10 @@ object NavidromeOffline {
                         }
                     }.awaitAll()
                 }
+                // Nothing at all came down (the server or the network is gone): there is no page to keep.
+                if (songs.none(::hasFile)) throw IOException("no song could be downloaded")
+                // Removed (or replaced) while its last song finished: don't bring it back.
+                if (jobs[id] !== me) throw CancellationException("offline $id was removed")
                 _pages.update { it + (id to page) }
                 writeManifest()
                 writeClips()
@@ -250,6 +292,17 @@ object NavidromeOffline {
             } catch (e: Exception) {
                 Log.d(TAG, "offline $id: ${e.message}")
             } finally {
+                // Stopped by Android, not by the user: kept as far as it got. Recorded while the
+                // page is still [active], so no other page's sweep can take its files meanwhile.
+                val stoppedByAndroid = keepOnStop.remove(id) // whatever else: a finished page must not leave its id for a later Cancel
+                val keepPartial = !kept && stoppedByAndroid && jobs[id] === me && songs.any(::hasFile) // nothing down yet: no page
+                if (keepPartial) {
+                    _pages.update { it + (id to page) }
+                    writeManifest()
+                    writeClips()
+                    publishRow()
+                    NavidromeRepository.invalidateListing()
+                }
                 // Only this job's own entries: a cancel and a new keep of the same page may have replaced them.
                 if (jobs.remove(id, me)) {
                     active.remove(id)
@@ -257,20 +310,37 @@ object NavidromeOffline {
                     setProgress(id, null)
                 }
                 publishStatus()
-                if (!kept) withContext(NonCancellable) { sweep() }
+                if (!kept && !keepPartial) withContext(NonCancellable) { sweep() }
             }
         }
         jobs[id] = job
         job.start()
     }
 
-    /** One song: its file, then its cover, clips and lyrics (those best-effort: a song without them is still kept). */
+    /**
+     * One song: its file, then its cover, clips and lyrics (those best-effort: a song without them is still kept).
+     *
+     * A song file that fails (the network dropped mid-file, a timeout, the song gone from the
+     * server) is tried again a few times once a network the settings allow is back, then skipped:
+     * one song never throws the rest of the page away. A skipped song still streams online, and
+     * keeping the page again fetches it.
+     */
     private suspend fun keepSong(client: NavidromeClient, song: Song) {
         val songId = song.videoId.removePrefix(NavidromeSettings.ID_PREFIX)
-        if (localFile(songId) == null) {
-            ForkNetwork.awaitDownload()
-            download(client.streamUrl(songId), File(dir, songId))
-            onDiskIds += songId
+        ForkNetwork.awaitDownload() // covers and clips too, not only the audio, keep to the mobile-data switch
+        var attempt = 0
+        while (localFile(songId) == null) {
+            try {
+                download(client.streamUrl(songId), File(dir, songId))
+                onDiskIds += songId
+            } catch (e: IOException) {
+                if (++attempt >= SONG_ATTEMPTS) {
+                    Log.d(TAG, "offline song $songId skipped: ${e.message}")
+                    break
+                }
+                delay(RETRY_MS * attempt)
+                ForkNetwork.awaitDownload()
+            }
         }
         song.thumbnailUrl?.let { bestEffort("cover") { keepCover(client, it) } }
         for (kind in NavidromeClips.Kind.entries) {
@@ -278,8 +348,14 @@ object NavidromeOffline {
             bestEffort("clip $key") {
                 val url = clips[key] ?: NavidromeClips.find(songId, kind)
                 if (url != null) {
-                    download(url, clipFile(url))
-                    clips[key] = url
+                    // Recorded before the download, so a page finishing meanwhile doesn't sweep the new file.
+                    val had = clips.putIfAbsent(key, url)
+                    try {
+                        download(url, clipFile(url))
+                    } catch (e: Exception) {
+                        if (had == null) clips.remove(key, url)
+                        throw e
+                    }
                 }
             }
         }
@@ -340,6 +416,7 @@ object NavidromeOffline {
                     }
                     val songs = with(NavidromeRepository) { client.playlistSongs(row.id).map { it.toSong(client) } }
                     val same = !page.gone && row.name == page.title && songs.map { it.videoId } == page.songs.map { it.videoId }
+                    if (page.id !in _pages.value) continue // removed while this asked the server
                     if (!same && songs.isNotEmpty()) {
                         Log.d(TAG, "offline ${page.title}: changed on the server, keeping it again")
                         keep(page.id, row.name, page.subtitle, page.cover, songs)
@@ -353,8 +430,16 @@ object NavidromeOffline {
         }
     }
 
-    /** Stops every download (the notification's Cancel); what no kept page uses is swept. */
-    fun cancelAll() {
+    /** Pages stopped with [cancelAll]`(keepDone = true)`: recorded as far as they got, not swept. */
+    private val keepOnStop: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    /**
+     * Stops every download. The notification's Cancel: what no kept page uses is
+     * swept. [keepDone] (Android ending the service's time budget): each page is
+     * kept with what it has, and keeping it again fetches the rest.
+     */
+    fun cancelAll(keepDone: Boolean = false) {
+        if (keepDone) keepOnStop += jobs.keys
         jobs.values.forEach { it.cancel() }
     }
 
@@ -406,7 +491,12 @@ object NavidromeOffline {
         clipDir.listFiles()?.filter { it.name.endsWith(".mp4") && it.name !in clipFiles }?.forEach { it.delete() }
         coverDir.listFiles()?.filter { !it.name.endsWith(".part") && it.name !in coverIds }?.forEach { it.delete() }
         writeClipsLocked()
+        _swept.value++
     }
+
+    /** Bumped when [sweep] has deleted what it could, so a row measuring what's on the phone measures again. */
+    private val _swept = MutableStateFlow(0)
+    val swept: StateFlow<Int> = _swept.asStateFlow()
 
     /** The kept pages as the Library's "Available offline" row, shown with or without the server. */
     private fun publishRow() {
@@ -444,9 +534,20 @@ object NavidromeOffline {
         fileLocks.getOrPut(target.path) { Mutex() }.withLock {
             if (target.isFile) return
             val part = File(target.path + ".part")
+            val call = Http.client.newCall(Request.Builder().url(url).get().build())
+            // A cancel (the notification's Cancel, the service timing out) aborts a read that is
+            // blocked on a stalled connection, instead of waiting out the read timeout.
+            val watcher = CoroutineScope(currentCoroutineContext()).launch {
+                try { awaitCancellation() } finally { call.cancel() }
+            }
             try {
-                Http.client.newCall(Request.Builder().url(url).get().build()).execute().use { response ->
+                call.execute().use { response ->
                     if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+                    // Subsonic answers its errors (bad login, song gone) with 200 and a JSON or XML body:
+                    // never keep that as a song or a cover.
+                    if (response.body.contentType()?.subtype?.let { "json" in it || "xml" in it } == true) {
+                        throw IOException("server error instead of a file")
+                    }
                     response.body.byteStream().use { input ->
                         part.outputStream().use { out ->
                             val buffer = ByteArray(64 * 1024)
@@ -462,6 +563,7 @@ object NavidromeOffline {
                 currentCoroutineContext().ensureActive()
                 if (!part.renameTo(target)) throw IOException("could not keep ${target.name}")
             } finally {
+                watcher.cancel()
                 part.delete()
             }
         }
@@ -504,7 +606,7 @@ object NavidromeOffline {
     private fun clipFile(url: String): File {
         // By path: the login rides in a header, so the address names the clip alone.
         val path = url.toHttpUrlOrNull()?.encodedPath ?: url
-        val hash = MessageDigest.getInstance("SHA-1").digest(path.toByteArray()).joinToString("") { "%02x".format(it) }
+        val hash = MessageDigest.getInstance("SHA-1").digest(path.toByteArray()).joinToString("") { String.format(java.util.Locale.ROOT, "%02x", it) }
         return File(clipDir, "$hash.mp4")
     }
 
@@ -534,6 +636,7 @@ object NavidromeOffline {
 
     private fun readManifest(): Map<String, Page> = runCatching {
         if (!manifest.isFile) return emptyMap()
+        val client = runCatching { NavidromeRepository.client() }.getOrNull() // one for every song, not one each
         json.parseToJsonElement(manifest.readText()).jsonArray.mapNotNull { element ->
             val o = element.jsonObject
             val id = o.str("id") ?: return@mapNotNull null
@@ -543,7 +646,7 @@ object NavidromeOffline {
                 subtitle = o.str("subtitle").orEmpty(),
                 cover = o.str("cover"),
                 gone = (o["gone"] as? JsonPrimitive)?.booleanOrNull ?: false,
-                songs = (o["songs"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonObject)?.toSong() },
+                songs = (o["songs"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonObject)?.toSong(client) },
             )
         }.associateBy { it.id }
     }.getOrElse {
@@ -586,7 +689,7 @@ object NavidromeOffline {
         put("sourceHiRes", sourceHiRes)
     }
 
-    private fun JsonObject.toSong(): Song? {
+    private fun JsonObject.toSong(client: NavidromeClient?): Song? {
         val videoId = str("videoId") ?: return null
         return Song(
             videoId = videoId,
@@ -598,7 +701,7 @@ object NavidromeOffline {
             durationText = str("durationText"),
             albumName = str("albumName"),
             // Replaced by the file in [onDisk]; the stream URL only when the file has gone missing.
-            localUri = runCatching { NavidromeRepository.client().streamUrl(videoId.removePrefix(NavidromeSettings.ID_PREFIX)) }.getOrNull(),
+            localUri = runCatching { client?.streamUrl(videoId.removePrefix(NavidromeSettings.ID_PREFIX)) }.getOrNull(),
             trackNumber = (get("trackNumber") as? JsonPrimitive)?.intOrNull,
             sourceQuality = str("sourceQuality"),
             sourceHiRes = (get("sourceHiRes") as? JsonPrimitive)?.booleanOrNull ?: false,

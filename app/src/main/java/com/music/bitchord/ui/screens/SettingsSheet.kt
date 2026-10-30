@@ -422,15 +422,7 @@ fun SettingsScreen(
                     onClick = onAccountScrobbling,
                 )
             }
-            // fork: plays reported to the Navidrome server
-            val navidromeScrobbleTitle = stringResource(R.string.fork_navidrome_scrobble)
-            row(navidromeScrobbleTitle, "navidrome", "scrobbling", "now playing") { ForkNavidromeScrobbleRow() }
-            row(stringResource(R.string.fork_navidrome_home_shelves), "navidrome", "home", "shelves") { ForkNavidromeHomeShelvesRow() } // fork
-            row(stringResource(R.string.fork_navidrome_yt_history), "navidrome", "youtube", "history") { ForkNavidromeYouTubeHistoryRow() } // fork
-            row(stringResource(R.string.fork_offline_mode), "navidrome", "offline") { ForkOfflineModeRow() } // fork
-            row(stringResource(R.string.fork_offline_storage), "navidrome", "offline", "storage", "downloads") { ForkOfflineStorageRow() } // fork
-            row(stringResource(R.string.fork_download_mobile), "navidrome", "offline", "mobile", "metered", "download") { ForkDownloadOnMobileRow() } // fork
-            row(stringResource(R.string.fork_preload), "navidrome", "preload", "cache", "next") { ForkPreloadRow() } // fork
+            forkNavidromeRows() // fork
             // Sits with the account rather than with Playback: a party is up to
             // five signed-in people, and being signed in is the whole of what
             // the row needs before it will do anything.
@@ -658,20 +650,8 @@ fun SettingsScreen(
                         steps = 11,
                     )
                 }
-                // fork: Next / Previous blend too
-                if (crossfade > 0) {
-                    val crossfadeOnSkipTitle = stringResource(R.string.fork_crossfade_on_skip)
-                    row(crossfadeOnSkipTitle, "fade", "skip", "next", "previous") {
-                        val crossfadeOnSkip by com.music.bitchord.fork.ForkSettings.crossfadeOnSkip.collectAsStateWithLifecycle()
-                        SettingsSubRow(
-                            title = crossfadeOnSkipTitle,
-                            subtitle = stringResource(R.string.fork_crossfade_on_skip_subtitle),
-                            checked = crossfadeOnSkip,
-                            onCheckedChange = com.music.bitchord.fork.ForkSettings::setCrossfadeOnSkip,
-                        )
-                    }
-                }
             }
+            forkCrossfadeOnSkipRow(crossfade > 0 || smartFade) // fork
             val automixTitle = stringResource(R.string.automix)
             row(automixTitle, "crossfade", "smart fade", "mix") {
                 SettingsRow(
@@ -923,29 +903,7 @@ fun SettingsScreen(
                     onClick = { AppSettings.setAnimatedCanvas(!animatedCanvas) },
                 )
             }
-            // fork: Navidrome cover clips, which play through the canvas switched on above
-            if (animatedCanvas) {
-                val coverClipsTitle = stringResource(R.string.fork_cover_clips)
-                row(coverClipsTitle, "canvas", "navidrome", "cover", "video", divided = false) {
-                    val coverClips by com.music.bitchord.fork.ForkSettings.coverClips.collectAsStateWithLifecycle()
-                    SettingsSubRow(
-                        title = coverClipsTitle,
-                        subtitle = stringResource(R.string.fork_cover_clips_subtitle),
-                        checked = coverClips,
-                        onCheckedChange = com.music.bitchord.fork.ForkSettings::setCoverClips,
-                    )
-                }
-                val backdropClipsTitle = stringResource(R.string.fork_backdrop_clips)
-                row(backdropClipsTitle, "canvas", "navidrome", "backdrop", "video", divided = false) {
-                    val backdropClips by com.music.bitchord.fork.ForkSettings.backdropClips.collectAsStateWithLifecycle()
-                    SettingsSubRow(
-                        title = backdropClipsTitle,
-                        subtitle = stringResource(R.string.fork_backdrop_clips_subtitle),
-                        checked = backdropClips,
-                        onCheckedChange = com.music.bitchord.fork.ForkSettings::setBackdropClips,
-                    )
-                }
-            }
+            forkCanvasRows(animatedCanvas) // fork
             // Reads as part of the Animated cover art option above it, not
             // as a separate setting. Nothing to narrow while the clip itself
             // is off. Defaults to off: a clip loops for as long as its track
@@ -1273,11 +1231,7 @@ fun SettingsScreen(
                     },
                 )
             }
-            // fork: the video clip cache's size and its two clear buttons
-            row(stringResource(R.string.fork_clip_cache_size), "cache", "video", "clips", "canvas") { ForkClipCacheSizeRow() }
-            row(stringResource(R.string.fork_clear_backdrops), "cache", "backdrop", "video", "free space") { ForkClearBackdropsRow() }
-            row(stringResource(R.string.fork_clear_cover_clips), "cache", "cover", "video", "free space") { ForkClearCoverClipsRow() }
-            row(stringResource(R.string.fork_clear_lyrics), "cache", "lyrics", "free space") { ForkClearLyricsRow() } // fork
+            forkCacheRows() // fork
         }
 
         // Only in a build that carries the watch app — see app/build.gradle.kts.
@@ -1498,23 +1452,7 @@ fun SettingsScreen(
             }
         }
 
-        // fork: every fork switch again in one group (the same settings as their rows above, so they stay in sync)
-        SearchableSettingsGroup(search, header = stringResource(R.string.fork_settings)) {
-            row(stringResource(R.string.fork_crossfade_on_skip), "fork", "fade", "skip") { ForkCrossfadeOnSkipRow() }
-            row(stringResource(R.string.fork_cover_clips), "fork", "navidrome", "cover", "video") { ForkCoverClipsRow() }
-            row(stringResource(R.string.fork_backdrop_clips), "fork", "navidrome", "backdrop", "video") { ForkBackdropClipsRow() }
-            row(stringResource(R.string.fork_navidrome_scrobble), "fork", "navidrome", "scrobbling") { ForkNavidromeScrobbleRow() }
-            row(stringResource(R.string.fork_navidrome_home_shelves), "fork", "navidrome", "home", "shelves") { ForkNavidromeHomeShelvesRow() }
-            row(stringResource(R.string.fork_navidrome_yt_history), "fork", "navidrome", "youtube", "history") { ForkNavidromeYouTubeHistoryRow() }
-            row(stringResource(R.string.fork_clip_cache_size), "fork", "cache", "video", "clips") { ForkClipCacheSizeRow() }
-            row(stringResource(R.string.fork_clear_backdrops), "fork", "cache", "backdrop") { ForkClearBackdropsRow() }
-            row(stringResource(R.string.fork_clear_cover_clips), "fork", "cache", "cover") { ForkClearCoverClipsRow() }
-            row(stringResource(R.string.fork_clear_lyrics), "fork", "cache", "lyrics") { ForkClearLyricsRow() }
-            row(stringResource(R.string.fork_offline_mode), "fork", "navidrome", "offline") { ForkOfflineModeRow() }
-            row(stringResource(R.string.fork_offline_storage), "fork", "navidrome", "offline", "storage") { ForkOfflineStorageRow() }
-            row(stringResource(R.string.fork_download_mobile), "fork", "offline", "mobile") { ForkDownloadOnMobileRow() }
-            row(stringResource(R.string.fork_preload), "fork", "navidrome", "preload") { ForkPreloadRow() }
-        }
+        ForkSettingsGroup(search) // fork
 
         SearchableSettingsGroup(search, header = stringResource(R.string.advanced_options)) {
             val smartAlignmentTitle = stringResource(R.string.smart_version_alignment)
@@ -1728,10 +1666,11 @@ fun SettingsScreen(
         AlertDialog(
             onDismissRequest = { confirmClearSongCache = false },
             title = { Text(stringResource(R.string.clear_song_cache_title)) },
-            text = { Text(stringResource(R.string.clear_song_cache_warning)) },
+            text = { Text(stringResource(R.string.clear_song_cache_warning) + "\n\n" + stringResource(R.string.fork_clear_song_cache_also)) }, // fork: + what goes with it
             confirmButton = {
                 TextButton(onClick = {
                     confirmClearSongCache = false
+                    com.music.bitchord.fork.ForkClipCache.clearWithSongs() // fork: animated covers, backdrop videos and lyrics go too
                     AudioCache.clear {
                         Toast.makeText(context, context.getString(R.string.song_cache_cleared), Toast.LENGTH_SHORT).show()
                     }
@@ -2363,7 +2302,7 @@ internal val TEXT_INSET = ROW_INSET + ICON_SIZE + ICON_GAP
  * every group has had its turn, which is why this is made fresh on each pass
  * rather than remembered.
  */
-private class SettingsSearch(query: String) {
+internal class SettingsSearch(query: String) { // fork: internal, was private (ForkSettingsRows)
     // Trimmed, because a trailing space is a typo rather than a search for
     // something ending in one — and on a phone keyboard it is one keystroke
     // away from every word typed.
@@ -2381,7 +2320,7 @@ private class SettingsSearch(query: String) {
 }
 
 /** Collects the rows of one group that survived the search. */
-private class SettingsGroupScope(
+internal class SettingsGroupScope( // fork: internal, was private
     private val search: SettingsSearch,
     private val header: String?,
 ) {
@@ -2417,7 +2356,7 @@ private class SettingsGroupScope(
  * that didn't, so a filtered card is indistinguishable from a hand-written one.
  */
 @Composable
-private fun SearchableSettingsGroup(
+internal fun SearchableSettingsGroup( // fork: internal, was private
     search: SettingsSearch,
     header: String? = null,
     footer: String? = null,

@@ -7,6 +7,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.rounded.Wallpaper
+import androidx.compose.material.icons.rounded.Animation
 import androidx.compose.material.icons.rounded.DownloadForOffline
 import androidx.compose.material.icons.rounded.Downloading
 import androidx.compose.material.icons.rounded.OfflinePin
@@ -52,17 +53,21 @@ internal fun ForkOfflineRow(target: BrowseTarget, accent: Color) {
     val kept = id in pages
     val running = progress[id]
     // What it takes (kept) or will take (not yet), so a big album is no surprise.
-    val keptBytes by produceState(0L, id, kept) {
+    // null until measured, so a kept page never flashes "0 MB".
+    val keptBytes by produceState<Long?>(null, id, kept, running == null) {
         value = if (kept) {
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 com.music.bitchord.data.navidrome.NavidromeOffline.pageBytes(id)
             }
         } else {
-            0L
+            null
         }
     }
+    // Songs that failed to download: a partly kept page offers to fetch the rest (removing it is in the storage page).
+    val missing = remember(id, pages, running == null) { com.music.bitchord.data.navidrome.NavidromeOffline.missing(id) }
     // Again after a keep or a remove: the files on the phone are what it is measured against.
-    val estimate = remember(target.songs, pages, running == null) {
+    val swept by com.music.bitchord.data.navidrome.NavidromeOffline.swept.collectAsStateWithLifecycle()
+    val estimate = remember(target.songs, pages, running == null, swept) {
         com.music.bitchord.data.navidrome.NavidromeOffline.estimate(target.songs)
     }
     ActionRow(
@@ -74,13 +79,16 @@ internal fun ForkOfflineRow(target: BrowseTarget, accent: Color) {
         label = stringResource(R.string.fork_offline_keep),
         value = when {
             running != null -> "${(running * 100).toInt()}%"
-            kept -> stringResource(R.string.fork_offline_kept, forkSize(keptBytes))
+            kept && missing > 0 -> keptBytes?.let {
+                stringResource(R.string.fork_offline_kept_partial, target.songs.size - missing, target.songs.size, forkSize(it))
+            }
+            kept -> keptBytes?.let { stringResource(R.string.fork_offline_kept, forkSize(it)) }
             estimate != null -> stringResource(R.string.fork_offline_size, forkSize(estimate))
             else -> null
         },
         accent = accent,
     ) {
-        if (kept || running != null) {
+        if ((kept && missing == 0) || running != null) {
             com.music.bitchord.data.navidrome.NavidromeOffline.remove(id)
         } else {
             com.music.bitchord.data.navidrome.NavidromeOffline.keep(
@@ -161,7 +169,7 @@ private fun ForkSavedQueuesDialog(
                                         R.string.fork_queues_entry,
                                         androidx.compose.ui.res.pluralStringResource(R.plurals.navidrome_playlist_songs, queue.songs.size, queue.songs.size),
                                         queue.current?.title.orEmpty(),
-                                        "%d:%02d".format(queue.positionMs / 60_000, queue.positionMs / 1_000 % 60),
+                                        String.format(java.util.Locale.ROOT, "%d:%02d", queue.positionMs / 60_000, queue.positionMs / 1_000 % 60),
                                     ),
                                     style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
                                     color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
@@ -187,4 +195,29 @@ private fun ForkSavedQueuesDialog(
             }
         },
     )
+}
+
+/**
+ * Fork: "Animated covers" in the player's song menu, the online services'
+ * moving cover art (Apple Music's tall full-picture ones among them), the
+ * same global [ForkSettings.animatedCovers] as the Settings rows. Off, songs
+ * show their still cover unless the server has a clip of its own.
+ */
+@Composable
+internal fun ForkAnimatedCoversMenuRow(accent: Color) {
+    val on by ForkSettings.animatedCovers.collectAsStateWithLifecycle()
+    ActionRow(
+        icon = Icons.Rounded.Animation,
+        label = stringResource(R.string.fork_animated_covers),
+        value = stringResource(if (on) R.string.fork_on else R.string.fork_off),
+        accent = accent,
+    ) { ForkSettings.setAnimatedCovers(!on) }
+}
+
+/** The fork's rows in the player's menu: the two video switches and saved queues. */
+@Composable
+internal fun ForkPlayerMenuRows(song: com.music.bitchord.data.model.Song, accent: Color) {
+    if (com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(song.videoId)) ForkBackdropMenuRow(accent)
+    if (!com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(song.videoId)) ForkAnimatedCoversMenuRow(accent)
+    ForkSavedQueuesRow(accent)
 }

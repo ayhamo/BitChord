@@ -2,7 +2,6 @@ package com.music.bitchord.data.canvas
 
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.model.Song
-import com.music.bitchord.data.model.isNavidrome // fork
 import com.music.bitchord.data.settings.AppSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -75,8 +74,7 @@ object CanvasRepository {
     suspend fun canvasFor(song: Song): CanvasArtwork? {
         // Only skip when there is no catalogue identity to search on.
         if (song.videoId.isBlank() && (song.localUri != null || song.localPath != null)) return null
-        // fork: a Navidrome song's own backdrop clip (x-clip) before any catalogue search
-        com.music.bitchord.data.navidrome.NavidromeClips.canvasFor(song)?.let { return it }
+        com.music.bitchord.data.navidrome.NavidromeClips.canvasFor(song)?.let { return it } // fork: a Navidrome song's own clips before any catalogue search
 
         val title = song.title.cleaned()
         val artist = song.artist.cleaned()
@@ -87,7 +85,7 @@ object CanvasRepository {
         // late arrival look like a different question and run the whole chain
         // a second time. [reusable] decides when the earlier answer still
         // stands instead.
-        val album = song.albumName
+        val album = song.albumName.takeUnless { com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(song.videoId) } // fork: a server album can be a collection ("Youtube Topic") that rejected every right hit
         val spotifyFirst = AppSettings.prioritizeSpotifyCanvas.value
         val key = cacheKey("song|${song.videoId}", spotifyFirst)
 
@@ -98,14 +96,14 @@ object CanvasRepository {
                     { AppleMusicCanvas.search(title, artist, album) },
                     { TidalCanvas.search(title, artist, album) },
                     { CommunityCanvas.search(title, artist, album) },
-                ) { it.matches(title, artist, album) && !(song.isNavidrome && it.source == CanvasSource.SPOTIFY) } // fork: no Spotify Canvas for Navidrome songs
+                ) { it.matches(title, artist, album) }
             } else {
                 firstHit(
                     { AppleMusicCanvas.search(title, artist, album) },
                     { TidalCanvas.search(title, artist, album) },
                     { CommunityCanvas.search(title, artist, album) },
                     { SpotifyCanvas.search(title, artist, album) },
-                ) { it.matches(title, artist, album) && !(song.isNavidrome && it.source == CanvasSource.SPOTIFY) } // fork: no Spotify Canvas for Navidrome songs
+                ) { it.matches(title, artist, album) }
             }
         }
     }
@@ -133,27 +131,27 @@ object CanvasRepository {
      * requests and a better match than picking a song and hoping it sits on
      * the right edition.
      */
-    suspend fun canvasForAlbum(album: String, artist: String, noSpotify: Boolean = false): CanvasArtwork? { // fork: noSpotify
+    suspend fun canvasForAlbum(album: String, artist: String): CanvasArtwork? {
         val name = album.cleaned()
         val credit = artist.cleaned()
         if (name.isBlank() || credit.isBlank()) return null
 
         val spotifyFirst = AppSettings.prioritizeSpotifyCanvas.value
-        return resolve(cacheKey("album|$name|$credit|$noSpotify", spotifyFirst), withAlbum = true) { // fork: |$noSpotify
+        return resolve(cacheKey("album|$name|$credit", spotifyFirst), withAlbum = true) {
             if (spotifyFirst) {
                 firstHit(
                     { SpotifyCanvas.searchAlbum(name, credit) },
                     { AppleMusicCanvas.searchAlbum(name, credit) },
                     { TidalCanvas.searchAlbum(name, credit) },
                     { CommunityCanvas.searchAlbum(name, credit) },
-                ) { it.matches(name, credit, name) && !(noSpotify && it.source == CanvasSource.SPOTIFY) } // fork
+                ) { it.matches(name, credit, name) }
             } else {
                 firstHit(
                     { AppleMusicCanvas.searchAlbum(name, credit) },
                     { TidalCanvas.searchAlbum(name, credit) },
                     { CommunityCanvas.searchAlbum(name, credit) },
                     { SpotifyCanvas.searchAlbum(name, credit) },
-                ) { it.matches(name, credit, name) && !(noSpotify && it.source == CanvasSource.SPOTIFY) } // fork
+                ) { it.matches(name, credit, name) }
             }
         }
     }

@@ -58,15 +58,6 @@ internal fun ForkCrossfadeOnSkipRow() = ForkSwitchRow(
 )
 
 @Composable
-internal fun ForkCoverClipsRow() = ForkSwitchRow(
-    icon = Icons.Rounded.Animation,
-    title = stringResource(R.string.fork_cover_clips),
-    subtitle = stringResource(R.string.fork_cover_clips_subtitle),
-    state = ForkSettings.coverClips,
-    onChange = ForkSettings::setCoverClips,
-)
-
-@Composable
 internal fun ForkBackdropClipsRow() = ForkSwitchRow(
     icon = Icons.Rounded.Wallpaper,
     title = stringResource(R.string.fork_backdrop_clips),
@@ -146,23 +137,22 @@ internal fun ForkClearCoverClipsRow() = ForkClearClipsRow(
     title = stringResource(R.string.fork_clear_cover_clips),
 )
 
-/** Drops one kind of Navidrome clip from the clip cache, showing what it holds now. */
+/** A cache row's size: lyrics are a few KB each, and would read "0.0 MB" for hundreds of songs. */
+private fun forkCacheSize(bytes: Long): String =
+    if (bytes in 1 until 1048576L) "${(bytes + 1023) / 1024} KB" else "%.1f MB".format(bytes / 1048576.0)
+
+/** Drops one kind of clip from the clip cache, showing what it holds now. */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 private fun ForkClearClipsRow(kind: com.music.bitchord.fork.ForkClipCache.Kind, title: String) {
     val scope = rememberCoroutineScope()
-    var refresh by remember { mutableIntStateOf(0) }
-    val bytes by produceState(0L, refresh) { value = com.music.bitchord.fork.ForkClipCache.size(kind) }
+    val cleared by com.music.bitchord.fork.ForkClipCache.cleared.collectAsStateWithLifecycle()
+    val bytes by produceState(0L, cleared) { value = com.music.bitchord.fork.ForkClipCache.size(kind) }
     SettingsRow(
         icon = Icons.Rounded.DeleteSweep,
         title = title,
-        subtitle = stringResource(R.string.fork_clear_clips_subtitle, "%.1f MB".format(bytes / 1048576.0)),
-        onClick = {
-            scope.launch {
-                com.music.bitchord.fork.ForkClipCache.clear(kind)
-                refresh++
-            }
-        },
+        subtitle = stringResource(R.string.fork_clear_clips_subtitle, forkCacheSize(bytes)),
+        onClick = { scope.launch { com.music.bitchord.fork.ForkClipCache.clear(kind) } },
     )
 }
 
@@ -211,8 +201,8 @@ internal fun ForkPreloadRow() {
 @Composable
 internal fun ForkClearLyricsRow() {
     val scope = rememberCoroutineScope()
-    var refresh by remember { mutableIntStateOf(0) }
-    val bytes by produceState(0L, refresh) {
+    val cleared by com.music.bitchord.fork.ForkClipCache.cleared.collectAsStateWithLifecycle()
+    val bytes by produceState(0L, cleared) {
         value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             com.music.bitchord.data.navidrome.NavidromeLyrics.cacheBytes()
         }
@@ -220,11 +210,11 @@ internal fun ForkClearLyricsRow() {
     SettingsRow(
         icon = Icons.Rounded.DeleteSweep,
         title = stringResource(R.string.fork_clear_lyrics),
-        subtitle = stringResource(R.string.fork_clear_lyrics_subtitle, "%.1f MB".format(bytes / 1048576.0)),
+        subtitle = stringResource(R.string.fork_clear_lyrics_subtitle, forkCacheSize(bytes)),
         onClick = {
             scope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 com.music.bitchord.data.navidrome.NavidromeLyrics.clearCache()
-                refresh++
+                com.music.bitchord.fork.ForkClipCache.cleared.value++
             }
         },
     )
@@ -306,4 +296,88 @@ private fun ForkOfflineStorageDialog(
             { TextButton(onClick = com.music.bitchord.data.navidrome.NavidromeOffline::removeAll) { Text(stringResource(R.string.fork_offline_remove_all)) } }
         },
     )
+}
+
+@Composable
+internal fun ForkAnimatedCoversRow() = ForkSwitchRow(
+    icon = Icons.Rounded.Animation,
+    title = stringResource(R.string.fork_animated_covers),
+    subtitle = stringResource(R.string.fork_animated_covers_subtitle),
+    state = ForkSettings.animatedCovers,
+    onChange = ForkSettings::setAnimatedCovers,
+)
+
+// ---- The fork's rows inside upstream's settings groups, so SettingsSheet carries one line each ----
+
+/** After "Account & integrations": what the Navidrome library adds. */
+@Composable
+internal fun SettingsGroupScope.forkNavidromeRows() {
+    row(stringResource(R.string.fork_navidrome_scrobble), "navidrome", "scrobbling", "now playing") { ForkNavidromeScrobbleRow() }
+    row(stringResource(R.string.fork_navidrome_home_shelves), "navidrome", "home", "shelves") { ForkNavidromeHomeShelvesRow() }
+    row(stringResource(R.string.fork_navidrome_yt_history), "navidrome", "youtube", "history") { ForkNavidromeYouTubeHistoryRow() }
+    row(stringResource(R.string.fork_offline_mode), "navidrome", "offline") { ForkOfflineModeRow() }
+    row(stringResource(R.string.fork_offline_storage), "navidrome", "offline", "storage", "downloads") { ForkOfflineStorageRow() }
+    row(stringResource(R.string.fork_download_mobile), "navidrome", "offline", "mobile", "metered", "download") { ForkDownloadOnMobileRow() }
+    row(stringResource(R.string.fork_preload), "navidrome", "preload", "cache", "next") { ForkPreloadRow() }
+}
+
+/** Next / Previous blend too, with a crossfade length or Automix's own fallback ([shown]); after the Crossfade slider, which Automix hides. */
+@Composable
+internal fun SettingsGroupScope.forkCrossfadeOnSkipRow(shown: Boolean) {
+    if (!shown) return
+    val title = stringResource(R.string.fork_crossfade_on_skip)
+    row(title, "fade", "skip", "next", "previous") {
+        ForkSubRow(title, stringResource(R.string.fork_crossfade_on_skip_subtitle), ForkSettings.crossfadeOnSkip, ForkSettings::setCrossfadeOnSkip)
+    }
+}
+
+/** "Animated covers" and "Backdrop videos", which play through the canvas switched on ([shown]) above them. */
+@Composable
+internal fun SettingsGroupScope.forkCanvasRows(shown: Boolean) {
+    if (!shown) return
+    val covers = stringResource(R.string.fork_animated_covers)
+    row(covers, "canvas", "apple", "animated", "cover", "video", divided = false) {
+        ForkSubRow(covers, stringResource(R.string.fork_animated_covers_subtitle), ForkSettings.animatedCovers, ForkSettings::setAnimatedCovers)
+    }
+    val backdrops = stringResource(R.string.fork_backdrop_clips)
+    row(backdrops, "canvas", "navidrome", "backdrop", "video", divided = false) {
+        ForkSubRow(backdrops, stringResource(R.string.fork_backdrop_clips_subtitle), ForkSettings.backdropClips, ForkSettings::setBackdropClips)
+    }
+}
+
+/** After "Clear image cache": the video clip cache's size and the clear buttons. */
+@Composable
+internal fun SettingsGroupScope.forkCacheRows() {
+    row(stringResource(R.string.fork_clip_cache_size), "cache", "video", "clips", "canvas") { ForkClipCacheSizeRow() }
+    row(stringResource(R.string.fork_clear_backdrops), "cache", "backdrop", "video", "free space") { ForkClearBackdropsRow() }
+    row(stringResource(R.string.fork_clear_cover_clips), "cache", "cover", "video", "free space") { ForkClearCoverClipsRow() }
+    row(stringResource(R.string.fork_clear_lyrics), "cache", "lyrics", "free space") { ForkClearLyricsRow() }
+}
+
+/** Every fork switch again in one group (the same settings as their rows above, so they stay in sync). */
+@Composable
+internal fun ForkSettingsGroup(search: SettingsSearch) {
+    SearchableSettingsGroup(search, header = stringResource(R.string.fork_settings)) {
+        row(stringResource(R.string.fork_crossfade_on_skip), "fork", "fade", "skip") { ForkCrossfadeOnSkipRow() }
+        row(stringResource(R.string.fork_animated_covers), "fork", "apple", "animated", "cover") { ForkAnimatedCoversRow() }
+        row(stringResource(R.string.fork_backdrop_clips), "fork", "navidrome", "backdrop", "video") { ForkBackdropClipsRow() }
+        row(stringResource(R.string.fork_navidrome_scrobble), "fork", "navidrome", "scrobbling") { ForkNavidromeScrobbleRow() }
+        row(stringResource(R.string.fork_navidrome_home_shelves), "fork", "navidrome", "home", "shelves") { ForkNavidromeHomeShelvesRow() }
+        row(stringResource(R.string.fork_navidrome_yt_history), "fork", "navidrome", "youtube", "history") { ForkNavidromeYouTubeHistoryRow() }
+        row(stringResource(R.string.fork_clip_cache_size), "fork", "cache", "video", "clips") { ForkClipCacheSizeRow() }
+        row(stringResource(R.string.fork_clear_backdrops), "fork", "cache", "backdrop") { ForkClearBackdropsRow() }
+        row(stringResource(R.string.fork_clear_cover_clips), "fork", "cache", "cover") { ForkClearCoverClipsRow() }
+        row(stringResource(R.string.fork_clear_lyrics), "fork", "cache", "lyrics") { ForkClearLyricsRow() }
+        row(stringResource(R.string.fork_offline_mode), "fork", "navidrome", "offline") { ForkOfflineModeRow() }
+        row(stringResource(R.string.fork_offline_storage), "fork", "navidrome", "offline", "storage") { ForkOfflineStorageRow() }
+        row(stringResource(R.string.fork_download_mobile), "fork", "offline", "mobile") { ForkDownloadOnMobileRow() }
+        row(stringResource(R.string.fork_preload), "fork", "navidrome", "preload") { ForkPreloadRow() }
+    }
+}
+
+/** A setting drawn as part of the row above it ([SettingsSubRow]). */
+@Composable
+private fun ForkSubRow(title: String, subtitle: String, state: StateFlow<Boolean>, onChange: (Boolean) -> Unit) {
+    val checked by state.collectAsStateWithLifecycle()
+    SettingsSubRow(title = title, subtitle = subtitle, checked = checked, onCheckedChange = onChange)
 }

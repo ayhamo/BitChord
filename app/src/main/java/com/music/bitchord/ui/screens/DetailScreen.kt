@@ -157,6 +157,7 @@ import com.music.bitchord.ui.components.ExplicitSongTitle
 import com.music.bitchord.ui.components.LIBRARY_GRID_SPACING
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
+import com.music.bitchord.ui.components.forkRowMax
 import com.music.bitchord.ui.components.NUMBERED_ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.RowMoreButton
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
@@ -459,7 +460,8 @@ fun DetailScreen(
     // Animated cover art on the header, the same feature the player has.
     // Albums only: a playlist's artwork is a collage and an artist page's is a
     // photograph, and neither is something a label publishes a canvas for.
-    val canvasEnabled by AppSettings.animatedCanvas.collectAsStateWithLifecycle()
+    val canvasEnabled = AppSettings.animatedCanvas.collectAsStateWithLifecycle().value &&
+        com.music.bitchord.ui.player.ForkCanvasSwitch.covers.collectAsStateWithLifecycle().value // fork: && "Animated covers" (Apple Music and the other services)
     val prioritizeSpotifyCanvas by AppSettings.prioritizeSpotifyCanvas.collectAsStateWithLifecycle()
     // The credit line the header shows is the artist as far as the catalogue
     // services are concerned. A browse card's subtitle sometimes omits it, in
@@ -476,7 +478,7 @@ fun DetailScreen(
         // As on the player: the credit fills in once the tracks load, so this
         // can run twice. Keep a clip that is already playing if the second
         // pass comes back empty.
-        canvas = CanvasRepository.canvasForAlbum(page.title, credit, noSpotify = page.browseId.startsWith(com.music.bitchord.data.navidrome.NavidromeAlbums.PREFIX)) ?: canvas // fork: noSpotify
+        canvas = CanvasRepository.canvasForAlbum(page.title, credit) ?: canvas
     }
     // An artist's clip comes with the same Apple lookup as its photograph.
     val artistVideo = appleArt?.videoUrl
@@ -813,9 +815,10 @@ fun DetailScreen(
 
             // Albums / Singles & EPs carousels (artist pages).
             items(page.sections) { shelf ->
-                val canShowAll = shelf.items.size > ARTIST_ROW_MAX_ITEMS
-                val displayItems = remember(shelf.items) {
-                    if (canShowAll) shelf.items.take(ARTIST_ROW_MAX_ITEMS) else shelf.items
+                val maxItems = forkRowMax(ARTIST_ROW_MAX_ITEMS, 14.dp) // fork: the cap follows the window's width
+                val canShowAll = shelf.items.size > maxItems
+                val displayItems = remember(shelf.items, maxItems) {
+                    if (canShowAll) shelf.items.take(maxItems) else shelf.items
                 }
                 Column(Modifier.padding(top = 22.dp)) {
                     SectionHeading(
