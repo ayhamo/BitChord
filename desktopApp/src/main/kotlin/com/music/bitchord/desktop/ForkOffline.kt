@@ -34,6 +34,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import coil3.ImageLoader
+import coil3.SingletonImageLoader
+import coil3.memory.MemoryCache
+import coil3.network.okhttp.OkHttpNetworkFetcherFactory
+import com.music.bitchord.data.Http
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.navidrome.NavidromeOffline
@@ -71,9 +76,8 @@ internal object ForkOffline {
     private const val PROBE_MS = 20_000L
     private const val PROBE_TIMEOUT_MS = 3_000
 
-    /** How long the app's exit waits for the pages stopped by it to be recorded. */
-    private const val EXIT_WAIT_MS = 800L
     private const val KEY_MODE = "offline_mode"
+    private const val IMAGE_CACHE_BYTES = 32L * 1024 * 1024
 
     private val prefs = Preferences.userRoot().node("com/music/bitchord/navidrome_fork")
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -99,19 +103,13 @@ internal object ForkOffline {
             DesktopLyricsClient.lookup(song).getOrNull()?.lines?.takeIf { it.isNotEmpty() }?.joinToString("\n", transform = ::lrcLine)
         }
         NavidromeOffline.init(dataDirectory(), "Available offline", "Deleted on server")
+        installImageLoader()
         scope.launch {
             while (true) {
                 reachable.value = serverAnswers()
                 delay(PROBE_MS)
             }
         }
-        // Closing the app mid-download keeps what came down, as Android stopping the phone's does.
-        Runtime.getRuntime().addShutdownHook(
-            Thread {
-                NavidromeOffline.cancelAll(keepDone = true)
-                Thread.sleep(EXIT_WAIT_MS)
-            },
-        )
     }
 
     /** The app's data folder rather than a cache, so nothing evicts it; the analyser's convention. */
@@ -132,6 +130,20 @@ internal object ForkOffline {
     private fun lrcLine(line: LyricLine): String {
         val ms = line.timeMs
         return "[%02d:%02d.%02d]%s".format(ms / 60_000, ms / 1_000 % 60, ms / 10 % 100, line.text)
+    }
+
+    /**
+     * The image loader the shared player's covers come through: over the app's HTTP client, whose
+     * interceptor answers kept covers (Coil's own client would ask a server that may not be there),
+     * and with a smaller memory cache than Coil's share of the heap, which holds few of these anyway.
+     */
+    fun installImageLoader() {
+        SingletonImageLoader.setSafe { context ->
+            ImageLoader.Builder(context)
+                .components { add(OkHttpNetworkFetcherFactory(callFactory = { Http.client })) }
+                .memoryCache { MemoryCache.Builder().maxSizeBytes(IMAGE_CACHE_BYTES).build() }
+                .build()
+        }
     }
 
     /** A kept cover's bytes for an artwork address, or null to fetch it. */

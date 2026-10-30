@@ -33,6 +33,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.graphics.asComposeImageBitmap
+import androidx.compose.ui.graphics.asSkiaBitmap
+import org.jetbrains.skia.Bitmap
 import org.jetbrains.skia.ColorAlphaType
 import org.jetbrains.skia.Image
 import org.jetbrains.skia.ImageInfo
@@ -52,6 +56,7 @@ import kotlin.math.roundToInt
 internal fun DesktopCanvasVideo(spec: CanvasVideoSpec, modifier: Modifier) {
     val canvas = spec.canvas
     var frame by remember(canvas) { mutableStateOf<ImageBitmap?>(null) }
+    var forkHandedOut by remember(canvas) { mutableStateOf<ImageBitmap?>(null) } // fork: not closed, see below
     val rendered = frame != null
     val running by rememberUpdatedState(spec.isPlaying && !spec.pausedForTransition)
     val reportAspect by rememberUpdatedState(spec.onAspectRatioChanged)
@@ -97,9 +102,22 @@ internal fun DesktopCanvasVideo(spec: CanvasVideoSpec, modifier: Modifier) {
                     val decoded = withContext(Dispatchers.IO) { decoder.nextFrame(pixels) }
                     if (!decoded) break
                     shown++
-                    // Handed to Skia rather than copied, so the next frame
-                    // cannot be decoded into the same array.
-                    frame = Image.makeRaster(info, pixels.copyOf(), decoder.width * 4).toComposeImageBitmap()
+                    // fork: was Image.makeRaster(info, pixels.copyOf(), ...).toComposeImageBitmap().
+                    // Skia copies the array and the Bitmap copies the Image, so that made three copies
+                    // of every frame, about 8 MB each for a 1080p clip, 30 times a second, with nothing
+                    // closed: only the garbage the array copy made kept the collector freeing the rest.
+                    val image = Image.makeRaster(info, pixels, decoder.width * 4)
+                    val next = Bitmap.makeFromImage(image).asComposeImageBitmap()
+                    image.close()
+                    val previous = frame
+                    frame = next
+                    // Once two frames have gone by nothing draws it. One the player was handed for its
+                    // tint stays, and the collector has it when the player lets go.
+                    if (previous != null && previous !== forkHandedOut) {
+                        withFrameNanos {}
+                        withFrameNanos {}
+                        previous.asSkiaBitmap().close()
+                    }
                     val spent = System.currentTimeMillis() - started
                     delay((decoder.frameIntervalMillis - spent).coerceAtLeast(0L))
                 }
@@ -121,11 +139,11 @@ internal fun DesktopCanvasVideo(spec: CanvasVideoSpec, modifier: Modifier) {
     // clip — another every so often.
     LaunchedEffect(rendered, spec.refreshFrameEveryMs) {
         if (!rendered) return@LaunchedEffect
-        frame?.let(reportFrame)
+        frame?.let { forkHandedOut = it; reportFrame(it) } // fork: was frame?.let(reportFrame)
         val interval = spec.refreshFrameEveryMs ?: return@LaunchedEffect
         while (isActive) {
             delay(interval)
-            frame?.let(reportFrame)
+            frame?.let { forkHandedOut = it; reportFrame(it) } // fork: was frame?.let(reportFrame)
         }
     }
 

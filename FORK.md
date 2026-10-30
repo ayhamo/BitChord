@@ -134,7 +134,9 @@ Upstream removed `desktopApp` and `desktopUi` in `e4dd63d8`; `pc` restores them 
 | `desktopApp/.../DesktopApp.kt` (Home, library) | `loadHome`, `publishHomeShelves`: Spotify's mixes close Home, reloaded on sign-in. `DesktopLocalMusicPage.forkPlayFrom`: the Navidrome page plays the list on screen (an album, not the whole library) |
 | `desktopApp/.../DesktopPlayerHost.kt` (auto-hide) | `spotifyCanvasAutoHide` off, the phone's default |
 | `desktopApp/.../DesktopApp.kt` (offline) | `ForkOfflineButton` on a server album or playlist page, and on an album on the Navidrome page. Home reloads when offline changes. `onOpenPage` |
-| `desktopApp/.../DesktopArtwork.kt` | `load()`: a kept cover first |
+| `desktopApp/.../DesktopArtwork.kt` | `load()`: a kept cover first. Budget a tenth of the heap, was a sixth |
+| `desktopApp/.../DesktopCanvasVideo.kt` | One copy per frame, not three, and a replaced frame is closed: `forkHandedOut` |
+| `desktopApp/.../DesktopTrackAnalyzer.kt` | `results` keeps 12 analyses in RAM (from PC-Continued `c310d0e3`) |
 | `desktopApp/.../DesktopApp.kt` (notice) | `ForkNotice.Host()`. `startRadio`: "No similar songs found" on a Navidrome song |
 | `desktopApp/.../DesktopApp.kt` (switches) | `ForkPlayerMenu.onFullBleedChange`. Settings: "Fullscreen cover art" renamed, "Backdrop videos" and "Animated covers" under "Animated canvas". Album headers follow "Animated covers" |
 | `desktopUi/.../player/NowPlayingScreen.kt` | The heart also shows for a Navidrome song (and in `LandscapePlayer.kt`). `forkCanvases`, `ForkLandscapeBackdrop` and `fillsPhone`, as on the phone (copies of `ForkSleeveClip`, `ForkBackdropIntro`, `ForkLandscapeBackdrop` live in `desktopUi`). `heroMode` as on the phone: `forkFillsScreen`, `forkBigArtFits`, `rememberForkArtAwake`; publishes `ForkCanvasSwitch.bigArtFits` for the menu |

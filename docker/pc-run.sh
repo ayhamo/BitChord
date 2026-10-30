@@ -11,4 +11,4 @@ W=$(pwd -W)
 mkdir -p home/AppData/Roaming home/AppData/Local home/tmp
 export APPDATA="$W/home/AppData/Roaming" LOCALAPPDATA="$W/home/AppData/Local"
 nohup ./jdk-*/bin/java.exe -Duser.home="$W/home" -Djava.io.tmpdir="$W/home/tmp" -Dbitchord.version=1.8.1 \
-    -Dbitchord.debugBridge=8765 -cp "$W/BitChord/lib/*" com.music.bitchord.desktop.MainKt > run.log 2>&1 &
+    -Dbitchord.debugBridge=8765 -Xmx512m -XX:+UseG1GC -XX:G1PeriodicGCInterval=20000 -XX:G1PeriodicGCSystemLoadThreshold=0 -cp "$W/BitChord/lib/*" com.music.bitchord.desktop.MainKt > run.log 2>&1 &

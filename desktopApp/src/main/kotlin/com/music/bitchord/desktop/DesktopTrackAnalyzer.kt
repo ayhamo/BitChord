@@ -46,7 +46,17 @@ internal class DesktopTrackAnalyzer(
     /** Analyses kept between runs, so a track measured yesterday is not measured again today. */
     private val store = AnalysisStore { DesktopAnalysisRuntime.analysisHome() }
 
-    private val results = ConcurrentHashMap<String, TrackAnalysis>()
+    /**
+     * Analyses in RAM, newest-used first. Fork, from PC-Continued (`c310d0e3`): a window rather than
+     * a history. [analysisFor] is asked for the whole queue every tick and every ask promotes a
+     * stored analysis into here, so unbounded this held the curves of everything a session touched.
+     * The disk store keeps them all; this only has to hold what the planner might mix with.
+     */
+    private val results: MutableMap<String, TrackAnalysis> = java.util.Collections.synchronizedMap(
+        object : java.util.LinkedHashMap<String, TrackAnalysis>(32, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, TrackAnalysis>) = size > 12
+        },
+    )
     private val running = ConcurrentHashMap.newKeySet<String>()
 
     /** Tracks the analyser could not measure. */
