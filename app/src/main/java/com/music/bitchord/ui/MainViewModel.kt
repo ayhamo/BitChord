@@ -1481,11 +1481,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         viewModelScope.launch { // fork: the Navidrome page and Home shelves follow its server settings
-            combine(
-                com.music.bitchord.data.navidrome.NavidromeSettings.url,
-                com.music.bitchord.data.navidrome.NavidromeSettings.username,
-                com.music.bitchord.data.navidrome.NavidromeSettings.password,
-            ) { url, user, password -> Triple(url, user, password) }.drop(1).collect {
+            com.music.bitchord.data.navidrome.NavidromeSettings.saved.drop(1).collect {
                 reloadRemoteDetail(com.music.bitchord.data.navidrome.NavidromeSettings.BROWSE_ID)
                 launch { com.music.bitchord.data.navidrome.NavidromeHome.load(getApplication()) }
             }

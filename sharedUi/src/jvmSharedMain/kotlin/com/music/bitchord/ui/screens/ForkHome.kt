@@ -45,6 +45,12 @@ internal class ForkHomeState(
     private val spotifyOpen: Boolean,
     private val youtubeOpen: Boolean,
 ) {
+    /**
+     * Whether the YouTube feed may page in more: not while its section is folded, where the short
+     * list always reads as "near the end" and Home would fetch the whole feed into a hidden section.
+     */
+    val loadsMore: Boolean get() = youtubeOpen || (navidrome <= 0 && spotify <= 0)
+
     /** The feed cut into its sections, empty ones left out, or null for no sections (upstream's Home). */
     fun sections(shelves: List<HomeShelf>): List<ForkHomeSection>? {
         if (navidrome <= 0 && spotify <= 0) return null

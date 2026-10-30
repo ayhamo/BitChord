@@ -2,6 +2,7 @@ package com.music.bitchord.ui.player
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import coil3.SingletonImageLoader
 import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
@@ -21,10 +22,10 @@ import com.music.bitchord.data.model.artworkAt
  */
 @Composable
 internal fun ForkPreloadCovers(queue: List<Song>, current: Song) {
-    val index = queue.indexOfFirst { it.videoId == current.videoId }
-    val next = if (index < 0) emptyList() else queue.drop(index + 1).take(2)
-    val first = rememberRemoteArtworkUrl(next.getOrNull(0))
-    val second = rememberRemoteArtworkUrl(next.getOrNull(1))
+    // Once per queue and song, not on every recomposition of the player (a Navidrome queue runs to thousands).
+    val index = remember(queue, current.videoId) { queue.indexOfFirst { it.videoId == current.videoId } }
+    val first = rememberRemoteArtworkUrl(queue.getOrNull(index + 1).takeIf { index >= 0 })
+    val second = rememberRemoteArtworkUrl(queue.getOrNull(index + 2).takeIf { index >= 0 })
     val context = LocalPlatformContext.current
     LaunchedEffect(first, second) {
         val loader = SingletonImageLoader.get(context)

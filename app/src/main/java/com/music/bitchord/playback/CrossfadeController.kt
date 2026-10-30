@@ -761,7 +761,22 @@ class CrossfadeController(
      * Media3's controller shows the next song the moment Next is pressed, and a session still
      * answering with the old one flipped the screen back until the handoff (fork).
      */
-    fun pendingSkipIndex(): Int = if (!handedOff && phase != Phase.IDLE) skipTarget else C.INDEX_UNSET
+    fun pendingSkipIndex(): Int = if (!handedOff && phase != Phase.IDLE) skipIndex() else C.INDEX_UNSET
+
+    /** The song a skip is headed to, by id: "Play next" or a row moved above it while arming shifts its index. */
+    private var skipTargetId: String? = null
+
+    /** [skipTarget], looked up again by [skipTargetId] when the queue moved under it. */
+    private fun skipIndex(): Int {
+        val out = outgoing ?: return skipTarget
+        if (skipTarget == C.INDEX_UNSET || skipTargetId == null) return skipTarget
+        if (skipTarget in 0 until out.mediaItemCount && out.getMediaItemAt(skipTarget).mediaId == skipTargetId) return skipTarget
+        return (0 until out.mediaItemCount).firstOrNull { out.getMediaItemAt(it).mediaId == skipTargetId } ?: C.INDEX_UNSET
+    }
+
+    /** Whether a manual skip is blending under a setting that allows it: the slider, or Automix's fallback. */
+    private fun skipFadeOn(): Boolean =
+        skipTarget != C.INDEX_UNSET && (configuredFadeMs() > 0L || AppSettings.smartFadeEnabled.value)
 
     /**
      * Next / Previous as a blend into [toIndex] rather than a cut (fork-only).
@@ -794,6 +809,7 @@ class CrossfadeController(
             ?: if (AppSettings.smartFadeEnabled.value) (DEFAULT_SMART_FALLBACK_SECONDS * 1000).toLong() else 0L
         if (fade <= 0L) return false
         skipTarget = toIndex
+        skipTargetId = out.getMediaItemAt(toIndex).mediaId
         if (!begin(fade, endMs = 0L, smart = false, targetIndex = toIndex)) {
             skipTarget = C.INDEX_UNSET
             return false
@@ -1288,7 +1304,8 @@ class CrossfadeController(
         rampStartMs = endMs - fade - rampSteps * beatMs
         rampStep = 0
         render = renderStyle
-        armDeadline = SystemClock.elapsedRealtime() + ARM_TIMEOUT_MS + rampSteps * beatMs
+        // fork: a skip gives a slow stream only a few seconds; then it happens plainly (see [bail])
+        armDeadline = SystemClock.elapsedRealtime() + (if (targetIndex != C.INDEX_UNSET) SKIP_ARM_TIMEOUT_MS else ARM_TIMEOUT_MS) + rampSteps * beatMs
         handedOff = false
         outgoing = out
         incoming = into
@@ -1459,7 +1476,7 @@ class CrossfadeController(
         if (!out.playWhenReady) return bail()
         // fork: a standby whose stream failed will never get ready; bail now rather than hold the
         // old song (and, on a skip, the new title at 0:00) for the whole arm timeout
-        if (into.playerError != null) return bail()
+        if (skipTarget != C.INDEX_UNSET && into.playerError != null) return bail()
 
         val expired = SystemClock.elapsedRealtime() > armDeadline
         val ready = into.playbackState == Player.STATE_READY
@@ -1698,7 +1715,7 @@ class CrossfadeController(
         val settingSwitchedOff = if (smartFadeActive) {
             !AppSettings.smartFadeEnabled.value
         } else {
-            configuredFadeMs() <= 0L
+            configuredFadeMs() <= 0L && !skipFadeOn() // fork: && !skipFadeOn()
         }
         // An echo out rings past the end of the blend, carried by the outgoing
         // player's own silenced audio, so that player is kept until its tail
@@ -1873,7 +1890,7 @@ class CrossfadeController(
         AppSettings.smartMixBlend.value = null
         if (!handedOff && phase != Phase.FADING) {
             // Nothing was ever audible; no ramp to run.
-            val skip = skipTarget // fork: a manual skip that never got to blend still happens
+            val skip = skipIndex() // fork: a manual skip that never got to blend still happens
             val out = outgoing
             finish()
             if (skip != C.INDEX_UNSET && out != null && skip in 0 until out.mediaItemCount) out.seekTo(skip, 0L) // fork
@@ -1969,7 +1986,7 @@ class CrossfadeController(
 
     /** Still a next track, still playing, still switched on — by whichever setting armed this one. */
     private fun stillWorthFading(): Boolean {
-        val stillOn = if (smartFadeActive) AppSettings.smartFadeEnabled.value else configuredFadeMs() > 0L
+        val stillOn = if (smartFadeActive) AppSettings.smartFadeEnabled.value else configuredFadeMs() > 0L || skipFadeOn() // fork: || skipFadeOn()
         // fork: a manual skip may be headed backwards, or away from the last item
         return stillOn && (skipTarget != C.INDEX_UNSET || (outgoing ?: active()).hasNextMediaItem())
     }
@@ -2840,6 +2857,7 @@ class CrossfadeController(
          * a missed crossfade rather than a broken one.
          */
         const val ARM_TIMEOUT_MS = 12_000L
+        const val SKIP_ARM_TIMEOUT_MS = 3_000L // fork
 
         /**
          * Where the outgoing low-pass sits the instant a filter ride begins.

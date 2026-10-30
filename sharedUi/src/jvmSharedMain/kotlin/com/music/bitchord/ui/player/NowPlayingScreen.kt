@@ -1802,14 +1802,14 @@ fun NowPlayingScreen(
                         // The whole screen is the sheets' frost source: there is
                         // no full-bleed banner here to be it instead.
                         fullArtworkBlurContent(backgroundModifier.hazeSource(playerHaze))
-                        forkLandscapeClip?.let { ForkLandscapeBackdrop(it, remoteArt, isPlaying, dockMoving, dimmed = lyricsOpen || queueOpen, modifier = backgroundModifier) } // fork
+                        forkLandscapeClip?.let { ForkLandscapeBackdrop(it, fullArtworkBlurImage, isPlaying, dockMoving, dimmed = lyricsOpen || queueOpen, modifier = backgroundModifier) } // fork
                     },
                     artwork = { artworkModifier ->
                         LandscapeArtwork(
                             artRequest = art.request,
                             artLoaded = art.loaded,
                             onArtState = art::onState,
-                            canvas = if (forkLandscapeClip != null) null else canvas, // fork: the still cover beside a landscape backdrop
+                            canvas = canvas.takeUnless { it?.url == forkLandscapeClip?.url }, // fork: the backdrop's own clip never plays twice; the server's cover clip stays in the sleeve
                             canvasRendered = canvasRendered,
                             isPlaying = isPlaying,
                             onCanvasRenderedChange = { canvasRendered = it },

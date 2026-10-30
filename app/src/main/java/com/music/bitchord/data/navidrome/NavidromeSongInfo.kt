@@ -29,7 +29,7 @@ object NavidromeSongInfo {
                     releaseYear = d.year?.toString(),
                     views = (d.playCount ?: 0).toString(),
                     likes = when {
-                        (d.userRating ?: 0) > 0 -> "★".repeat(d.userRating!!) + "☆".repeat(5 - d.userRating)
+                        (d.userRating ?: 0) > 0 -> d.userRating!!.coerceIn(0, 5).let { "★".repeat(it) + "☆".repeat(5 - it) }
                         d.starred -> "★"
                         else -> null
                     },

@@ -9,19 +9,19 @@ import com.music.bitchord.data.canvas.CanvasSource
 import kotlinx.coroutines.flow.MutableStateFlow
 
 /**
- * Fork: the "Navidrome backdrop clips" switch, held here so the player reads it
- * live. The app's `ForkSettings.backdropClips` is this same flow (persisted
- * there), so Settings, Fork settings and the player menu flip one value.
+ * Fork: the player's two video switches, held here so the player reads them
+ * live. `ForkSettings` persists both (the same flows), so Settings, Fork
+ * settings and the player menu flip one value. Each goes by where a clip
+ * plays, not where it comes from:
  */
 object ForkCanvasSwitch {
+    /** "Backdrop videos": a clip that fills the screen, the server's backdrops and Spotify's Canvas. */
     val backdrops = MutableStateFlow(true)
 
     /**
-     * "Animated covers": the animated art the online services have for a song
-     * or album (Apple Music's motion covers, some of them the tall full-picture
-     * kind, and Tidal's, the community's and Spotify's). Separate from
-     * [backdrops], which is the Navidrome server's own clips. `ForkSettings`
-     * persists it.
+     * "Animated covers": a clip in the cover square, the server's cover clips
+     * and the online services' motion covers (Apple Music, some of them the
+     * tall full-picture kind, Tidal, the community's), and album headers.
      */
     val covers = MutableStateFlow(true)
 }
@@ -35,20 +35,18 @@ object ForkCanvasSwitch {
  * sleeve ([CanvasArtwork.sleeveUrl]), or, without one, the still cover. A
  * backdrop never plays cropped in the cover square.
  *
- * A clip from an online service (anything not on the server's x-clip route)
- * plays only while "Animated covers" is on. Both read live, so flipping either
- * mid-song changes the player at once.
+ * Whatever fills the screen needs "Backdrop videos", whatever plays in the
+ * square needs "Animated covers" ([ForkCanvasSwitch]). Both read live, so
+ * flipping either mid-song changes the player at once.
  */
 @Composable
 internal fun forkCanvas(raw: CanvasArtwork?, phoneWidth: Boolean, windowWidth: Dp, windowHeight: Dp): CanvasArtwork? {
     val backdrops by ForkCanvasSwitch.backdrops.collectAsStateWithLifecycle()
     val covers by ForkCanvasSwitch.covers.collectAsStateWithLifecycle()
-    if (raw != null && !raw.isServerClip() && !covers) return null
-    return raw.forkInSleeve(backdrops && forkFillsScreen(raw, phoneWidth, windowWidth, windowHeight))
+    val fills = forkFillsScreen(raw, phoneWidth, windowWidth, windowHeight)
+    val shown = raw.forkInSleeve(backdrops && fills) ?: return null
+    return shown.takeIf { if (it.source.fillsPhone && fills) backdrops else covers }
 }
-
-/** A clip from the Navidrome server (its x-clip route; kept offline copies keep that address too). */
-private fun CanvasArtwork.isServerClip(): Boolean = "/rest/x-clip/" in url
 
 private fun CanvasArtwork?.forkInSleeve(backdropShown: Boolean): CanvasArtwork? = when {
     this == null || source != CanvasSource.BACKDROP || backdropShown -> this
@@ -59,7 +57,9 @@ private fun CanvasArtwork?.forkInSleeve(backdropShown: Boolean): CanvasArtwork? 
  * Fork: whether a full-screen clip gets the screen. Upstream: only where the
  * player fills a phone-width window. A Navidrome backdrop also in any portrait
  * window wider than that (a big phone, a tablet held upright, the 720 dp
- * emulator), where upstream kept it in the sleeve.
+ * emulator), where upstream kept it in the sleeve. Never in a landscape window,
+ * however narrow (split screen, a small phone): the landscape player draws
+ * its own backdrop beside the cover ([ForkLandscapeBackdrop]).
  */
 internal fun forkFillsScreen(canvas: CanvasArtwork?, phoneWidth: Boolean, windowWidth: Dp, windowHeight: Dp): Boolean =
-    phoneWidth || (canvas?.source == CanvasSource.BACKDROP && windowHeight > windowWidth)
+    windowHeight >= windowWidth && (phoneWidth || canvas?.source == CanvasSource.BACKDROP)

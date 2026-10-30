@@ -38,20 +38,27 @@ object ForkPreload {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var job: Job? = null
-    private var pending: List<Uri> = emptyList()
+    @Volatile private var pending: List<Uri> = emptyList()
 
     /** Called with the player whenever upstream's read-ahead is (`PlaybackService.prefetchAround`). */
     fun around(player: Player) {
         val count = ForkSettings.preloadSongs.value
-        val next = player.nextMediaItemIndex
-        val uris = if (count <= 0 || next == C.INDEX_UNSET) {
-            emptyList()
-        } else {
-            (next until minOf(next + count, player.mediaItemCount)).mapNotNull { index ->
-                val item = player.getMediaItemAt(index)
-                item.localConfiguration?.uri?.takeIf {
-                    NavidromeSettings.isNavidromeId(item.mediaId) && (it.scheme == "https" || it.scheme == "http")
-                }
+        // The songs that really play next: in shuffle order with shuffle on, not the list's.
+        val timeline = player.currentTimeline
+        val indices = buildList {
+            var index = player.currentMediaItemIndex
+            while (size < count && !timeline.isEmpty && index != C.INDEX_UNSET) {
+                // Repeat-one would name the current song again: read the queue as plain repeat-off order then.
+                val repeat = if (player.repeatMode == Player.REPEAT_MODE_ONE) Player.REPEAT_MODE_OFF else player.repeatMode
+                index = timeline.getNextWindowIndex(index, repeat, player.shuffleModeEnabled)
+                if (index == C.INDEX_UNSET || index == player.currentMediaItemIndex || index in this) break
+                add(index)
+            }
+        }
+        val uris = indices.mapNotNull { index ->
+            val item = player.getMediaItemAt(index)
+            item.localConfiguration?.uri?.takeIf {
+                NavidromeSettings.isNavidromeId(item.mediaId) && (it.scheme == "https" || it.scheme == "http")
             }
         }
         if (uris == pending) return
@@ -60,6 +67,7 @@ object ForkPreload {
         if (uris.isEmpty()) return
         job = scope.launch {
             delay(DELAY_MS)
+            var failed = false
             for (uri in uris) {
                 ForkNetwork.awaitDownload()
                 if (AudioCache.isFullyCached(uri)) continue
@@ -83,10 +91,13 @@ object ForkPreload {
                 } catch (e: Exception) {
                     // Losing the cache entry to the player (it reached the song first) or a dropped connection.
                     Log.d(TAG, "pre-load ${uri.getQueryParameter("id")}: ${e.message}")
+                    failed = true
                 } finally {
                     stopper.cancel()
                 }
             }
+            // A song that failed (a dropped connection) is tried again at the next read-ahead, not skipped for good.
+            if (failed && pending == uris) pending = emptyList()
         }
     }
 }

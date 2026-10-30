@@ -2,6 +2,7 @@ package com.music.bitchord.data.canvas
 
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.isNavidrome // fork
 import com.music.bitchord.data.settings.AppSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -86,7 +87,7 @@ object CanvasRepository {
         // late arrival look like a different question and run the whole chain
         // a second time. [reusable] decides when the earlier answer still
         // stands instead.
-        val album = song.albumName
+        val album = song.albumName.takeUnless { song.isNavidrome } // fork: a server album can be a collection ("Youtube Topic") that rejected every right hit
         val spotifyFirst = AppSettings.prioritizeSpotifyCanvas.value
         val key = cacheKey("song|${song.videoId}", spotifyFirst)
 

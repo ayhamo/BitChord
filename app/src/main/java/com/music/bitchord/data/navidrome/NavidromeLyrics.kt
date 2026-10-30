@@ -111,6 +111,10 @@ object NavidromeLyrics {
         if (!NavidromeSettings.isNavidromeId(videoId) || lines.isNullOrEmpty() || lines.none { it.timeMs > 0 }) return
         val songId = videoId.removePrefix(NavidromeSettings.ID_PREFIX)
         // Called on the main thread; the checks and the write are disk work.
+        // Only when the server answered "none": after a server outage the online copy would sit in
+        // the cache, read before the server, and hide the server's own lyrics from then on.
+        if (answers[songId]?.isEmpty() != true) return
+        answers[songId] = lines // shown again this session too, also with no network
         scope.launch {
             if (cacheFile(songId) != null || NavidromeOffline.lyricsFile(songId) != null) return@launch
             write(songId, lines)

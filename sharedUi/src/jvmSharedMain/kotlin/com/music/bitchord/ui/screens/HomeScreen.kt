@@ -220,10 +220,11 @@ fun HomeScreen(
                     if (sections == null) {
                         shelves(state.data, leadHero && !recentlyPlayedLoading)
                     } else {
+                        val firstOpen = sections.indexOfFirst { it.open }
                         sections.forEachIndexed { index, section ->
                             forkHomeHeading(section)
-                            // Only the first section leads with the big cards; the rest keep ordinary ones.
-                            if (section.open) shelves(section.shelves, index == 0 && leadHero && !recentlyPlayedLoading, section.key + ":")
+                            // Only the first open section leads with the big cards; the rest keep ordinary ones.
+                            if (section.open) shelves(section.shelves, index == firstOpen && leadHero && !recentlyPlayedLoading, section.key + ":")
                         }
                     }
                     if (loadingMore) feedMoreSkeleton()
@@ -232,7 +233,7 @@ fun HomeScreen(
         }
     }
 
-    if (onLoadMore != null && state is UiState.Success) {
+    if (onLoadMore != null && state is UiState.Success && forkHome.loadsMore) { // fork: && forkHome.loadsMore
         val loadMore by rememberUpdatedState(onLoadMore)
         // Re-checked on every layout change, rather than on the rising edge of
         // "the tail is in view". A page that appends only a shelf or two leaves

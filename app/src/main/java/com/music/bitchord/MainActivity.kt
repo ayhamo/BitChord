@@ -1383,7 +1383,7 @@ private fun BitChordApp(
             // Start playback in the mini-player; the user opens the full view by tapping it.
         }
     }
-    com.music.bitchord.fork.ForkQueues.bind(controller, scope) { songs, index, source -> playFrom(songs, index, source) } // fork: saved queues
+    com.music.bitchord.fork.ForkQueuesBinding(controller, scope) { songs, index, source -> playFrom(songs, index, source) } // fork: saved queues
     // Kept for entry points whose rows already carry their origin (notably a
     // collection action fetched before this callback). The explicit wrappers
     // below are preferred because a track's album is not necessarily where it

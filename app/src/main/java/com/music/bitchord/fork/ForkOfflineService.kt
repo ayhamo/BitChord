@@ -76,11 +76,11 @@ class ForkOfflineService : Service() {
     /**
      * Android 15+ gives a data-sync service 6 hours a day (all of them waiting
      * for Wi-Fi included); past that it must stop or the app is killed. The
-     * downloads stop with it; what finished stays, the rest is swept, and the
-     * page can be kept again later.
+     * downloads stop with it; each page is kept with what it has (nothing
+     * downloaded is thrown away), and keeping it again fetches the rest.
      */
     override fun onTimeout(startId: Int, fgsType: Int) {
-        NavidromeOffline.cancelAll()
+        NavidromeOffline.cancelAll(keepDone = true)
         finish()
     }
 
@@ -91,10 +91,16 @@ class ForkOfflineService : Service() {
 
     private fun promote() {
         val notification = build(NavidromeOffline.status.value, ForkNetwork.canDownload.value)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        // Refused when the day's data-sync budget is used up (Android 15+) or the app is in the
+        // background: the downloads go on without the notification instead of crashing the app.
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: IllegalStateException) {
+            stopSelf()
         }
     }
 

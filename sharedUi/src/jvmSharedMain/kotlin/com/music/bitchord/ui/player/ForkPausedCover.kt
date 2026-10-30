@@ -20,6 +20,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import com.music.bitchord.data.model.artworkAt
 
 /**
  * Fork: the cover, back over a full-screen clip while the music is paused.
@@ -50,7 +51,7 @@ internal fun BoxScope.ForkPausedCover(visible: Boolean, artUrl: String?) {
         // Above the deck, which takes the lower half or so while it is open.
         val side = minOf(maxWidth * 0.72f, maxHeight * 0.40f)
         AsyncImage(
-            model = artUrl,
+            model = artUrl.artworkAt(ART_PX), // the sleeve's own size: sharp, and already in the image cache
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier

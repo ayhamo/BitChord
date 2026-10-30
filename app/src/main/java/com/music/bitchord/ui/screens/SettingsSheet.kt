@@ -658,8 +658,8 @@ fun SettingsScreen(
                         steps = 11,
                     )
                 }
-                // fork: Next / Previous blend too
-                if (crossfade > 0) {
+                // fork: Next / Previous blend too (with a crossfade length, or Automix's own fallback)
+                if (crossfade > 0 || smartFade) {
                     val crossfadeOnSkipTitle = stringResource(R.string.fork_crossfade_on_skip)
                     row(crossfadeOnSkipTitle, "fade", "skip", "next", "previous") {
                         val crossfadeOnSkip by com.music.bitchord.fork.ForkSettings.crossfadeOnSkip.collectAsStateWithLifecycle()
@@ -923,7 +923,7 @@ fun SettingsScreen(
                     onClick = { AppSettings.setAnimatedCanvas(!animatedCanvas) },
                 )
             }
-            // fork: Navidrome cover clips, which play through the canvas switched on above
+            // fork: "Animated covers" and "Backdrop videos", which play through the canvas switched on above
             if (animatedCanvas) {
                 val animatedCoversTitle = stringResource(R.string.fork_animated_covers)
                 row(animatedCoversTitle, "canvas", "apple", "animated", "cover", "video", divided = false) {
@@ -933,16 +933,6 @@ fun SettingsScreen(
                         subtitle = stringResource(R.string.fork_animated_covers_subtitle),
                         checked = animatedCovers,
                         onCheckedChange = com.music.bitchord.fork.ForkSettings::setAnimatedCovers,
-                    )
-                }
-                val coverClipsTitle = stringResource(R.string.fork_cover_clips)
-                row(coverClipsTitle, "canvas", "navidrome", "cover", "video", divided = false) {
-                    val coverClips by com.music.bitchord.fork.ForkSettings.coverClips.collectAsStateWithLifecycle()
-                    SettingsSubRow(
-                        title = coverClipsTitle,
-                        subtitle = stringResource(R.string.fork_cover_clips_subtitle),
-                        checked = coverClips,
-                        onCheckedChange = com.music.bitchord.fork.ForkSettings::setCoverClips,
                     )
                 }
                 val backdropClipsTitle = stringResource(R.string.fork_backdrop_clips)
@@ -1512,7 +1502,6 @@ fun SettingsScreen(
         SearchableSettingsGroup(search, header = stringResource(R.string.fork_settings)) {
             row(stringResource(R.string.fork_crossfade_on_skip), "fork", "fade", "skip") { ForkCrossfadeOnSkipRow() }
             row(stringResource(R.string.fork_animated_covers), "fork", "apple", "animated", "cover") { ForkAnimatedCoversRow() }
-            row(stringResource(R.string.fork_cover_clips), "fork", "navidrome", "cover", "video") { ForkCoverClipsRow() }
             row(stringResource(R.string.fork_backdrop_clips), "fork", "navidrome", "backdrop", "video") { ForkBackdropClipsRow() }
             row(stringResource(R.string.fork_navidrome_scrobble), "fork", "navidrome", "scrobbling") { ForkNavidromeScrobbleRow() }
             row(stringResource(R.string.fork_navidrome_home_shelves), "fork", "navidrome", "home", "shelves") { ForkNavidromeHomeShelvesRow() }
@@ -1739,10 +1728,11 @@ fun SettingsScreen(
         AlertDialog(
             onDismissRequest = { confirmClearSongCache = false },
             title = { Text(stringResource(R.string.clear_song_cache_title)) },
-            text = { Text(stringResource(R.string.clear_song_cache_warning)) },
+            text = { Text(stringResource(R.string.clear_song_cache_warning) + "\n\n" + stringResource(R.string.fork_clear_song_cache_also)) }, // fork: + what goes with it
             confirmButton = {
                 TextButton(onClick = {
                     confirmClearSongCache = false
+                    com.music.bitchord.fork.ForkClipCache.clearWithSongs() // fork: animated covers, backdrop videos and lyrics go too
                     AudioCache.clear {
                         Toast.makeText(context, context.getString(R.string.song_cache_cleared), Toast.LENGTH_SHORT).show()
                     }

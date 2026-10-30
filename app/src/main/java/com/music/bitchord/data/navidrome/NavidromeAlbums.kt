@@ -32,6 +32,12 @@ object NavidromeAlbums {
     data class Header(val cover: String?, val artist: String?)
     private val headers = ConcurrentHashMap<String, Header>()
 
+    /** The server or account changed: these ids and headers describe the old one. */
+    fun clear() {
+        ids.clear()
+        headers.clear()
+    }
+
     fun remember(name: String?, albumId: String?) {
         if (name.isNullOrBlank() || albumId.isNullOrBlank()) return
         ids.getOrPut(name) { ConcurrentHashMap.newKeySet() }.add(albumId)
@@ -60,7 +66,8 @@ object NavidromeAlbums {
         }.fold(
             onSuccess = { songs -> if (songs.isEmpty()) UiState.Error(emptyText()) else UiState.Success(songs) },
             // No server (offline, unreachable): the kept copy, if the page is kept.
-            onFailure = { NavidromeOffline.pageState(browseId) ?: UiState.Error(it.message ?: emptyText()) },
+            onFailure = { if (it is kotlin.coroutines.cancellation.CancellationException) throw it // left the page: not an error
+                NavidromeOffline.pageState(browseId) ?: UiState.Error(it.message ?: emptyText()) },
         )
     }
 

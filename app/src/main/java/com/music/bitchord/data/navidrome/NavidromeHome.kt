@@ -8,10 +8,12 @@ import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.ui.screens.ForkLibraryPlaylists
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -56,22 +58,37 @@ object NavidromeHome {
      * Re-reads the shelves. A server that can't be reached keeps what was shown
      * rather than blanking it; one that is no longer configured clears them.
      */
-    suspend fun load(context: Context) = lock.withLock {
-        // The Spotify mixes load with Home too, server or not (they have their own section).
+    suspend fun load(context: Context): Unit = coroutineScope {
+        // Offline mode: what is shown stays, nothing goes out.
+        if (com.music.bitchord.fork.ForkNetwork.offline.value) return@coroutineScope
+        // The Spotify mixes load with Home too, server or not (they have their own section),
+        // alongside the server's shelves rather than ahead of them.
         spotifyTitle = context.getString(R.string.fork_spotify_mixes)
-        runCatching { com.music.bitchord.fork.ForkSpotifyMixes.load() }.onFailure { Log.d(TAG, "spotify mixes: ${it.message}") }
+        launch {
+            try {
+                com.music.bitchord.fork.ForkSpotifyMixes.load()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.d(TAG, "spotify mixes: ${e.message}")
+            }
+        }
+        lock.withLock { loadServer(context) }
+    }
+
+    private suspend fun loadServer(context: Context) {
         if (!NavidromeSettings.isConfigured()) {
             shelves.value = emptyList()
             ForkLibraryPlaylists.shelves.value = emptyList()
             NavidromeGenres.clear()
-            return@withLock
+            return
         }
         val client = NavidromeRepository.client()
         val label = context.getString(R.string.navidrome)
         try {
             shelves.value = coroutineScope {
                 val albums = SHELVES.map { (type, title) ->
-                    async { HomeShelf(context.getString(title), client.albums(type, PER_SHELF).map { it.toItem(client) }, label) }
+                    async { HomeShelf(context.getString(title), client.albums(type, PER_SHELF).map { it.toItem(client) }.distinctBy { it.browseId }, label) }
                 }
                 val playlists = async {
                     HomeShelf(context.getString(R.string.navidrome_home_playlists), client.playlists().map { it.toItem(client, context) }, label)
@@ -80,7 +97,7 @@ object NavidromeHome {
                 val allAlbums = async {
                     HomeShelf(
                         context.getString(R.string.fork_library_navidrome_albums),
-                        client.albums("alphabeticalByName", ALL_ALBUMS).map { it.toItem(client) },
+                        client.albums("alphabeticalByName", ALL_ALBUMS).map { it.toItem(client) }.distinctBy { it.browseId },
                         label,
                     )
                 }
@@ -100,7 +117,13 @@ object NavidromeHome {
             Log.d(TAG, "home shelves: ${e.message}")
         }
         // The Explore panel's genres, after the shelves are up (a failure there leaves them alone).
-        runCatching { NavidromeGenres.load(client) }.onFailure { Log.d(TAG, "genres: ${it.message}") }
+        try {
+            NavidromeGenres.load(client)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.d(TAG, "genres: ${e.message}")
+        }
         NavidromeOffline.syncPlaylists() // kept playlists follow the server
     }
 

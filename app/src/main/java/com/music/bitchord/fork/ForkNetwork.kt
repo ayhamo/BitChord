@@ -42,15 +42,17 @@ object ForkNetwork {
 
     fun init(context: Context) {
         val manager = context.getSystemService(ConnectivityManager::class.java) ?: return
-        network.value = manager.activeNetwork?.let(manager::getNetworkCapabilities)
+        // Re-read on every callback rather than trusting the one it names: an onLost can arrive for
+        // the network being handed over from (Wi-Fi to mobile data), after the new one is up, and
+        // read as "no network" it made the app falsely offline.
+        fun refresh() {
+            network.value = manager.activeNetwork?.let(manager::getNetworkCapabilities)
+        }
+        refresh()
         manager.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
-            override fun onCapabilitiesChanged(n: Network, caps: NetworkCapabilities) {
-                network.value = caps
-            }
+            override fun onCapabilitiesChanged(n: Network, caps: NetworkCapabilities) = refresh()
 
-            override fun onLost(n: Network) {
-                network.value = null
-            }
+            override fun onLost(n: Network) = refresh()
         })
         scope.launch {
             combine(network, ForkSettings.offlineMode) { caps, mode -> mode || !caps.isOnline() }
@@ -61,9 +63,9 @@ object ForkNetwork {
                 }
         }
         scope.launch {
-            combine(network, ForkSettings.downloadOnMobile) { caps, mobile ->
+            combine(network, ForkSettings.downloadOnMobile, ForkSettings.offlineMode) { caps, mobile, offlineMode ->
                 when {
-                    !caps.isOnline() -> false
+                    offlineMode || !caps.isOnline() -> false // offline mode pauses downloads and pre-loading too
                     caps!!.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) -> true
                     else -> mobile
                 }

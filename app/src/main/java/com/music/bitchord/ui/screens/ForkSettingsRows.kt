@@ -58,15 +58,6 @@ internal fun ForkCrossfadeOnSkipRow() = ForkSwitchRow(
 )
 
 @Composable
-internal fun ForkCoverClipsRow() = ForkSwitchRow(
-    icon = Icons.Rounded.Animation,
-    title = stringResource(R.string.fork_cover_clips),
-    subtitle = stringResource(R.string.fork_cover_clips_subtitle),
-    state = ForkSettings.coverClips,
-    onChange = ForkSettings::setCoverClips,
-)
-
-@Composable
 internal fun ForkBackdropClipsRow() = ForkSwitchRow(
     icon = Icons.Rounded.Wallpaper,
     title = stringResource(R.string.fork_backdrop_clips),

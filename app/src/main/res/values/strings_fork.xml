@@ -18,10 +18,8 @@
         <item quantity="one">%d song</item>
         <item quantity="other">%d songs</item>
     </plurals>
-    <string name="fork_cover_clips">Navidrome cover clips</string>
-    <string name="fork_cover_clips_subtitle">A song\'s own cover video from your server plays over its cover</string>
-    <string name="fork_backdrop_clips">Navidrome backdrop clips</string>
-    <string name="fork_backdrop_clips_subtitle">A song\'s backdrop video from your server fills the player; the cover comes back while paused</string>
+    <string name="fork_backdrop_clips">Backdrop videos</string>
+    <string name="fork_backdrop_clips_subtitle">A video that fills the player: a song\'s backdrop from your server, or Spotify\'s Canvas. The cover comes back while paused</string>
     <string name="fork_navidrome_scrobble">Report plays to Navidrome</string>
     <string name="fork_navidrome_scrobble_subtitle">Your server shows what is playing, and counts songs played to the end</string>
     <string name="fork_settings">Fork settings</string>
@@ -34,16 +32,18 @@
     <string name="fork_library_navidrome_albums">Navidrome albums</string>
     <string name="fork_backdrop_menu">Backdrop videos</string>
     <string name="fork_animated_covers">Animated covers</string>
-    <string name="fork_animated_covers_subtitle">Moving cover art from Apple Music and other services, some of it the tall full-picture kind. Your server\'s backdrops have their own switch</string>
+    <string name="fork_animated_covers_subtitle">Video in the cover square: your server\'s cover clips and the moving covers from Apple Music and other services. Backdrops have their own switch</string>
     <string name="fork_on">On</string>
     <string name="fork_off">Off</string>
     <string name="fork_clip_cache_size">Video clip cache</string>
     <string name="fork_clip_cache_size_subtitle">Disk space for cover clips and backdrops (tap to change)</string>
     <string name="fork_clear_backdrops">Clear backdrop videos</string>
-    <string name="fork_clear_cover_clips">Clear cover clips</string>
+    <string name="fork_clear_cover_clips">Clear animated covers</string>
+    <string name="fork_clear_song_cache_also">Animated covers, backdrop videos and cached lyrics are cleared with it. Albums and playlists kept offline stay.</string>
     <string name="fork_clear_clips_subtitle">%1$s on this phone</string>
     <string name="fork_offline_keep">Available offline</string>
     <string name="fork_offline_kept">Kept · %1$s · tap to remove</string>
+    <string name="fork_offline_kept_partial">Kept %1$d of %2$d · %3$s · tap to keep the rest</string>
     <string name="fork_offline_size">%1$s to download</string>
     <string name="fork_offline_channel">Available offline</string>
     <string name="fork_offline_notification_one">Keeping %1$s offline</string>
