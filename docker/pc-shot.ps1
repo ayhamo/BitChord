@@ -23,7 +23,7 @@ public class W {
 }
 "@
 [void][W]::SetProcessDPIAware() # or GetWindowRect reports scaled sizes and the picture is cropped
-$procs = Get-CimInstance Win32_Process -Filter "Name='java.exe'" | Where-Object { $_.CommandLine -like '*desktop.MainKt*' }
+$procs = Get-CimInstance Win32_Process -Filter "Name='java.exe' OR Name='javaw.exe'" | Where-Object { $_.CommandLine -like '*desktop.MainKt*' }
 foreach ($p in $procs) {
   "java pid $($p.ProcessId) MB $([int]($p.WorkingSetSize/1MB))"
   foreach ($h in [W]::For([uint32]$p.ProcessId)) {

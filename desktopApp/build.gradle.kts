@@ -397,6 +397,9 @@ val windowsPortableAssemble by tasks.registering {
     val lastfmKey = lastfmApiKey
     val lastfmSharedSecret = lastfmSecret
     val mainClass = composeMainClass
+    val togetherServer = listenTogetherServer
+    // The Windows Java the zip carries (docker/pc-jre.sh).
+    val javaRuntime = providers.gradleProperty("bitchord.windowsRuntime").orNull
     // Declared, not implied.
     inputs.file(appJar)
     inputs.files(runtime)
@@ -404,6 +407,8 @@ val windowsPortableAssemble by tasks.registering {
     inputs.property("moduleIndex", moduleIndex)
     inputs.property("lastfm", lastfmKey.isNotBlank())
     inputs.property("mainClass", mainClass)
+    inputs.property("listenTogether", togetherServer)
+    inputs.property("javaRuntime", javaRuntime.orEmpty())
     outputs.dir(stage)
     doLast {
         val target = stage.get().asFile
@@ -420,24 +425,32 @@ val windowsPortableAssemble by tasks.registering {
         }
         appJar.get().asFile.copyTo(File(lib, "bitchord-app.jar"), overwrite = true)
 
+        val bundledJava = File(target, "runtime")
+        bundledJava.deleteRecursively()
+        javaRuntime?.let { File(it).copyRecursively(bundledJava, overwrite = true) }
+
         // `lib\*` rather than a spelled-out classpath: the wildcard is what keeps this working when
         // a dependency is added, and the JVM is what expands it.
-        File(target, "BitChord.bat").writeText(
-            buildString {
-                appendLine("@echo off")
-                appendLine("setlocal")
-                appendLine("rem BitChord, portable. Needs a Java 21+ runtime on PATH or in JAVA_HOME.")
-                appendLine("set \"HERE=%~dp0\"")
-                appendLine("set \"RUNNER=java\"")
-                appendLine("if defined JAVA_HOME set \"RUNNER=%JAVA_HOME%\\bin\\java\"")
-                append("\"%RUNNER%\" -Dbitchord.version=$version")
-                if (moduleIndex.isNotBlank()) append(" -Dbitchord.module.index=$moduleIndex")
-                if (lastfmKey.isNotBlank() && lastfmSharedSecret.isNotBlank()) {
-                    append(" -Dbitchord.lastfm.key=$lastfmKey -Dbitchord.lastfm.secret=$lastfmSharedSecret")
-                }
-                appendLine(" -cp \"%HERE%lib\\*\" $mainClass %*")
-                appendLine("endlocal")
-            },
+        // The same flags as the installers below: these are what the app's memory was measured with.
+        val launch = buildString {
+            append("-Xmx512m -XX:+UseG1GC -XX:G1PeriodicGCInterval=20000 -XX:G1PeriodicGCSystemLoadThreshold=0")
+            append(" -Dbitchord.version=$version")
+            if (moduleIndex.isNotBlank()) append(" -Dbitchord.module.index=$moduleIndex")
+            if (lastfmKey.isNotBlank() && lastfmSharedSecret.isNotBlank()) {
+                append(" -Dbitchord.lastfm.key=$lastfmKey -Dbitchord.lastfm.secret=$lastfmSharedSecret")
+            }
+            if (togetherServer.isNotBlank()) append(" -Dbitchord.listentogether.server=$togetherServer")
+            append(" -cp \"%HERE%lib\\*\" $mainClass %*")
+        }
+        fun launcher(name: String, comment: String, command: String) = File(target, name).writeText(
+            listOf("@echo off", "setlocal", "rem $comment", "set \"HERE=%~dp0\"", command, "endlocal", "")
+                .joinToString("\r\n"),
+        )
+        launcher("BitChord.bat", "BitChord, portable. Its Java is in runtime\\.", "start \"\" \"%HERE%runtime\\bin\\javaw.exe\" $launch")
+        launcher(
+            "BitChord-log.bat",
+            "The same app, writing what it logs to bitchord.log beside this file. For reporting a problem.",
+            "\"%HERE%runtime\\bin\\java.exe\" $launch > \"%HERE%bitchord.log\" 2>&1",
         )
 
         // What "it builds" is not the same as "it runs", and the difference is exactly what shipped
@@ -463,6 +476,9 @@ val windowsPortableAssemble by tasks.registering {
                 jars.none { it.name.contains("ffmpeg") && it.name.contains("windows-x86_64") }
             ) {
                 add("the Windows FFmpeg natives are missing")
+            }
+            if (!File(bundledJava, "bin/javaw.exe").isFile) {
+                add("its Java is missing: pass -Pbitchord.windowsRuntime=<folder> (docker/pc-jre.sh)")
             }
         }
         check(problems.isEmpty()) { "windowsPortable: " + problems.joinToString("; ") }

@@ -1,0 +1,93 @@
+# Fork-only workflow. Run by hand: builds the Windows portable zip of the desktop app, with its own
+# Java inside, and publishes it as a pre-release `fork-pc-v<version>`. A pre-release is not what GitHub
+# calls "latest", so the phone's update check and the Android release workflow never see this one.
+# Running it again replaces that pre-release.
+name: Fork PC build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fork-pc-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write      # create the pre-release
+      id-token: write      # sign the attestation
+      attestations: write  # store the attestation
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: cross-compilers for the Windows natives
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cmake ninja-build g++-mingw-w64-x86-64
+          sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
+          sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
+
+      - name: Windows Java for the zip
+        run: sh docker/pc-jre.sh "$RUNNER_TEMP/windows-jre"
+
+      - name: build the zip
+        id: build
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/.*bitchordVersionName"\] = "\(.*\)"/\1/p' build.gradle.kts)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # No Android SDK: only the desktop modules are wanted, and the phone's need more than this job installs.
+          unset ANDROID_HOME ANDROID_SDK_ROOT
+          chmod +x gradlew
+          ./gradlew --no-daemon -Pbitchord.target=windows -Pbitchord.version="$version" \
+            -Pbitchord.windowsRuntime="$RUNNER_TEMP/windows-jre" :desktopApp:windowsPortable
+          mkdir out
+          cp desktopApp/build/distributions/*.zip out/
+          (cd out && sha256sum *.zip > SHA256SUMS.txt)
+          cat out/SHA256SUMS.txt
+
+      - name: check what the zip holds
+        run: |
+          set -euo pipefail
+          listing=$(unzip -l out/*.zip)
+          for entry in BitChord/BitChord.bat BitChord/BitChord-log.bat BitChord/runtime/bin/javaw.exe BitChord/lib/bitchord-app.jar; do
+            echo "$listing" | grep -q "$entry" || { echo "missing: $entry"; exit 1; }
+          done
+
+      - name: attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: out/*.zip
+
+      - name: publish the pre-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          release="fork-pc-v$VERSION"
+          if gh release view "$release" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release delete "$release" -R "$GITHUB_REPOSITORY" --yes --cleanup-tag
+          fi
+          {
+            echo "BitChord $VERSION for Windows, a test build of this fork's desktop app. Not the Android release."
+            echo
+            echo "Unzip it anywhere and run \`BitChord\\BitChord.bat\`. Java is inside; nothing else to install."
+            echo "\`BitChord-log.bat\` runs the same app and writes \`bitchord.log\` beside it, for reporting a problem."
+            echo
+            echo "Commit: $GITHUB_SHA"
+            echo "Verify: \`gh attestation verify <zip> -R $GITHUB_REPOSITORY\`, or compare with SHA256SUMS.txt."
+          } > notes.md
+          # -R: on a fork gh defaults to the parent repository, which refuses (HTTP 403)
+          gh release create "$release" out/* -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "BitChord $VERSION for Windows (test build)" --notes-file notes.md
