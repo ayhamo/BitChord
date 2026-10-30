@@ -51,6 +51,9 @@ internal class ForkHomeState(
      */
     val loadsMore: Boolean get() = youtubeOpen || (navidrome <= 0 && spotify <= 0)
 
+    /** List items below the YouTube feed: Spotify's. Reaching those isn't reaching the feed's end, or Home would page in all of it. */
+    val tailItems: Int get() = if (spotify <= 0) 0 else 1 + if (spotifyOpen) spotify else 0
+
     /** The feed cut into its sections, empty ones left out, or null for no sections (upstream's Home). */
     fun sections(shelves: List<HomeShelf>): List<ForkHomeSection>? {
         if (navidrome <= 0 && spotify <= 0) return null

@@ -42,6 +42,6 @@ object LikeState {
     }
 
     fun clear() {
-        _overrides.value = emptyMap()
+        _overrides.value = _overrides.value.filterKeys { it.startsWith("navidrome:") } // fork: was emptyMap(); a server's stars aren't the YouTube account's
     }
 }

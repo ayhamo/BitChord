@@ -193,13 +193,21 @@ object NavidromeClips {
     }
 
     private val interceptor = Interceptor { chain ->
-        val request = chain.request()
+        val request = chain.request().withSubsonicLogin()
         if (!needsLogin(request.url)) return@Interceptor chain.proceed(request)
         val first = chain.proceed(request.withToken(token(fresh = false)))
         if (first.code != 401) return@Interceptor first
         // Expired login: once more with a new one.
         first.close()
         chain.proceed(request.withToken(token(fresh = true)))
+    }
+
+    /** The login a song's address leaves out (see [NavidromeClient.withLogin]), for this server only. */
+    private fun Request.withSubsonicLogin(): Request {
+        if ("/rest/" !in url.encodedPath || url.queryParameter("t") != null || !NavidromeSettings.isConfigured()) return this
+        val plain = url.toString()
+        val signed = NavidromeRepository.withLogin(plain)
+        return if (signed == plain) this else newBuilder().url(signed).build()
     }
 
     private fun Request.withToken(token: String?): Request =

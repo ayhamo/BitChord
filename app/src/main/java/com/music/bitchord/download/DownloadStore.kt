@@ -273,8 +273,7 @@ object DownloadStore {
             val target = privateFile(context, name)
             val folder = target.parentFile ?: error("No download folder")
             if (!folder.exists() && !folder.mkdirs()) error("Could not create ${folder.path}")
-            val part = File(folder, ".$name.part")
-            part.delete()
+            val part = forkPartFile(folder, ".$name")
             return Pending(context, Uri.fromFile(target), name, part = part, target = target)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -303,9 +302,20 @@ object DownloadStore {
         val target = legacyFile(name)
         val folder = target.parentFile ?: error("No Music folder on this device")
         if (!folder.exists() && !folder.mkdirs()) error("Could not create ${folder.path}")
-        val part = File(folder, "$name.part")
-        part.delete()
+        val part = forkPartFile(folder, name)
         return Pending(context, Uri.fromFile(target), name, part = part, target = target)
+    }
+
+    /**
+     * fork: a `.part` of this download's own. Two tracks that come to the same file name ("Intro" on two
+     * releases) run at once in four workers; sharing one, the second deleted the first's and both then
+     * published whatever was left. A crash's leftovers go once they are a day old, not while one may be writing.
+     */
+    private fun forkPartFile(folder: File, stem: String): File {
+        val dayAgo = System.currentTimeMillis() - 24 * 60 * 60 * 1000L
+        folder.listFiles { file -> file.name.startsWith("$stem.") && file.name.endsWith(".part") && file.lastModified() < dayAgo }
+            ?.forEach { it.delete() }
+        return File(folder, "$stem.${System.nanoTime()}.part")
     }
 
     @Suppress("DEPRECATION")

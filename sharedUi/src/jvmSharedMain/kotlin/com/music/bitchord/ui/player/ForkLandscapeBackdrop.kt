@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -55,15 +56,18 @@ internal fun ForkLandscapeBackdrop(
     val intro = rememberForkBackdropIntro(clip.url, true)
 
     Box(modifier.fillMaxSize()) {
-        CanvasArtworkPlayer(
-            canvas = clip,
-            isPlaying = isPlaying,
-            contentMode = CanvasContentMode.CROP,
-            presentationAlpha = { shown * intro.alpha },
-            onRenderedChanged = { intro.rendered(it) { r -> rendered = r } },
-            pausedForTransition = pausedForTransition,
-            modifier = Modifier.align(Alignment.CenterEnd).fillMaxWidth(0.5f).fillMaxHeight(),
-        )
+        // One player per clip, as in portrait: changed in place, the new clip stays hidden for good.
+        key(clip.url) {
+            CanvasArtworkPlayer(
+                canvas = clip,
+                isPlaying = isPlaying,
+                contentMode = CanvasContentMode.CROP,
+                presentationAlpha = { shown * intro.alpha },
+                onRenderedChanged = { intro.rendered(it) { r -> rendered = r } },
+                pausedForTransition = pausedForTransition,
+                modifier = Modifier.align(Alignment.CenterEnd).fillMaxWidth(0.5f).fillMaxHeight(),
+            )
+        }
         // The clip's left edge melts into the blur: the blur again, over it, fading out.
         if (blurred != null) {
             Image(

@@ -117,9 +117,21 @@ object ForkQueues {
     fun play(queue: Saved) {
         val start = play ?: return
         if (queue.songs.isEmpty()) return
+        // Starting only launches the swap. The song may already be playing in the queue being
+        // replaced: seeking that one, the new queue then lands at 0:00. Wait to see the swap.
+        var swapped = false
+        val swap = object : Player.Listener {
+            override fun onTimelineChanged(timeline: androidx.media3.common.Timeline, reason: Int) {
+                if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) swapped = true
+            }
+        }
+        val listening = player?.takeIf { queue.positionMs > 0L }?.also { it.addListener(swap) }
         start(queue.songs, queue.index, QueueSource(queue.name, PlaybackSourceType.QUEUE))
-        val target = queue.current?.videoId ?: return
-        if (queue.positionMs <= 0L) return
+        val target = queue.current?.videoId
+        if (target == null || listening == null) {
+            listening?.removeListener(swap)
+            return
+        }
         appScope?.launch {
             // The queue is built off the main thread, and the new item is positioned (at 0) as it
             // is prepared: a seek before the song is ready is overwritten. Seek once it is the
@@ -127,14 +139,18 @@ object ForkQueues {
             var waited = 0L
             while (waited < RESTORE_WAIT_MS) {
                 val p = player ?: return@launch
-                if (p.currentMediaItem?.mediaId == target && p.playbackState == Player.STATE_READY) {
+                if (swapped && p.currentMediaItem?.mediaId == target && p.playbackState == Player.STATE_READY) {
                     p.seekTo(queue.positionMs)
                     delay(500)
-                    if (kotlin.math.abs(p.currentPosition - queue.positionMs) < 5_000) return@launch
+                    if (kotlin.math.abs(p.currentPosition - queue.positionMs) < 5_000) {
+                        listening.removeListener(swap)
+                        return@launch
+                    }
                 }
                 delay(100)
                 waited += 100
             }
+            listening.removeListener(swap)
             Log.d(TAG, "saved queue ${queue.name}: never reached ${queue.current?.title}, not seeking")
         }
     }

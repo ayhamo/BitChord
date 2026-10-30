@@ -1105,7 +1105,7 @@ internal fun Song.toPartyTrack(playerDurationMs: Long): PartyTrack = PartyTrack(
     videoId = videoId,
     title = title,
     artist = artist,
-    thumbnailUrl = thumbnailUrl,
+    thumbnailUrl = thumbnailUrl.takeUnless { com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(videoId) }, // fork: members can't reach a private server's cover, and its address stays here
     // The player's own figure when it has one, since it comes from the decoder;
     // otherwise what the row that queued the track claimed.
     durationMs = playerDurationMs.takeIf { it > 0L }

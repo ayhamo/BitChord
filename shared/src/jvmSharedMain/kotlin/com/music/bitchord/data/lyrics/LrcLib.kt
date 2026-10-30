@@ -89,8 +89,14 @@ object LrcLib {
      * with nothing after it closes the final line, so it always survives.
      */
     fun parseLrc(lrc: String): List<LyricLine> {
-        val all = lrc.lineSequence().mapNotNull { line ->
-            val match = STAMP.find(line) ?: return@mapNotNull null
+        val all = lrc.lineSequence().flatMap { line ->
+            val first = STAMP.find(line) ?: return@flatMap emptyList<LyricLine>()
+            // fork: a compressed line, `[00:12.00][01:45.00]Chorus`, is one line at each of its times.
+            val stamps = generateSequence(first) { STAMP.matchAt(line, it.range.last + 1) }.toList()
+            val body = line.substring(stamps.last().range.last + 1)
+            // Detect the RTL marker that was written by [toEnhancedLrc].
+            val (text, alignment) = stripAlignmentMarker(body)
+            stamps.map { match ->
             val (minutes, seconds, fraction) = match.destructured
             // Two digits mean centiseconds, three mean milliseconds.
             val fractionMs = when (fraction.length) {
@@ -98,9 +104,6 @@ object LrcLib {
                 3 -> fraction.toLong()
                 else -> 0L
             }
-            val body = line.substring(match.range.last + 1)
-            // Detect the RTL marker that was written by [toEnhancedLrc].
-            val (text, alignment) = stripAlignmentMarker(body)
             LyricLine(
                 timeMs = minutes.toLong() * 60_000 + seconds.toLong() * 1_000 + fractionMs,
                 // Stripped rather than rebuilt from the runs below: the spacing
@@ -111,6 +114,7 @@ object LrcLib {
                 words = parseWordRuns(text),
                 alignment = alignment,
             )
+            }
         }.sortedBy { it.timeMs }.toList()
 
         val kept = all.filterIndexed { index, line ->

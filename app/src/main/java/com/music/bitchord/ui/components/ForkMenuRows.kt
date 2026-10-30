@@ -113,7 +113,7 @@ internal fun forkSize(bytes: Long): String = when {
  * second; see [com.music.bitchord.fork.ForkQueues].
  */
 @Composable
-internal fun ForkSavedQueuesRow(accent: Color) {
+internal fun ForkSavedQueuesRow(accent: Color, onPlayed: () -> Unit = {}) {
     val saved by com.music.bitchord.fork.ForkQueues.saved.collectAsStateWithLifecycle()
     var open by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
     ActionRow(
@@ -122,12 +122,13 @@ internal fun ForkSavedQueuesRow(accent: Color) {
         value = saved.size.takeIf { it > 0 }?.toString(),
         accent = accent,
     ) { open = true }
-    if (open) ForkSavedQueuesDialog(saved) { open = false }
+    if (open) ForkSavedQueuesDialog(saved, onPlayed) { open = false }
 }
 
 @Composable
 private fun ForkSavedQueuesDialog(
     saved: List<com.music.bitchord.fork.ForkQueues.Saved>,
+    onPlayed: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     var name by androidx.compose.runtime.saveable.rememberSaveable {
@@ -183,6 +184,7 @@ private fun ForkSavedQueuesDialog(
                             androidx.compose.material3.TextButton(onClick = {
                                 com.music.bitchord.fork.ForkQueues.play(queue)
                                 onDismiss()
+                                onPlayed() // the song menu behind it was for a song no longer playing
                             }) { androidx.compose.material3.Text(stringResource(R.string.fork_queues_play)) }
                             androidx.compose.material3.TextButton(onClick = { com.music.bitchord.fork.ForkQueues.delete(queue.id) }) {
                                 androidx.compose.material3.Text(stringResource(R.string.fork_queues_delete))
@@ -235,11 +237,11 @@ internal fun ForkFullscreenArtMenuRow(accent: Color) {
 
 /** The fork's rows in the player's menu: the big art, the two video switches and saved queues. */
 @Composable
-internal fun ForkPlayerMenuRows(song: com.music.bitchord.data.model.Song, accent: Color) {
+internal fun ForkPlayerMenuRows(song: com.music.bitchord.data.model.Song, accent: Color, onQueuePlayed: () -> Unit = {}) {
     if (!com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(song.videoId)) {
         ForkFullscreenArtMenuRow(accent)
         ForkBackdropMenuRow(accent)
         ForkAnimatedCoversMenuRow(accent)
     }
-    ForkSavedQueuesRow(accent)
+    ForkSavedQueuesRow(accent, onQueuePlayed)
 }

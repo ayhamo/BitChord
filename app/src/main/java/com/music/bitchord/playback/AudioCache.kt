@@ -1501,7 +1501,7 @@ object AudioCache {
         val id = upcoming.mediaId
         // A source-backed row resolves through its own source when opened, and
         // a downloaded or reverted track never reads this entry at all.
-        if (SourceRegistry.parseTrackKey(id) != null || id in Downloads.saved.value || OriginalVersion.isPinned(id)) {
+        if (SourceRegistry.parseTrackKey(id) != null || id in Downloads.saved.value || OriginalVersion.isPinned(id) || com.music.bitchord.fork.ForkPreload.skipsReadAhead(id)) { // fork: skipsReadAhead, a server's song isn't in any catalogue
             directJob = null
             return
         }

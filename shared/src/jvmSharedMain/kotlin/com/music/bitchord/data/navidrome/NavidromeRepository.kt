@@ -82,11 +82,12 @@ object NavidromeRepository {
 
     /** A client for the saved server, with the saved salt so its URLs stay the same across starts. */
     /**
-     * [url] as it may be written to disk: a server address without its login. `t` and `s` log in as
-     * the user until the password changes, so they stay out of settings, backups and manifests.
+     * [url] without a login. `t` and `s` log in as the user until the password changes, so they
+     * stay out of every address: for one an older version saved with its login.
      */
     fun atRest(url: String?): String? {
-        val parsed = url?.toHttpUrlOrNull() ?: return url
+        if (url == null || "/rest/" !in url) return url
+        val parsed = url.toHttpUrlOrNull() ?: return url
         if ("/rest/" !in parsed.encodedPath || parsed.queryParameter("t") == null) return url
         return parsed.newBuilder()
             .removeAllQueryParameters("u")
@@ -96,11 +97,11 @@ object NavidromeRepository {
             .toString()
     }
 
-    /** [atRest] undone with the current login, for an address read back from disk. */
-    fun live(url: String?): String? {
-        if (url == null || "/rest/" !in url) return url
-        return runCatching { client().withLogin(url) }.getOrDefault(url)
-    }
+    /** An address read back from disk: [atRest], since an older version may have saved its login. */
+    fun live(url: String?): String? = atRest(url)
+
+    /** For what can't go through [com.music.bitchord.data.Http]: see [NavidromeClient.withLogin]. */
+    fun withLogin(url: String): String = runCatching { client().withLogin(url) }.getOrDefault(url)
 
     fun client() = NavidromeClient(
         NavidromeSettings.url.value,

@@ -52,7 +52,7 @@ internal object DesktopArtworkCache {
             runCatching { kept.decodeToImageBitmap() }.getOrNull()?.let { images.put(url, it); return it }
         }
         return runCatching {
-            URI(url).toURL().openConnection().apply {
+            URI(com.music.bitchord.data.navidrome.NavidromeRepository.withLogin(url)).toURL().openConnection().apply { // fork: withLogin, this isn't the HTTP client that adds it
                 connectTimeout = 10_000
                 readTimeout = 10_000
             }.getInputStream().use { stream -> stream.readBytes().decodeToImageBitmap() }

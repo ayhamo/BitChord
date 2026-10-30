@@ -4131,6 +4131,7 @@ private fun BitChordApp(
                         .onSizeChanged { floatingBarsHeight.intValue = it.height },
                 ) {
                     QueueActionNoticeHost(queueNotice)
+                    com.music.bitchord.ui.components.ForkOfflineBanner() // fork: offline mode strip
                     // Liquid glass replaces the two stacked bars with the single
                     // component they are stacked to imitate: the now playing
                     // controls dock into the tab bar rather than riding above it,
@@ -4408,6 +4409,7 @@ private fun BitChordApp(
                 song = song,
                 signedIn = signedIn,
                 likeStatus = likeStatusOf(song),
+                forkOnQueuePlayed = { songActions = null }, // fork
                 onPlayNext = { playNext(song); songActions = null },
                 onAddToQueue = { addToQueue(song); songActions = null },
                 onStartRadio = { startRadio(song); songActions = null },

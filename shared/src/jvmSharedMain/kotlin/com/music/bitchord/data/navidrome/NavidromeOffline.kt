@@ -162,6 +162,8 @@ object NavidromeOffline {
         dir.listFiles()?.filter { it.isFile && '.' !in it.name }?.mapTo(onDiskIds) { it.name }
         manifestUnreadable = unreadableManifest.isFile
         _pages.value = readManifest()
+        // Written by a version that kept the login in its addresses: once, without it.
+        if (runCatching { File(dir, "offline.json").takeIf { it.isFile }?.readText() }.getOrNull()?.let { "?t=" in it || "&t=" in it } == true) writeManifest()
         readClips()
         publishRow()
     }
@@ -500,6 +502,12 @@ object NavidromeOffline {
     /** Lets every page go. */
     fun removeAll() {
         _pages.value.keys.toList().forEach(::remove)
+        // An unreadable list holds its files for good (sweep can't tell what it kept): being asked to clear everything answers that.
+        if (::dir.isInitialized && manifestUnreadable) {
+            unreadableManifest.delete()
+            manifestUnreadable = false
+            sweep()
+        }
     }
 
     /**

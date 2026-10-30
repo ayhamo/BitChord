@@ -1847,7 +1847,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             ?: return TopPicks.LocalTaste()
         return TopPicks.LocalTaste(
             artists = month.artists.take(10).map { ArtistRef(name = it.title, browseId = it.browseId) },
-            songs = month.songs.take(5).map { it.song },
+            songs = month.songs.map { it.song }.filterNot { com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(it.videoId) || com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(it.videoId) }.take(5), // fork: filterNot, Top Picks seeds a YouTube station from these
             genres = month.genres.take(3).map { it.title },
         )
     }
@@ -1883,10 +1883,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Fork: the network is back. Home loads what it couldn't, and a song left without lyrics asks again. */
     private fun forkBackOnline() {
-        if (_home.value is UiState.Success) {
-            viewModelScope.launch { com.music.bitchord.data.navidrome.NavidromeHome.load(getApplication()) }
-        } else {
-            loadHome()
+        when (_home.value) {
+            is UiState.Success -> viewModelScope.launch { com.music.bitchord.data.navidrome.NavidromeHome.load(getApplication()) }
+            is UiState.Loading -> Unit // on its way: restarting would throw that away
+            else -> loadHome()
         }
         val request = currentLyricsRequest ?: return
         if (_lyrics.value != null) return
@@ -2804,7 +2804,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // may be a "Playing from" label from before a rename.
             OfflinePlaylists.get(browseId)?.let { name = it.title }
             val local = localPageState(browseId)
-            com.music.bitchord.data.navidrome.NavidromeAlbums.header(browseId)?.let { artwork = it.cover; credit = it.artist } // fork: the album's cover and artist, not the opening song's
             // Reopened by id alone — the player's "Playing from" — a page off
             // the device arrives with only its title, and offline nothing from
             // YouTube or Apple ever lends it a cover. It takes the cover and
@@ -2815,6 +2814,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (thumbnailUrl == null) artwork = record?.thumbnailUrl ?: group?.thumbnailUrl
                 if (subtitle.isBlank()) credit = (record?.subtitle ?: group?.subtitle)?.ifBlank { null }
             }
+            com.music.bitchord.data.navidrome.NavidromeAlbums.header(browseId)?.let { artwork = it.cover; credit = it.artist } // fork: the album's cover and artist, not the opening song's
             val state = when {
                 local != null -> local
                 resolved == BrowseType.ARTIST -> {

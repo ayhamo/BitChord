@@ -281,13 +281,18 @@ class NavidromeClient(
     }
 
     /** The original file, untouched (`format=raw`): FLAC stays FLAC, Opus stays Opus. */
-    fun streamUrl(id: String): String = endpoint("stream", "id" to id, "format" to "raw").toString()
+    fun streamUrl(id: String): String = endpoint("stream", "id" to id, "format" to "raw", login = false).toString()
 
-    /** [url] with this login, when it is this server's address with none ([NavidromeRepository.atRest]); else as it is. */
+    /**
+     * [url] with this login, when it is this server's address with none; else as it is. A song's
+     * addresses carry no login, because a song goes everywhere: the media session any app can read,
+     * the player's cache index, logs. The HTTP layer adds it per request ([NavidromeClips]); only
+     * what opens an address some other way (FFmpeg, a Cast receiver) calls this itself.
+     */
     fun withLogin(url: String): String {
         val parsed = url.toHttpUrlOrNull() ?: return url
         if (parsed.host != base.host || parsed.port != base.port) return url
-        if ("/rest/" !in parsed.encodedPath || parsed.queryParameter("t") != null) return url
+        if ("/rest/" !in parsed.encodedPath || "/rest/x-clip/" in parsed.encodedPath || parsed.queryParameter("t") != null) return url
         return parsed.newBuilder()
             .addQueryParameter("u", username)
             .addQueryParameter("t", token)
@@ -298,15 +303,19 @@ class NavidromeClient(
 
     /** A cover by its Subsonic id: a song's own (`mf-…`) or an album's (`al-…`). */
     fun coverUrl(coverArt: String, size: Int = 600): String =
-        endpoint("getCoverArt", "id" to coverArt, "size" to size.toString()).toString()
+        endpoint("getCoverArt", "id" to coverArt, "size" to size.toString(), login = false).toString()
 
-    private fun endpoint(method: String, vararg params: Pair<String, String>): HttpUrl =
+    private fun endpoint(method: String, vararg params: Pair<String, String>, login: Boolean = true): HttpUrl =
         base.newBuilder()
             .addPathSegment("rest")
             .addPathSegment(method)
-            .addQueryParameter("u", username)
-            .addQueryParameter("t", token)
-            .addQueryParameter("s", salt)
+            .apply {
+                if (login) {
+                    addQueryParameter("u", username)
+                    addQueryParameter("t", token)
+                    addQueryParameter("s", salt)
+                }
+            }
             // Subsonic's required version parameter, written as `%76` (= "v"). The player treats any
             // URI with a `v` query parameter as a YouTube watch link (`bitchord://watch?v=…`), so a
             // literal `v=1.16.1` made every stream URL "play" YouTube video "1.16.1". Navidrome

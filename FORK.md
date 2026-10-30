@@ -32,6 +32,7 @@ Everything this fork adds lives in new files where possible. This file lists eve
 | `app/src/main/java/com/music/bitchord/data/navidrome/NavidromeHome.kt` | Album shelves (recently added / recent / most played / random) laid over the top of Home |
 | `app/src/test/java/com/music/bitchord/NavidromeLyricsTest.kt` | Lyrics answer → player lines (offset, word stamps, plain text ignored) |
 | `app/src/main/res/values/strings_fork.xml` | Fork strings |
+| `app/src/main/java/com/music/bitchord/fork/ForkBitmapLoader.kt` | The media session's covers through `Http.client`, which adds a server's login |
 | `app/src/main/java/com/music/bitchord/fork/ForkSettings.kt` | Fork switches (`bitchord_fork` prefs): crossfade on skip, backdrop videos, animated covers, report plays to Navidrome, Navidrome on Home. On its first start it turns upstream's "Spotify Canvas auto-hide" off once (`canvas_manual_set`), so the controls over a clip stay until tapped away; it can be turned back on in Settings |
 | `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/navidrome/NavidromeStars.kt` | The heart/star for Navidrome songs as the server's star (`star`/`unstar`), seeded from the songs' `starred` |
 | `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/navidrome/NavidromePlaylists.kt` | Server playlists as pages (`local:group:playlist:navidrome:<id>`), reached from the Home "Playlists" shelf |
@@ -96,6 +97,18 @@ Everything this fork adds lives in new files where possible. This file lists eve
 | `data/settings/AppSettings.kt` | `SongSort.REVERSED` ("Reverse order") after DEFAULT |
 | `data/lyrics/EmbeddedLyrics.kt` | `forUri()`: first two lines hand a Navidrome stream URL to `NavidromeLyrics` |
 | `data/AppUpdateChecker.kt` | `LATEST_RELEASE_URL` points at `ayhamo/BitChord`; the tag has `fork-` stripped before `v` |
+| `playback/PlaybackService.kt` (from the Android audit) | `setBitmapLoader(forkBitmapLoader)`; `resolveForCast` adds the login; `onMixPositionJump` and `onDacVolumeChanged` read `SessionPlayer` behind the mask player; AutoPlay returns on a station |
+| `playback/PlayerConnection.kt` | `toMediaItem`: `atRest` on the address and cover, since any app can read an item's metadata |
+| `playback/cast/CastPlayback.kt`, `playback/PartySync.kt`, `data/discord/DiscordRPC.kt` | Cast's cover adds the login; a party and Discord get no server cover |
+| `playback/CrossfadeController.kt` `crossfadeSkip` | Refuses under bit-perfect output |
+| `playback/AudioCache.kt` `prefetchDirect` | `skipsReadAhead`: a server's song isn't in any catalogue |
+| `ui/MainViewModel.kt` | `localTaste` leaves out server songs and stations; `NavidromeAlbums.header` after v1.9's fallback; `forkBackOnline` leaves a load in flight alone |
+| `ui/components/SongActionsMenu.kt`, `MainActivity.kt` | No empty group on a server's song; `forkOnQueuePlayed` closes the menu when a saved queue starts; the offline strip under Liquid Glass too |
+| `data/LikeState` `clear` | Keeps `navidrome:` ids: a server's stars aren't the YouTube account's |
+| `data/lyrics/LrcLib.kt` `parseLrc` | A compressed line, `[a][b]text`, is one line at each time |
+| `download/DownloadStore.kt`, `download/DownloadService.kt` | `.part` unique per download; `promote` survives a used-up data-sync budget, `onTimeout` stops |
+| `sharedUi/.../LandscapePlayer.kt`, `HomeScreen.kt` | `key(clip.url)` on the sleeve clip; `- forkHome.tailItems` in load-more |
+| `res/xml/backup_rules.xml`, `data_extraction_rules.xml` | Also `exoplayer_internal.db` and its journal, `bitchord_radio_logos.xml` |
 | `data/innertube/PlaybackTracker.kt` | First line of `onPlaying`: `ForkYouTubeHistory.intercept`; first line of `onProgress`: maps a Navidrome id to its YouTube match |
 | `shared/…/data/Http.kt` | `forkInterceptor` property (set by `NavidromeClips.init`) and one `.addInterceptor { … forkInterceptor … }` line after the WebDAV one |
 | `shared/…/data/SongInfoRepository.kt` | First line of `load()`: `ForkSongInfo.provider` |
@@ -159,6 +172,7 @@ Upstream removed `desktopApp` and `desktopUi` in `e4dd63d8`; `pc` restores them 
 | `desktopApp/.../DesktopLyricsClient.kt` | `lookup()`: the server's timed lyrics first |
 | `desktopApp/.../DesktopPlayerHost.kt` | `canvasFor()`: `NavidromeClips.canvasFor(song)` first |
 | `desktopApp/.../DesktopScrobbling.kt` | `updateNowPlaying()`, `onPlaybackEnded()`: `NavidromeScrobble`; both do nothing for a radio station |
+| `desktopApp/.../DesktopArtwork.kt` | `load`: `withLogin`, it opens the address itself rather than through `Http` |
 | `desktopApp/.../DesktopUpdateChecker.kt` | `LATEST_RELEASE_URL` points at `ayhamo/BitChord`; the tag has `fork-` stripped before `v`; a release with no file for this platform says nothing; `-windows-portable.zip` counts as the Windows file |
 | `desktopApp/.../ForkRadio.kt` (new) | Internet radio, the phone's Library page: stations from the shared `NavidromeRadio` (moved from `app`, its logo prefs now a `NavidromePlatform.Store`), a page in place of the library on the Navidrome page, hidden offline; logo keys hashed for Java Preferences' 80 characters |
 | `desktopApp/.../DesktopApp.kt` (radio) | `ForkNavidromeScreen`: `radio = { ForkRadioPage(…) }`. `playPrevious`: on a station, always the previous row |

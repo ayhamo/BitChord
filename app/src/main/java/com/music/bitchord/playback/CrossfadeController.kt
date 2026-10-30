@@ -4184,6 +4184,8 @@ class CrossfadeController(
             return false
         }
         if (!com.music.bitchord.fork.ForkSettings.crossfadeOnSkip.value) return false
+        // One stream to the DAC: no blend, as a song running out (planAutoTransition).
+        if (BitPerfectOutput.status.value.active) return false
         if (phase != Phase.IDLE) return false
         if (versionSwapActive() || ListenTogether.state.value.inParty) return false
         val out = active()

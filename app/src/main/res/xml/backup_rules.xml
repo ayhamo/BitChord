@@ -26,4 +26,6 @@
     <exclude domain="sharedpref" path="bitchord_widget.xml" />
     <!-- Station logo addresses; older ones hold a server login. -->
     <exclude domain="sharedpref" path="bitchord_radio_logos.xml" />
+    <exclude domain="database" path="exoplayer_internal.db" />
+    <exclude domain="database" path="exoplayer_internal.db-journal" />
 </full-backup-content>

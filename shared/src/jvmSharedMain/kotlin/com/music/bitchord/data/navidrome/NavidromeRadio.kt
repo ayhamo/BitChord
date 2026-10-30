@@ -152,6 +152,7 @@ object NavidromeRadio {
 
     private const val DIRECTORY_HOST = "de1.api.radio-browser.info"
     private const val LOGO_MS = 7L * 24 * 60 * 60 * 1000
+    private const val PLAYLIST_BYTES = 64L * 1024
 
     /** The stream a `.pls` / `.m3u` address names, else [url] itself. */
     private suspend fun resolve(url: String): String {
@@ -160,7 +161,11 @@ object NavidromeRadio {
         return withContext(Dispatchers.IO) {
             runCatching {
                 Http.client.newCall(Request.Builder().url(url).get().build()).execute().use { response ->
-                    response.body.string().lineSequence()
+                    // A "playlist" that is really the live stream never ends: never read it to its end.
+                    if (response.body.contentType()?.type == "audio") return@use null
+                    val source = response.body.source()
+                    source.request(PLAYLIST_BYTES)
+                    source.buffer.readUtf8(minOf(source.buffer.size, PLAYLIST_BYTES)).lineSequence()
                         .map { line -> line.trim().let { if (it.startsWith("http")) it else it.substringAfter('=') } } // pls: "File1=http://…"
                         .firstOrNull { it.startsWith("http://") || it.startsWith("https://") }
                 }

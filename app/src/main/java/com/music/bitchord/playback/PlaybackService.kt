@@ -1861,6 +1861,7 @@ class PlaybackService : MediaLibraryService() {
             MediaLibraryCallback(),
         )
             .setId(SESSION_ID)
+            .setBitmapLoader(com.music.bitchord.fork.forkBitmapLoader(this)) // fork: covers through the app's client, which adds a server's login
             .setSessionActivity(sessionActivity())
             .build()
         refreshCustomLayouts()
@@ -1892,7 +1893,7 @@ class PlaybackService : MediaLibraryService() {
         // Ungated: the receiver plays items this player is not on.
         val resolved = DirectSourceGate.ungated { resolver.resolveDataSpec(DataSpec(uri)) }.uri
         if (resolved.scheme == "http" || resolved.scheme == "https") {
-            CastStream(resolved.toString(), CastPlayback.mimeTypeOf(resolved))
+            CastStream(com.music.bitchord.data.navidrome.NavidromeRepository.withLogin(resolved.toString()), CastPlayback.mimeTypeOf(resolved)) // fork: withLogin, the receiver asks the server itself
         } else {
             // The item's URI may be a local/offline path for a downloaded track.
             // Fall back to resolving the remote stream URL using the same path
@@ -2000,7 +2001,7 @@ class PlaybackService : MediaLibraryService() {
             },
             syncedLines = ::loopMixLyrics,
             loudnessGain = ::loudnessGainFor,
-            onMixPositionJump = { wrapped -> (mediaSession?.player as? SessionPlayer)?.announceMixPosition(wrapped) },
+            onMixPositionJump = { wrapped -> ((mediaSession?.player as? ForwardingPlayer)?.wrappedPlayer as? SessionPlayer)?.announceMixPosition(wrapped) }, // fork: behind forkMasked
         )
 
     /**
@@ -3131,6 +3132,7 @@ class PlaybackService : MediaLibraryService() {
             return
         }
         val current = exoPlayer.currentMediaItem?.toSong() ?: return
+        if (com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(current.videoId)) return // fork: a station has no radio and no end, and the watchdog would ask every 15 s for as long as it plays
         if (AppSettings.dontRepeatSuggestions.value) sessionSongHistory += current
         // In a party the server's queue is the one being topped up, and this
         // player's copy of it lags behind by however long reconcile is held off
@@ -7056,7 +7058,7 @@ class PlaybackService : MediaLibraryService() {
             var available = false
             DacVolume.level.collect { level ->
                 val now = level != null
-                (mediaSession?.player as? SessionPlayer)?.onDacVolumeChanged(routeChanged = now != available)
+                ((mediaSession?.player as? ForwardingPlayer)?.wrappedPlayer as? SessionPlayer)?.onDacVolumeChanged(routeChanged = now != available) // fork: behind forkMasked
                 available = now
             }
         }

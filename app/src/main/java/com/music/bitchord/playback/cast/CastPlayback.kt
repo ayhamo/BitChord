@@ -542,7 +542,7 @@ class CastPlayback(
             metadata.artist?.let { putString(MediaMetadata.KEY_ARTIST, it.toString()) }
             metadata.albumTitle?.let { putString(MediaMetadata.KEY_ALBUM_TITLE, it.toString()) }
             metadata.artworkUri?.takeIf { it.scheme == "http" || it.scheme == "https" }
-                ?.let { addImage(WebImage(it)) }
+                ?.let { addImage(WebImage(android.net.Uri.parse(com.music.bitchord.data.navidrome.NavidromeRepository.withLogin(it.toString())))) } // fork: withLogin, as the stream
         }
         val info = MediaInfo.Builder(stream.url)
             .setStreamType(MediaInfo.STREAM_TYPE_BUFFERED)

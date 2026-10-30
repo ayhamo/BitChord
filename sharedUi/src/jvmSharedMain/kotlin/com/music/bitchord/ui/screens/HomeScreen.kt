@@ -277,7 +277,7 @@ fun HomeScreen(
                 val layout = listState.layoutInfo
                 (layout.visibleItemsInfo.lastOrNull()?.index ?: -1) to layout.totalItemsCount
             }.collect { (lastVisible, total) ->
-                if (!loadingMore && total > 0 && lastVisible >= total - 3) loadMore()
+                if (!loadingMore && total > 0 && lastVisible >= total - 3 - forkHome.tailItems) loadMore() // fork: - tailItems
             }
         }
     }

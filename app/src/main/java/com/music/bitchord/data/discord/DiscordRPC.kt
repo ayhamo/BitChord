@@ -120,7 +120,7 @@ class DiscordRPC(
             // which is anything that isn't an http URL — sends none, and Discord
             // draws the BitChord application's own icon in its place.
             largeImage = song.artworkAt(ART_PX)
-                ?.takeIf { it.startsWith("http") }
+                ?.takeIf { it.startsWith("http") && "/rest/getCoverArt" !in it } // fork: Discord can't reach a private server, and its address stays here
                 ?.let(RpcImage::ExternalImage),
             smallImage = null,
             // The card's optional third information line. Kept absent for

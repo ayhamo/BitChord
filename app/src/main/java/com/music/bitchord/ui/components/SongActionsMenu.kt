@@ -121,6 +121,7 @@ fun SongActionsMenu(
     onOpenAlbum: (String) -> Unit,
     onOpenArtist: (String) -> Unit,
     modifier: Modifier = Modifier,
+    forkOnQueuePlayed: () -> Unit = {}, // fork: a saved queue started from the menu closes it
     onRemoveFromPlaylist: (() -> Unit)? = null,
     /**
      * Takes this track out of the song cache. Null hides the row — the caller
@@ -283,7 +284,7 @@ fun SongActionsMenu(
         // player's own pair: a heart that files the track under this device's
         // Liked playlist, and the device's playlists. [likeStatus] is that
         // playlist's answer there, not YouTube's, and neither needs an account.
-        if (canRate) {
+        if (canRate && (!com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(song.videoId) || onRemoveFromPlaylist != null)) { // fork: no empty group on a server's song
             if (startsGroup()) IosMenuSeparator()
             if (!com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(song.videoId)) ActionRow( // fork: YouTube's and the device's playlists hold neither a server's song
                 icon = SfIcons.AddToPlaylist,
@@ -381,7 +382,7 @@ fun SongActionsMenu(
                     value = sleepTimerStatus(),
                     accent = palette.accent,
                 ) { pickingSleepTimer = true }
-                ForkPlayerMenuRows(song, palette.accent) // fork
+                ForkPlayerMenuRows(song, palette.accent, forkOnQueuePlayed) // fork
             }
             // Local files and completed downloads use the same player lyric
             // clock (including embedded synced lyrics), so they need this

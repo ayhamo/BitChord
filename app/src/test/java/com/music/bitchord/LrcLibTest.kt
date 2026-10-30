@@ -12,6 +12,19 @@ class LrcLibTest {
     private fun List<LyricLine>.words() = filterNot { it.isGap }.map { it.text }
 
     @Test
+    fun `a compressed line plays at each of its times`() {
+        val lines = LrcLib.parseLrc(
+            """
+            [00:12.00][01:45.00]Chorus
+            [00:20.00]Verse
+            """.trimIndent(),
+        ).filterNot { it.isGap }
+
+        assertEquals(listOf("Chorus", "Verse", "Chorus"), lines.map { it.text })
+        assertEquals(listOf(12_000L, 20_000L, 105_000L), lines.map { it.timeMs })
+    }
+
+    @Test
     fun `parses centisecond stamps`() {
         val lines = LrcLib.parseLrc(
             """

@@ -122,7 +122,8 @@ internal object ForkNavidrome {
         if (!owns(song) || !NavidromeSettings.isConfigured()) return null
         // The plain path, as the engine gives its own saved files: FFmpeg doesn't decode a file:// address.
         NavidromeOffline.localFile(song.videoId.removePrefix(NavidromeSettings.ID_PREFIX))?.let { return DesktopStream(it.absolutePath) }
-        return DesktopStream(NavidromeRepository.client().streamUrl(song.videoId.removePrefix(NavidromeSettings.ID_PREFIX)))
+        // With the login: FFmpeg opens this itself, not through the HTTP client that adds it.
+        return DesktopStream(NavidromeRepository.withLogin(NavidromeRepository.client().streamUrl(song.videoId.removePrefix(NavidromeSettings.ID_PREFIX))))
     }
 
     /**

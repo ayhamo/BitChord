@@ -670,7 +670,7 @@ fun Song.toMediaItem(): MediaItem {
     // [MediaItem.toSong], so an item waiting in the live queue can carry a URI
     // that has become stale since it was created. Checking only the lookup
     // leaves that path unguarded.
-    val offlineUri = localUri?.takeUnless(Downloads::isMissingLocalFile)
+    val offlineUri = com.music.bitchord.data.navidrome.NavidromeRepository.atRest(localUri)?.takeUnless(Downloads::isMissingLocalFile) // fork: atRest, every app can read an item's metadata
         ?: Downloads.verifiedSavedUri(videoId)
         ?: com.music.bitchord.data.navidrome.NavidromeOffline.uriFor(videoId) // fork: a removed kept file falls back to the server, not YouTube
     val uriString = offlineUri ?: when {
@@ -717,7 +717,7 @@ fun Song.toMediaItem(): MediaItem {
             // Sized here rather than left as stored: this is what the lock
             // screen, the notification and Android Auto draw, all of them
             // large, and none of them go back for a better copy later.
-            .setArtworkUri(artworkAt(NOTIFICATION_ART_PX)?.toUri())
+            .setArtworkUri(com.music.bitchord.data.navidrome.NavidromeRepository.atRest(artworkAt(NOTIFICATION_ART_PX))?.toUri()) // fork: atRest, as above
             // System media surfaces (One UI's Now Bar, Android Auto, Assistant)
             // classify a session by its media type; untyped sessions get treated
             // as generic audio and lose the music-specific card.
