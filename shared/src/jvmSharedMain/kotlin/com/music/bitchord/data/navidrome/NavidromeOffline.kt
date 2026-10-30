@@ -160,12 +160,14 @@ object NavidromeOffline {
         listOf(dir, coverDir, clipDir, lyricsDir).forEach { d -> d.listFiles()?.filter { it.name.endsWith(".part") }?.forEach { it.delete() } }
         // Song files are the only top-level files without a dot (offline.json, clips.json, *.part have one).
         dir.listFiles()?.filter { it.isFile && '.' !in it.name }?.mapTo(onDiskIds) { it.name }
+        manifestUnreadable = unreadableManifest.isFile
         _pages.value = readManifest()
         readClips()
         publishRow()
     }
 
     private val manifest get() = File(dir, "offline.json")
+    private val unreadableManifest get() = File(dir, "offline.json.bad")
     private val clipManifest get() = File(dir, "clips.json")
 
     /** Whether [browseId] is a page this can keep: a Navidrome album or playlist. */
@@ -289,8 +291,15 @@ object NavidromeOffline {
                 if (songs.none(::hasFile)) throw IOException("no song could be downloaded")
                 // Removed (or replaced) while its last song finished: don't bring it back.
                 if (jobs[id] !== me) throw CancellationException("offline $id was removed")
+                val before = _pages.value[id]
                 _pages.update { it + (id to page) }
-                writeManifest()
+                try {
+                    writeManifest()
+                } catch (e: IOException) {
+                    // A full disk: a page only in memory is gone next launch and its files with it.
+                    _pages.update { if (before != null) it + (id to before) else it - id }
+                    throw e
+                }
                 writeClips()
                 sweep() // a kept playlist kept again with fewer songs: the dropped ones go
                 publishRow()
@@ -339,6 +348,7 @@ object NavidromeOffline {
      */
     private suspend fun keepSong(client: NavidromeClient, song: Song) {
         val songId = song.videoId.removePrefix(NavidromeSettings.ID_PREFIX)
+        if (!safeName(songId)) return
         NavidromePlatform.awaitDownload() // covers and clips too, not only the audio, keep to the mobile-data switch
         var attempt = 0
         while (localFile(songId) == null) {
@@ -390,7 +400,7 @@ object NavidromeOffline {
     }
 
     private suspend fun keepCover(client: NavidromeClient, url: String) {
-        val coverId = coverIdOf(url) ?: return
+        val coverId = coverIdOf(url)?.takeIf(::safeName) ?: return
         download(client.coverUrl(coverId, COVER_PX), coverFile(coverId))
     }
 
@@ -429,7 +439,9 @@ object NavidromeOffline {
                     val songs = with(NavidromeRepository) { client.playlistSongs(row.id).map { it.toSong(client) } }
                     val same = !page.gone && row.name == page.title && songs.map { it.videoId } == page.songs.map { it.videoId }
                     if (page.id !in _pages.value) continue // removed while this asked the server
-                    if (!same && songs.isNotEmpty()) {
+                    // Much shorter than what's kept reads as a server mid-rescan, not as an edit: the
+                    // sweep after a keep would delete files only a new download can bring back.
+                    if (!same && songs.isNotEmpty() && songs.size * 2 >= page.songs.size) {
                         Log.d(TAG, "offline ${page.title}: changed on the server, keeping it again")
                         keep(page.id, row.name, page.subtitle, page.cover, songs)
                     }
@@ -606,7 +618,7 @@ object NavidromeOffline {
         if (url.host != base.host || url.port != base.port) return null
         val (file, type) = when {
             url.encodedPath.endsWith("/rest/getCoverArt") || url.encodedPath.endsWith("/rest/getCoverArt.view") ->
-                (url.queryParameter("id")?.let(::coverFile) ?: return null) to "image/jpeg"
+                (url.queryParameter("id")?.takeIf(::safeName)?.let(::coverFile) ?: return null) to "image/jpeg"
             "/rest/x-clip/" in url.encodedPath -> clipFile(url.toString()) to "video/mp4"
             else -> return null
         }
@@ -623,6 +635,9 @@ object NavidromeOffline {
 
     private fun coverIdOf(url: String): String? =
         url.toHttpUrlOrNull()?.takeIf { "getCoverArt" in it.encodedPath }?.queryParameter("id")
+
+    /** Ids come from the server and name files here: none of them may climb out of this folder. */
+    private fun safeName(id: String) = '/' !in id && '\\' !in id && ".." !in id
 
     /**
      * An album's cover id ends in `:<number>`, which Windows takes for a stream of a file with no
@@ -678,13 +693,16 @@ object NavidromeOffline {
                 id = id,
                 title = o.str("title").orEmpty(),
                 subtitle = o.str("subtitle").orEmpty(),
-                cover = o.str("cover"),
+                cover = NavidromeRepository.live(o.str("cover")),
                 gone = (o["gone"] as? JsonPrimitive)?.booleanOrNull ?: false,
                 songs = (o["songs"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonObject)?.toSong(client) },
             )
         }.associateBy { it.id }
     }.getOrElse {
         Log.d(TAG, "offline manifest: ${it.message}")
+        // Set aside, not overwritten by the next keep: with a new manifest that reads fine, the
+        // next sweep would delete everything the bad one listed. Nothing is swept while it's here.
+        manifest.renameTo(unreadableManifest)
         manifestUnreadable = true
         emptyMap()
     }
@@ -698,7 +716,7 @@ object NavidromeOffline {
                         put("id", page.id)
                         put("title", page.title)
                         put("subtitle", page.subtitle)
-                        page.cover?.let { put("cover", it) }
+                        NavidromeRepository.atRest(page.cover)?.let { put("cover", it) }
                         if (page.gone) put("gone", true)
                         put("songs", buildJsonArray { page.songs.forEach { add(it.toJson()) } })
                     },
@@ -721,7 +739,7 @@ object NavidromeOffline {
         artistId?.let { put("artistId", it) }
         albumId?.let { put("albumId", it) }
         albumName?.let { put("albumName", it) }
-        thumbnailUrl?.let { put("thumbnailUrl", it) }
+        NavidromeRepository.atRest(thumbnailUrl)?.let { put("thumbnailUrl", it) }
         durationText?.let { put("durationText", it) }
         trackNumber?.let { put("trackNumber", it) }
         sourceQuality?.let { put("sourceQuality", it) }
@@ -736,7 +754,7 @@ object NavidromeOffline {
             artist = str("artist").orEmpty(),
             artistId = str("artistId"),
             albumId = str("albumId"),
-            thumbnailUrl = str("thumbnailUrl"),
+            thumbnailUrl = NavidromeRepository.live(str("thumbnailUrl")),
             durationText = str("durationText"),
             albumName = str("albumName"),
             // Replaced by the file in [onDisk]; the stream URL only when the file has gone missing.

@@ -283,6 +283,19 @@ class NavidromeClient(
     /** The original file, untouched (`format=raw`): FLAC stays FLAC, Opus stays Opus. */
     fun streamUrl(id: String): String = endpoint("stream", "id" to id, "format" to "raw").toString()
 
+    /** [url] with this login, when it is this server's address with none ([NavidromeRepository.atRest]); else as it is. */
+    fun withLogin(url: String): String {
+        val parsed = url.toHttpUrlOrNull() ?: return url
+        if (parsed.host != base.host || parsed.port != base.port) return url
+        if ("/rest/" !in parsed.encodedPath || parsed.queryParameter("t") != null) return url
+        return parsed.newBuilder()
+            .addQueryParameter("u", username)
+            .addQueryParameter("t", token)
+            .addQueryParameter("s", salt)
+            .build()
+            .toString()
+    }
+
     /** A cover by its Subsonic id: a song's own (`mf-…`) or an album's (`al-…`). */
     fun coverUrl(coverArt: String, size: Int = 600): String =
         endpoint("getCoverArt", "id" to coverArt, "size" to size.toString()).toString()

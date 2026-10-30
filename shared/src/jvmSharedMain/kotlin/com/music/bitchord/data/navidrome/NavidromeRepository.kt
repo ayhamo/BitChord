@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
  * The Navidrome library as [Song] rows (fork-only), shaped like the WebDAV and
@@ -80,6 +81,27 @@ object NavidromeRepository {
     }
 
     /** A client for the saved server, with the saved salt so its URLs stay the same across starts. */
+    /**
+     * [url] as it may be written to disk: a server address without its login. `t` and `s` log in as
+     * the user until the password changes, so they stay out of settings, backups and manifests.
+     */
+    fun atRest(url: String?): String? {
+        val parsed = url?.toHttpUrlOrNull() ?: return url
+        if ("/rest/" !in parsed.encodedPath || parsed.queryParameter("t") == null) return url
+        return parsed.newBuilder()
+            .removeAllQueryParameters("u")
+            .removeAllQueryParameters("t")
+            .removeAllQueryParameters("s")
+            .build()
+            .toString()
+    }
+
+    /** [atRest] undone with the current login, for an address read back from disk. */
+    fun live(url: String?): String? {
+        if (url == null || "/rest/" !in url) return url
+        return runCatching { client().withLogin(url) }.getOrDefault(url)
+    }
+
     fun client() = NavidromeClient(
         NavidromeSettings.url.value,
         NavidromeSettings.username.value,

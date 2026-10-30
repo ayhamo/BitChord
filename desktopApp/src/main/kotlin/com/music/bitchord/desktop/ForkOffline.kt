@@ -56,6 +56,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -75,6 +76,7 @@ internal object ForkOffline {
 
     private const val PROBE_MS = 20_000L
     private const val PROBE_TIMEOUT_MS = 3_000
+    private const val MISSES_TO_OFFLINE = 2
 
     private const val KEY_MODE = "offline_mode"
     private const val IMAGE_CACHE_BYTES = 32L * 1024 * 1024
@@ -83,6 +85,7 @@ internal object ForkOffline {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mode = MutableStateFlow(prefs.getBoolean(KEY_MODE, false))
     private val reachable = MutableStateFlow(true)
+    @Volatile private var misses = 0
 
     /** Offline mode: switched on, or the server isn't answering. */
     val offline: StateFlow<Boolean> = combine(mode, reachable) { switched, server -> switched || !server }
@@ -106,8 +109,21 @@ internal object ForkOffline {
         installImageLoader()
         scope.launch {
             while (true) {
-                reachable.value = serverAnswers()
+                // Twice in a row: going offline reloads Home and the library, too much for one lost packet.
+                if (serverAnswers()) {
+                    misses = 0
+                    reachable.value = true
+                } else if (++misses >= MISSES_TO_OFFLINE) {
+                    reachable.value = false
+                }
                 delay(PROBE_MS)
+            }
+        }
+        // A new login isn't judged by the last server's answer.
+        scope.launch {
+            NavidromeSettings.saved.drop(1).collect {
+                misses = 0
+                reachable.value = true
             }
         }
     }

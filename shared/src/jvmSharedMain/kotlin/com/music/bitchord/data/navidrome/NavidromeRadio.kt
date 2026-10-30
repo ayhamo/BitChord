@@ -99,7 +99,7 @@ object NavidromeRadio {
     private fun String.publicPart(): String = substringBefore('?').replace(Regex("(?<=://)[^/@]*@"), "")
 
     private suspend fun logo(station: NavidromeClient.RadioRow, stream: String): String? = withContext(Dispatchers.IO) {
-        val key = station.id + "|" + station.streamUrl
+        val key = station.id + "|" + station.streamUrl.publicPart() // a private stream's login stays out of this plain store
         if (::logos.isInitialized) {
             logos.string(key)?.split('\n')?.let { parts ->
                 val at = parts.getOrNull(1)?.toLongOrNull() ?: 0L
@@ -138,7 +138,7 @@ object NavidromeRadio {
         val url = okhttp3.HttpUrl.Builder()
             .scheme("https").host(DIRECTORY_HOST)
             .addPathSegment("json").addPathSegment("stations")
-            .apply { path.split('/').forEach { addPathSegment(it) } }
+            .apply { path.split('/', limit = 2).forEach { addPathSegment(it) } } // a station's name may hold a slash
             .apply { query.forEach { (name, value) -> addQueryParameter(name, value) } }
             .build()
         Http.client.newCall(Request.Builder().url(url).header("User-Agent", "BitChord").get().build()).execute().use { response ->

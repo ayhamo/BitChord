@@ -4389,7 +4389,7 @@ private fun BitChordApp(
             // The library toggle needs tokens only YouTube can mint, and the
             // rating it comes back with is more authoritative than anything
             // the library feed knew — so the menu asks as it opens.
-            LaunchedEffect(song.videoId) { viewModel.loadSongMenu(song.videoId) }
+            LaunchedEffect(song.videoId) { if (!com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(song.videoId) && !com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(song.videoId)) viewModel.loadSongMenu(song.videoId) } // fork: YouTube has no such song
             // "Remove from this playlist" is only a sentence on a playlist
             // page the account can actually edit, and only for a row that
             // carries the per-entry id a removal is expressed in.

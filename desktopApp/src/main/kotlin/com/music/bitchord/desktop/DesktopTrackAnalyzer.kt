@@ -8,6 +8,7 @@ import com.music.bitchord.playback.smart.BeatTracker
 import com.music.bitchord.playback.smart.MelSpectrogram
 import com.music.bitchord.playback.smart.TrackAnalysis
 import com.music.bitchord.playback.smart.TrackFeatures
+import com.music.bitchord.playback.smart.heuristicVocalOnModelScale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -227,7 +228,7 @@ internal class DesktopTrackAnalyzer(
             mixOutCandidates = features.mixOutCandidates,
             energyCurve = features.energyCurve,
             lowEnergyCurve = features.lowEnergyCurve,
-            vocalActivityMask = features.vocalActivityMask,
+            vocalActivityMask = features.vocalActivityMask.map(::heuristicVocalOnModelScale), // fork: as the phone since v1.9, which moved the threshold to the model's scale
             vocalProbability = features.vocalProbability,
         )
     }

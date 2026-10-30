@@ -4188,6 +4188,9 @@ class CrossfadeController(
         if (versionSwapActive() || ListenTogether.state.value.inParty) return false
         val out = active()
         if (!out.isPlaying || toIndex == out.currentMediaItemIndex) return false
+        // Direct Source Stream can take longer to answer than a skip waits to arm: the old song would
+        // play on under the new title, then cut to silence. Its own way to skip wins (a server's song doesn't use it).
+        if (DirectSourceGate.isActive() && toIndex in 0 until out.mediaItemCount && !com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(out.getMediaItemAt(toIndex).mediaId)) return false
         if (toIndex !in 0 until out.mediaItemCount) return false
         // With Automix on, a skip blends too (there is no time to analyse it, so a plain fade of the
         // slider's length, or Automix's own fallback with the slider off); songs running out are

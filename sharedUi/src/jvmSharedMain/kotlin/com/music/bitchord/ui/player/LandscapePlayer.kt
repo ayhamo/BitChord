@@ -69,7 +69,6 @@ import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.isNavidromeRadio
-import com.music.bitchord.data.model.isNavidrome // fork
 
 /**
  * The widest the two columns are allowed to get between them, centred in

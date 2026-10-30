@@ -77,7 +77,7 @@ object SearchHistory {
         if (!this::prefs.isInitialized) return
         _recent.value = runCatching {
             json.decodeFromString(serializer, prefs.getString(KEY_HISTORY, null) ?: "[]")
-                .map { it.withCorrectedType() }
+                .map { it.withCorrectedType().copy(artworkUrl = com.music.bitchord.data.navidrome.NavidromeRepository.live(it.artworkUrl)) } // fork: live
         }.getOrDefault(emptyList())
         _addonRecent.value = runCatching {
             json.decodeFromString(addonSerializer, prefs.getString(KEY_ADDON_HISTORY, null) ?: "[]")
@@ -101,7 +101,7 @@ object SearchHistory {
 
     private fun save(value: List<SearchHistoryEntity>) {
         _recent.value = value
-        prefs.edit().putString(KEY_HISTORY, json.encodeToString(serializer, value)).apply()
+        prefs.edit().putString(KEY_HISTORY, json.encodeToString(serializer, value.map { it.copy(artworkUrl = com.music.bitchord.data.navidrome.NavidromeRepository.atRest(it.artworkUrl)) })).apply() // fork: no server login in settings, which are backed up
     }
 
     private const val KEY_HISTORY = "search_history"

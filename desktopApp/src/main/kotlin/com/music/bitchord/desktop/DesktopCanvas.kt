@@ -227,6 +227,7 @@ internal object DesktopCanvasCache {
                 DesktopMediaCache.trim()
                 return@runCatching target
             }
+            val part = target.resolveSibling(target.fileName.toString() + ".part") // fork
             val response = client.send(
                 HttpRequest.newBuilder(URI.create(url))
                     .timeout(Duration.ofSeconds(30))
@@ -234,10 +235,11 @@ internal object DesktopCanvasCache {
                     .header("Accept", "*/*")
                     .GET()
                     .build(),
-                HttpResponse.BodyHandlers.ofFile(target),
+                HttpResponse.BodyHandlers.ofFile(part), // fork: was target; a download cut short at the clip's path was taken for the clip
             )
             check(response.statusCode() in 200..299) { "canvas HTTP ${response.statusCode()}" }
-            check(java.nio.file.Files.size(target) > 0) { "canvas came back empty" }
+            check(java.nio.file.Files.size(part) > 0) { "canvas came back empty" }
+            java.nio.file.Files.move(part, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING) // fork
             // The only moment the cache can be over its limit is just after a write.
             DesktopMediaCache.trim()
             target

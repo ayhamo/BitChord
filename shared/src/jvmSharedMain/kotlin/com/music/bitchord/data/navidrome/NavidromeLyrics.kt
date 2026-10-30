@@ -91,7 +91,10 @@ object NavidromeLyrics {
             }
         }
         val rows = runCatching { NavidromeRepository.client().lyricsBySongId(songId) }
-            .onFailure { Log.d(TAG, "lyrics for $songId: ${it.message}") }
+            .onFailure {
+                if (it is kotlinx.coroutines.CancellationException) throw it
+                Log.d(TAG, "lyrics for $songId: ${it.message}")
+            }
             // Not remembered: a dropped connection isn't an answer.
             .getOrElse { return@withLock null }
         val lines = linesFrom(rows)

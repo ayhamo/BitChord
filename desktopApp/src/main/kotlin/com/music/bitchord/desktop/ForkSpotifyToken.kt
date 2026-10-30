@@ -60,6 +60,9 @@ internal object ForkSpotifyToken {
         if (!DesktopPoTokenWebView.available) return null
         val answer = CompletableFuture<Minted?>()
         val bridge = Bridge(answer)
+        // WebKit holds a page's folder until it lets go, so the last one is cleared here rather than after use.
+        val temp = java.io.File(System.getProperty("java.io.tmpdir"))
+        temp.listFiles { file -> file.name.startsWith("bitchord-spotify-") }?.forEach { it.deleteRecursively() }
         val folder = Files.createTempDirectory("bitchord-spotify-")
         var engine: WebEngine? = null
         var hooks: Timeline? = null
@@ -96,7 +99,6 @@ internal object ForkSpotifyToken {
             hooks?.stop()
             engine?.load("about:blank")
             bridge.hashCode() // still reachable until here
-            folder.toFile().deleteRecursively()
         }
         DesktopTrackLog.log("canvas: Spotify's page ${if (minted != null) "gave a token" else "gave no token"}")
         return minted

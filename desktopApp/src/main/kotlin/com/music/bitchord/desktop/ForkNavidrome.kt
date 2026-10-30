@@ -131,9 +131,16 @@ internal object ForkNavidrome {
      */
     fun fetchClip(url: String, target: Path): Boolean {
         if (!NavidromeSettings.isConfigured() || "/rest/x-clip/" !in url) return false
-        Http.client.newCall(Request.Builder().url(url).build()).execute().use { response ->
-            check(response.isSuccessful) { "canvas HTTP ${response.code}" }
-            response.body.byteStream().use { Files.copy(it, target, StandardCopyOption.REPLACE_EXISTING) }
+        // Through a side file: the cache takes any file at the clip's path for a whole clip.
+        val part = target.resolveSibling(target.fileName.toString() + ".part")
+        try {
+            Http.client.newCall(Request.Builder().url(url).build()).execute().use { response ->
+                check(response.isSuccessful) { "canvas HTTP ${response.code}" }
+                response.body.byteStream().use { Files.copy(it, part, StandardCopyOption.REPLACE_EXISTING) }
+            }
+            Files.move(part, target, StandardCopyOption.REPLACE_EXISTING)
+        } finally {
+            Files.deleteIfExists(part)
         }
         return true
     }

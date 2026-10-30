@@ -146,7 +146,7 @@ internal object ForkQueues {
     }
 
     /** A row as it is kept: for a Navidrome song no address, and its cover by id. */
-    private fun Song.atRest(): Song = if (!ForkNavidrome.owns(this)) this else copy(
+    private fun Song.atRest(): Song = if (!ForkNavidrome.owns(this)) copy(thumbnailUrl = NavidromeRepository.atRest(thumbnailUrl)) else copy(
         localUri = null,
         thumbnailUrl = thumbnailUrl?.toHttpUrlOrNull()?.takeIf { "getCoverArt" in it.encodedPath }?.queryParameter("id"),
     )
@@ -160,7 +160,7 @@ internal object ForkQueues {
     private fun List<Song>.live(name: String): List<Song> {
         val client = runCatching { NavidromeRepository.client() }.getOrNull() // none without a login
         return map { song ->
-            val addressed = if (!ForkNavidrome.owns(song)) song else {
+            val addressed = if (!ForkNavidrome.owns(song)) song.copy(thumbnailUrl = NavidromeRepository.live(song.thumbnailUrl)) else {
                 val id = song.videoId.removePrefix(NavidromeSettings.ID_PREFIX)
                 song.copy(
                     localUri = NavidromePlatform.kept.localUri(id) ?: client?.streamUrl(id),

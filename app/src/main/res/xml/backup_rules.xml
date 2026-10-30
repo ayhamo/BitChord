@@ -22,4 +22,6 @@
     <!-- Kept songs are gigabytes and past the backup quota, and these two hold cover addresses with the server login's token. -->
     <exclude domain="file" path="navidrome_offline/" />
     <exclude domain="file" path="fork_queues.json" />
+    <!-- The playing song's cover address, a server's with its login. -->
+    <exclude domain="sharedpref" path="bitchord_widget.xml" />
 </full-backup-content>

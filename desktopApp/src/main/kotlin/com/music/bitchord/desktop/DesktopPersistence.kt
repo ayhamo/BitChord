@@ -235,12 +235,12 @@ class DesktopPersistence {
         song.videoId,
         song.title,
         song.artist,
-        song.thumbnailUrl.orEmpty(),
+        com.music.bitchord.data.navidrome.NavidromeRepository.atRest(song.thumbnailUrl).orEmpty(), // fork: no server login in the registry
         song.durationText.orEmpty(),
         song.artistId.orEmpty(),
         song.albumId.orEmpty(),
         song.albumName.orEmpty(),
-        song.localUri.orEmpty(),
+        com.music.bitchord.data.navidrome.NavidromeRepository.atRest(song.localUri).orEmpty(), // fork: as above
         song.localPath.orEmpty(),
         song.isVideo.toString(),
         song.isVideoOrigin.toString(),
@@ -260,12 +260,12 @@ class DesktopPersistence {
             videoId = fields[0],
             title = fields[1],
             artist = fields[2],
-            thumbnailUrl = fields[3].ifBlank { null },
+            thumbnailUrl = com.music.bitchord.data.navidrome.NavidromeRepository.live(fields[3].ifBlank { null }), // fork: live
             durationText = fields[4].ifBlank { null },
             artistId = fields[5].ifBlank { null },
             albumId = fields[6].ifBlank { null },
             albumName = fields[7].ifBlank { null },
-            localUri = fields[8].ifBlank { null },
+            localUri = com.music.bitchord.data.navidrome.NavidromeRepository.live(fields[8].ifBlank { null }), // fork: live
             localPath = fields[9].ifBlank { null },
             isVideo = isVideo,
             isVideoOrigin = fields.getOrNull(11)?.toBooleanStrictOrNull() ?: isVideo,

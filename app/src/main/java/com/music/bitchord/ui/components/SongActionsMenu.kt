@@ -200,7 +200,7 @@ fun SongActionsMenu(
         // group is empty doesn't end on a stray line.
         var drawnAny = false
         fun startsGroup(): Boolean = drawnAny.also { drawnAny = true }
-        val canRate = isOffline || signedIn
+        val canRate = (isOffline || signedIn) && !com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(song.videoId) // fork: a station has no like
         val shareAction = onShare?.takeIf { !isOffline }
 
         // Leads with the actions it is opened for most, as tiles: the rating
@@ -285,7 +285,7 @@ fun SongActionsMenu(
         // playlist's answer there, not YouTube's, and neither needs an account.
         if (canRate) {
             if (startsGroup()) IosMenuSeparator()
-            ActionRow(
+            if (!com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(song.videoId)) ActionRow( // fork: YouTube's and the device's playlists hold neither a server's song
                 icon = SfIcons.AddToPlaylist,
                 label = stringResource(R.string.add_to_playlist),
                 accent = palette.accent,
