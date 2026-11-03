@@ -26,13 +26,18 @@ import kotlinx.coroutines.withContext
  */
 internal object ForkDesktopCanvas {
 
-    /** Spotify's answer per song this session, misses included (a lookup is three requests). */
-    private val spotify = java.util.concurrent.ConcurrentHashMap<String, Result<DesktopCanvasArtwork?>>()
+    private class Answer(val artwork: DesktopCanvasArtwork?, val atMs: Long)
+
+    /** Spotify's answer per song, the last 64; a miss is asked again after ten minutes. */
+    private val spotify = object : LinkedHashMap<String, Answer>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Answer>) = size > 64
+    }
 
     suspend fun canvasFor(song: Song): CanvasArtwork? {
         com.music.bitchord.data.navidrome.NavidromeClips.canvasFor(song)?.let { return it } // kept clips from before
         val first = withContext(Dispatchers.IO) { DesktopCanvasClient.lookup(song) }
-        if (first?.source == DesktopCanvasSource.SPOTIFY || !ForkCanvasSwitch.backdrops.value) {
+        // Nothing found means Spotify, the last source asked, had nothing either: not asked twice.
+        if (first == null || first.source == DesktopCanvasSource.SPOTIFY || !ForkCanvasSwitch.backdrops.value) {
             log(song, first, null)
             return first?.toShared()
         }
@@ -42,8 +47,13 @@ internal object ForkDesktopCanvas {
         return backdrop.toShared().copy(source = CanvasSource.SPOTIFY, sleeveUrl = first?.url)
     }
 
+    @Synchronized
     private fun spotifyFor(song: Song): DesktopCanvasArtwork? {
-        spotify[song.videoId]?.let { return it.getOrNull() }
+        spotify[song.videoId]?.let { known ->
+            if (known.artwork != null || System.currentTimeMillis() - known.atMs < 10L * 60 * 1000) return known.artwork
+        }
+        // Without a sign-in nothing is asked and nothing remembered, so signing in later counts.
+        if (DesktopSpotifyToken.accessToken() == null) return null
         if (com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(song.videoId)) return null
         val title = song.title.cleanedForCanvas()
         val artist = song.artist.cleanedForCanvas()
@@ -51,9 +61,10 @@ internal object ForkDesktopCanvas {
         val found = runCatching {
             DesktopSpotifyCanvas.search(title, artist, song.albumName)?.takeIf { it.matches(title, artist, song.albumName) }
         }
-        // A failure (no sign-in, HTTP 429) is not remembered: it may answer next time.
-        if (found.isSuccess) spotify[song.videoId] = found
-        return found.getOrNull()
+        // Remembered for a while either way: the search itself can't tell "no Canvas" from HTTP 429.
+        val artwork = found.getOrNull()
+        if (found.isSuccess) spotify[song.videoId] = Answer(artwork, System.currentTimeMillis())
+        return artwork
     }
 
     private fun log(song: Song, first: DesktopCanvasArtwork?, backdrop: DesktopCanvasArtwork?) {

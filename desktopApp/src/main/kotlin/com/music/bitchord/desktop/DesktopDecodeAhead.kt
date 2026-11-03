@@ -87,6 +87,9 @@ internal class DesktopDecodeAhead(
         block
     }
 
+    /** Fork: whether a block is decoded and waiting, so a read now would not wait on the worker. */
+    fun forkHasSamples(): Boolean = lock.withLock { queue.isNotEmpty() }
+
     /** Moves to [micros]; whatever was decoded ahead of the old position is thrown away. */
     fun seek(micros: Long): Boolean {
         lock.withLock {

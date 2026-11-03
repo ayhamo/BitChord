@@ -98,9 +98,9 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         override fun setLyricsOffsetMs(value: Int) = AppSettings.setLyricsOffsetMs(value)
     }
 
-    override fun cachedCanvas(song: Song): CanvasArtwork? = CanvasRepository.cached(song)
+    override fun cachedCanvas(song: Song): CanvasArtwork? = com.music.bitchord.fork.ForkCanvas.cached(song) // fork: was CanvasRepository.cached
 
-    override suspend fun canvasFor(song: Song): CanvasArtwork? = CanvasRepository.canvasFor(song)
+    override suspend fun canvasFor(song: Song): CanvasArtwork? = com.music.bitchord.fork.ForkCanvas.canvasFor(song) // fork: a cover clip and a Spotify backdrop together
 
     @Composable
     override fun CanvasVideo(spec: CanvasVideoSpec, modifier: Modifier) = AndroidCanvasVideo(spec, modifier)

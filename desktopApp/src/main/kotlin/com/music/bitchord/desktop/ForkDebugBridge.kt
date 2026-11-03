@@ -142,7 +142,13 @@ internal object ForkDebugBridge {
             ?: error("missing $name")
 
     private fun respond(exchange: HttpExchange, answer: () -> String) {
-        val (code, body) = runCatching { 200 to answer() }.getOrElse { 400 to (it.message ?: "failed") }
+        // A web page open in a browser on this PC can reach a loopback port too; it always sends an
+        // Origin, the test tools never do.
+        val (code, body) = if (exchange.requestHeaders.containsKey("Origin")) {
+            403 to "no"
+        } else {
+            runCatching { 200 to answer() }.getOrElse { 400 to (it.message ?: "failed") }
+        }
         val bytes = body.toByteArray()
         exchange.sendResponseHeaders(code, bytes.size.toLong())
         exchange.responseBody.use { it.write(bytes) }

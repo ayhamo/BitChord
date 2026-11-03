@@ -17,7 +17,8 @@ internal class DesktopTempoBuffer(channels: Int, sampleRate: Int) {
     var speed: Float
         get() = processor.speed
         set(value) {
-            processor.speed = value.coerceIn(1f, 1.1f)
+            // fork (PC-Continued be257dad): slowed as well as sped up, the shared planner's window
+            processor.speed = value.coerceIn(com.music.bitchord.playback.smart.MIN_INCOMING_RATE.toFloat(), com.music.bitchord.playback.smart.MAX_INCOMING_RATE.toFloat())
         }
 
     val available: Int get() = queuedCount

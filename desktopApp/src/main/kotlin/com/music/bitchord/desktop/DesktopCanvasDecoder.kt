@@ -95,7 +95,10 @@ internal class DesktopCanvasDecoder {
         val decoder = avcodec_find_decoder(parameters.codec_id()) ?: error("no decoder for this clip")
         val context = avcodec_alloc_context3(decoder)
         check(avcodec_parameters_to_context(context, parameters) >= 0) { "bad codec parameters" }
-        context.thread_count(0) // fork: as many decoding threads as FFmpeg sees fit, not one
+        // fork: as many decoding threads as FFmpeg sees fit, slices only: frame threading holds frames
+        // back, and the loop's seek-and-flush at the end would drop them (a jump at every loop)
+        context.thread_count(0)
+        context.thread_type(2) // FF_THREAD_SLICE (libavcodec/avcodec.h); the bindings leave the macro out
         check(avcodec_open2(context, decoder, null as AVDictionary?) >= 0) { "decoder refused to open" }
         codec = context
 

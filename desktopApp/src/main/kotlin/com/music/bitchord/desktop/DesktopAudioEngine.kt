@@ -1,5 +1,7 @@
 package com.music.bitchord.desktop
 
+import com.music.bitchord.playback.smart.MAX_INCOMING_RATE // fork
+import com.music.bitchord.playback.smart.MIN_INCOMING_RATE // fork
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AutomixPerformanceMode
 import com.music.bitchord.data.settings.MixBlend
@@ -873,7 +875,8 @@ class DesktopPlaybackEngine(
 
     /** The beatmatch stretch [track] is actually rendered at — [DesktopTempoBuffer]'s clamp included. */
     private fun deckRate(track: Track): Double =
-        if (track.tempo != null && !track.tempoDrained) track.tempoRate.coerceIn(1.0, 1.1) else 1.0
+        // fork (PC-Continued be257dad): the planner's window both ways, as the shared planner plans it
+        if (track.tempo != null && !track.tempoDrained) track.tempoRate.coerceIn(MIN_INCOMING_RATE, MAX_INCOMING_RATE) else 1.0
 
     /** Source time each output frame of [track] covers: the listener's speed times the deck's. */
     private fun usPerFrame(track: Track): Double =
@@ -1017,7 +1020,7 @@ class DesktopPlaybackEngine(
         val block = tempo.take(DEFAULT_TEMPO_OUTPUT_SAMPLES)
         currentReadCount = tempo.outputCount
         advanceTempoEase(track, currentReadCount / sink.format.channels.coerceAtLeast(1))
-        if (track.tempoRate <= 1.0 && !track.tempoDrained) {
+        if (track.tempoRate == 1.0 && !track.tempoDrained) { // fork: a slowed deck is still stretching
             // Nothing more is pushed from here; what the stretcher holds is queued unstretched and
             // the decoder takes over once it has played.
             tempo.finish()
@@ -1087,11 +1090,13 @@ class DesktopPlaybackEngine(
     private fun advanceTempoEase(track: Track, outputFrames: Int) {
         if (track.tempoEaseStep <= 0.0 || outputFrames <= 0) return
         track.tempoOutputFrames += outputFrames
-        while (track.tempoOutputFrames >= track.tempoEaseNextFrame && track.tempoRate > 1.0) {
-            track.tempoRate = (track.tempoRate - track.tempoEaseStep).coerceAtLeast(1.0)
+        while (track.tempoOutputFrames >= track.tempoEaseNextFrame && track.tempoRate != 1.0) { // fork: eases back from either side
+            track.tempoRate =
+                if (track.tempoRate > 1.0) (track.tempoRate - track.tempoEaseStep).coerceAtLeast(1.0)
+                else (track.tempoRate + track.tempoEaseStep).coerceAtMost(1.0)
             track.tempoEaseNextFrame += track.tempoEaseEveryFrames
         }
-        if (track.tempoRate <= 1.0001) track.tempoRate = 1.0
+        if (kotlin.math.abs(track.tempoRate - 1.0) <= FORK_TEMPO_UNITY) track.tempoRate = 1.0 // fork
     }
 
     /** Widens one track's samples, unless the audio is Dolby Atmos. */
@@ -1133,6 +1138,7 @@ class DesktopPlaybackEngine(
 
     private fun promoteUpcoming() {
         val incoming = upcoming ?: return
+        forkDropSwap() // fork: a better copy of the song being left must not land on the next one
         val plan = activePlan
         activePlan = null
         transitionEcho = null
@@ -1147,9 +1153,10 @@ class DesktopPlaybackEngine(
         incomingFilter.open()
         current?.decoder?.close()
         current = incoming
-        if (incoming.tempo != null && incoming.tempoRate > 1.0) {
-            val steps = ceil((incoming.tempoRate - 1.0) / TEMPO_STEP_PER_BEAT).toInt().coerceAtLeast(1)
-            incoming.tempoEaseStep = (incoming.tempoRate - 1.0) / steps
+        if (incoming.tempo != null && kotlin.math.abs(incoming.tempoRate - 1.0) > FORK_TEMPO_UNITY) { // fork: slowed too
+            val gap = kotlin.math.abs(incoming.tempoRate - 1.0)
+            val steps = ceil(gap / TEMPO_STEP_PER_BEAT).toInt().coerceAtLeast(1)
+            incoming.tempoEaseStep = gap / steps
             incoming.tempoEaseEveryFrames = (
                 (plan?.beatSeconds ?: 0.0).takeIf { it > 0.0 } ?: EASE_FALLBACK_SECONDS
                 ).times(sink.format.sampleRate).toLong().coerceAtLeast(1L)
@@ -1320,6 +1327,7 @@ class DesktopPlaybackEngine(
                     if (wasBlending) endBlend()
                 }
                 Command.Flush -> {
+                    forkDropSwap() // fork
                     current?.decoder?.close()
                     current = null
                     upcoming?.decoder?.close()
@@ -1411,6 +1419,10 @@ class DesktopPlaybackEngine(
      */
     private var forkSwap: Track? = null
     private var forkWaitingSwap: Track? = null
+    /** Seeked [FORK_SWAP_LEAD_US] ahead, decoding there, until the write point reaches [forkArmedAtUs]. */
+    private var forkArmedSwap: Track? = null
+    private var forkArmedAtUs = 0L
+    private var forkArmTries = 0
     private var forkSwapDone = 0L
     private var forkSwapTotal = 0L
 
@@ -1420,58 +1432,68 @@ class DesktopPlaybackEngine(
         if (paused || !sink.isOpen || sink.format.sampleRate <= 0) return false
         if (playing.song.videoId != track.song.videoId) return false
         if (track.decoder.outputFormat.channels != sink.format.channels) return false
-        forkSwap?.decoder?.close()
-        forkSwap = null
+        // With the listener's speed or Skip silence in play, the decoder runs ahead of what is
+        // written by what those still hold, so the write point is not where the new copy belongs.
+        if (playbackSpeed != 1f || skipSilenceEnabled) return false
+        // A swap already fading in is left to finish; this one waits behind it.
         forkWaitingSwap?.decoder?.close()
         forkWaitingSwap = track
+        forkArmTries = 0
         forkStartWaitingSwap(playing)
         return true
     }
 
+    /**
+     * Seeks the waiting copy a second ahead of the write point, off the audio thread's way: the
+     * decoder's own worker does the seek (over the network for an addon's copy), and the cross only
+     * starts once the write point has caught up with audio already decoded there ([forkMixSwap]).
+     * Seeking to the write point itself left the next read waiting on that worker, an underrun.
+     */
     private fun forkStartWaitingSwap(playing: Track) {
+        forkArmedSwap?.let { if (it.song.videoId != playing.song.videoId) forkDropSwap() }
         val track = forkWaitingSwap ?: return
-        if (forkSwap != null || playing.tempo != null) return
-        forkWaitingSwap = null
-        // What is being decoded now, not what is heard: the source time of the next frame written.
-        val atUs = playhead.peek(framesWritten)
-        if (!track.decoder.seek(atUs.coerceAtLeast(0L))) {
-            DesktopTrackLog.log("better copy of '${track.song.title}' would not seek; cutting over instead")
-            forkCutOver(track)
+        if (track.song.videoId != playing.song.videoId) {
+            forkDropSwap()
             return
         }
+        if (forkSwap != null || forkArmedSwap != null || playing.tempo != null) return
+        forkWaitingSwap = null
+        val atUs = playhead.peek(framesWritten) + FORK_SWAP_LEAD_US
+        track.decoder.seek(atUs)
         track.startUs = atUs
-        forkSwap = track
-        forkSwapDone = 0L
-        forkSwapTotal = (sink.format.sampleRate * FORK_SWAP_FRAMES_MS / 1000L).coerceAtLeast(1L)
-        DesktopTrackLog.log("crossfading '${track.song.title}' onto ${track.stream.format.summary.ifBlank { "the better copy" }} at ${atUs / 1000} ms")
+        forkArmedSwap = track
+        forkArmedAtUs = atUs
+        forkArmTries++
     }
 
     /** Closes any pending swap, except [keep] (the track being started from it). */
     private fun forkDropSwap(keep: Track? = null) {
-        forkSwap?.takeIf { it !== keep }?.decoder?.close()
-        forkWaitingSwap?.takeIf { it !== keep }?.decoder?.close()
+        listOfNotNull(forkSwap, forkArmedSwap, forkWaitingSwap).filter { it !== keep }.forEach { it.decoder.close() }
         forkSwap = null
+        forkArmedSwap = null
         forkWaitingSwap = null
     }
 
-    /** A seek mid-swap lands on the better copy: it becomes the playing one first, then is seeked. */
+    /** A seek mid-swap: one fading in becomes the playing copy (then is seeked); one not yet in waits again. */
     private fun forkSwapBeforeSeek() {
-        val track = forkSwap ?: forkWaitingSwap ?: return
-        forkWaitingSwap = null
-        forkSwap = track
-        forkFinishSwap()
-    }
-
-    /** The old cut-over, for the few cases a crossfade can't be set up. */
-    private fun forkCutOver(track: Track) {
-        sink.flush()
-        framesWritten = sink.framesPlayed()
-        activePlan = null
-        startTrack(track, !paused)
+        val playing = current ?: return forkDropSwap()
+        val mixing = forkSwap
+        if (mixing != null && mixing.song.videoId == playing.song.videoId) {
+            forkFinishSwap()
+            return
+        }
+        val armed = forkArmedSwap
+        forkArmedSwap = null
+        if (armed != null && forkWaitingSwap == null && armed.song.videoId == playing.song.videoId) {
+            forkWaitingSwap = armed
+        } else {
+            armed?.decoder?.close()
+        }
     }
 
     /** Mixes the better copy into [block] (the old copy's), equal power, and hands over once it is in. */
     private fun forkMixSwap(block: FloatArray, count: Int) {
+        forkEnterArmedSwap()
         val track = forkSwap ?: return
         val channels = sink.format.channels.coerceAtLeast(1)
         val other = readIncoming(track, count)
@@ -1489,6 +1511,44 @@ class DesktopPlaybackEngine(
         }
         forkSwapDone += frames
         if (forkSwapDone >= forkSwapTotal) forkFinishSwap()
+    }
+
+    /**
+     * Starts the cross once the write point (where this block goes) has reached the armed copy's
+     * seek point and that copy has audio decoded: the few frames between are read off and dropped,
+     * so both copies line up. A copy that has nothing decoded two seconds past its point is armed
+     * again further on, and after [FORK_SWAP_TRIES] tries given up, keeping the old copy playing.
+     */
+    private fun forkEnterArmedSwap() {
+        val track = forkArmedSwap ?: return
+        val atUs = playhead.peek(framesWritten)
+        if (atUs < forkArmedAtUs) return
+        val rate = sink.format.sampleRate
+        val channels = sink.format.channels.coerceAtLeast(1)
+        val lateUs = atUs - forkArmedAtUs
+        if (!track.decoder.forkHasSamples() || lateUs > FORK_SWAP_LATE_US) {
+            if (lateUs <= FORK_SWAP_LATE_US) return
+            forkArmedSwap = null
+            if (forkArmTries >= FORK_SWAP_TRIES) {
+                DesktopTrackLog.log("better copy of '${track.song.title}' never caught up; staying on what plays")
+                track.decoder.close()
+                return
+            }
+            if (forkWaitingSwap == null) forkWaitingSwap = track else track.decoder.close()
+            current?.let { forkStartWaitingSwap(it) }
+            return
+        }
+        val skipFrames = (lateUs * rate / 1_000_000L).toInt()
+        var left = skipFrames * channels
+        while (left > 0) {
+            readIncoming(track, minOf(left, 4096 * channels)) ?: break
+            left -= incomingReadCount.coerceAtLeast(1)
+        }
+        forkArmedSwap = null
+        forkSwap = track
+        forkSwapDone = 0L
+        forkSwapTotal = (rate * FORK_SWAP_FRAMES_MS / 1000L).coerceAtLeast(1L)
+        DesktopTrackLog.log("crossfading '${track.song.title}' onto ${track.stream.format.summary.ifBlank { "the better copy" }} at ${atUs / 1000} ms")
     }
 
     /** The better copy is the playing one now; the old decoder goes, the plan and the playhead stay. */
@@ -1819,12 +1879,15 @@ class DesktopPlaybackEngine(
         fadeRemaining = transitionTotal
         incomingSourceFrames = 0.0
         activePlan = plan
-        incoming.tempo = if (plan.incomingPlaybackRate > 1.0001) {
+        incoming.tempo = if (kotlin.math.abs(plan.incomingPlaybackRate - 1.0) > FORK_TEMPO_UNITY) { // fork: slowed too
             DesktopTempoBuffer(sink.format.channels, sink.format.sampleRate).also {
                 it.speed = plan.incomingPlaybackRate.toFloat()
             }
         } else null
-        incoming.tempoRate = plan.incomingPlaybackRate.coerceAtLeast(1.0)
+        // fork: was coerceAtLeast(1.0); a rate within FORK_TEMPO_UNITY of 1 is 1, or a deck that got no
+        // stretcher would never read as eased out and stay on its buffer for the whole song
+        incoming.tempoRate = plan.incomingPlaybackRate.coerceIn(MIN_INCOMING_RATE, MAX_INCOMING_RATE)
+            .let { if (kotlin.math.abs(it - 1.0) <= FORK_TEMPO_UNITY) 1.0 else it }
         transitionEcho = if (plan.echoSeconds > 0.0) {
             DesktopTransitionEcho(sink.format.sampleRate, sink.format.channels).also { it.configure(plan.echoSeconds) }
         } else null
@@ -2022,6 +2085,7 @@ class DesktopPlaybackEngine(
 
     /** On the audio thread: the blend [forkSkipTo] asked for, or the cut when it can't run now. */
     private fun forkStartSkip(command: Command.ForkSkip) {
+        forkDropSwap() // fork: see promoteUpcoming
         if (forkSkipTicket !== command.ticket) {
             command.track?.decoder?.close()
             return
@@ -2154,8 +2218,18 @@ class DesktopPlaybackEngine(
         /** Avoid a decoder seek for sub-tick drift while an upgraded rendition is opening. */
         private const val UPGRADE_RESEEK_THRESHOLD_MS = 250L
 
+        /** Fork: a deck rate this close to 1 is 1 (from PC-Continued be257dad). */
+        private const val FORK_TEMPO_UNITY = 0.0001
+
         /** Fork: how long a quality upgrade crosses from the old copy to the new; see `forkSwap`. */
         private const val FORK_SWAP_FRAMES_MS = 200L
+
+        /** Fork: how far ahead the better copy is seeked, so its decoder has it ready; see `forkStartWaitingSwap`. */
+        private const val FORK_SWAP_LEAD_US = 1_000_000L
+
+        /** Fork: past its point by this with nothing decoded, the better copy is armed again further on. */
+        private const val FORK_SWAP_LATE_US = 2_000_000L
+        private const val FORK_SWAP_TRIES = 3
 
         /** Enough of a measurement on the incoming track to cue into it. */
         val MEASURED_ENOUGH_TO_ENTER_ON = setOf(

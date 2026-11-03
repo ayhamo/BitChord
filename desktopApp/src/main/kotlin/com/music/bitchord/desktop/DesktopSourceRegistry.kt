@@ -433,8 +433,23 @@ internal object DesktopSourceRegistry {
 
     /** Whether a copy found after the fact is worth interrupting playback for. */
     internal fun worthSwapping(candidate: DesktopStreamFormat, playing: DesktopStreamFormat?): Boolean {
-        if (candidate.isLossless) return true
-        val gain = (candidate.kbps ?: return false) - (playing?.kbps ?: return false)
+        // fork (PC-Continued c310d0e3): a swap interrupts the song, so it has to buy something. Any
+        // lossless copy used to be taken, an identical one included, so a second look could swap
+        // the playing FLAC for the same FLAC.
+        if (playing == null) return candidate.isLossless
+        if (candidate.isLossless != playing.isLossless) return candidate.isLossless
+        if (candidate.isLossless) {
+            val depthGain = candidate.bitDepth != null && playing.bitDepth != null &&
+                candidate.bitDepth > playing.bitDepth
+            val rateGain = candidate.sampleRateHz != null && playing.sampleRateHz != null &&
+                candidate.sampleRateHz > playing.sampleRateHz
+            val noDepthLoss = candidate.bitDepth == null || playing.bitDepth == null ||
+                candidate.bitDepth >= playing.bitDepth
+            val noRateLoss = candidate.sampleRateHz == null || playing.sampleRateHz == null ||
+                candidate.sampleRateHz >= playing.sampleRateHz
+            return (depthGain || rateGain) && noDepthLoss && noRateLoss
+        }
+        val gain = (candidate.kbps ?: return false) - (playing.kbps ?: return false)
         return gain >= UPGRADE_MIN_GAIN_KBPS
     }
 

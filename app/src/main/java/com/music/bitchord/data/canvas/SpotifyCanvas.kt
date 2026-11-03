@@ -149,10 +149,21 @@ object SpotifyCanvas {
             return null
         }
         val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
-        val firstItem = root?.get("data")?.jsonObject
+        val items = root?.get("data")?.jsonObject
             ?.get("searchV2")?.jsonObject
             ?.get("tracksV2")?.jsonObject
             ?.get("items")?.jsonArray
+        // fork: the first hit whose own name and artists match, when the answer carries them; it
+        // used to be the first hit whatever it was, reported back under the names asked for, so
+        // `matches()` downstream could never turn a wrong song's Canvas away
+        // (once validated, the hit carries the names asked for, as before, so the strict `matches()`
+        // downstream doesn't turn away a "- Remastered" title or a Deluxe album)
+        com.music.bitchord.fork.ForkSpotifyMatch.pick(items, title, artist)?.let { return TrackHit(it.uri, title, artist, album) }
+        if (items != null && com.music.bitchord.fork.ForkSpotifyMatch.carriesNames(items)) { // fork: named hits, none of them this song
+            com.music.bitchord.fork.ForkSpotifyMatch.noteNamedMiss(title, artist)
+            return null
+        }
+        val firstItem = items
             ?.firstOrNull()
             ?.jsonObject?.get("item")?.jsonObject
             ?.get("data")?.jsonObject
@@ -170,6 +181,8 @@ object SpotifyCanvas {
     }
 
     private fun searchViaRest(title: String, artist: String, album: String?, token: String): TrackHit? {
+        // fork: Pathfinder already answered with named hits, none of them this song; REST would only 429 or agree
+        if (com.music.bitchord.fork.ForkSpotifyMatch.takeNamedMiss(title, artist)) return null
         val query = listOfNotNull(title, artist, album).joinToString(" ")
         val url = SEARCH_URL.toHttpUrl().newBuilder()
             .addQueryParameter("q", query)

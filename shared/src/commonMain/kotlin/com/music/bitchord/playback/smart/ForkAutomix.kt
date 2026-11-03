@@ -66,8 +66,8 @@ object ForkAutomix {
      * deck 1 to 0.6 while the incoming loop rises 0.55 to 1). On loud masters that went well past full
      * scale; a 16-bit output clipped it, heard as crackling during Automix. The limiter now runs for
      * the mix too (`DspChain.forkMixing`), but holding 4 dB down for bars at a time is the "pumping and
-     * grit" upstream measured on blends, so this is their blend's trim: at most about 1 dB down at the
-     * worst point, and the limiter only catches what is left.
+     * grit" upstream measured on blends, so this is their blend's trim: about 1.9 dB down where the two
+     * overlap most (a sum of 1.55 to 1.6), none where they don't, and the limiter catches what is left.
      */
     fun trimmedGains(outTimes: DoubleArray, outGains: FloatArray, inTimes: DoubleArray, inGains: FloatArray): Gains {
         val times = (outTimes.asList() + inTimes.asList()).filter { it.isFinite() }.distinct().sorted().toDoubleArray()

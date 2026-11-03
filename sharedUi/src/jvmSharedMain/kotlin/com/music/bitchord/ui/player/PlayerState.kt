@@ -55,7 +55,8 @@ internal fun rememberCanvasArtwork(song: Song): CanvasArtwork? {
     // clean; the same-titled-impostor case is guarded where the clip is
     // adopted, by [CanvasArtwork.matches].
     var canvas by remember(song.title, song.artist) { mutableStateOf<CanvasArtwork?>(null) }
-    LaunchedEffect(song.videoId, song.albumName, canvasAllowedNow, prioritizeSpotifyCanvas) {
+    val forkBackdrops by ForkCanvasSwitch.backdrops.collectAsStateWithLifecycle() // fork: turning backdrops on mid-song looks one up
+    LaunchedEffect(song.videoId, song.albumName, canvasAllowedNow, prioritizeSpotifyCanvas, forkBackdrops) {
         if (!canvasAllowedNow) {
             canvas = null
             return@LaunchedEffect

@@ -342,6 +342,9 @@ class DesktopPoTokenWebView private constructor(
     override fun close() {
         if (closed) return
         closed = true
+        // fork (PC-Continued c310d0e3): a closed page must read as dead, or the generator, which keeps
+        // its minter between calls, mints on a page whose script has gone
+        isDead = true
         scope.cancel()
         runOnFx {
             runCatching { if (::engine.isInitialized) engine.load("about:blank") }
