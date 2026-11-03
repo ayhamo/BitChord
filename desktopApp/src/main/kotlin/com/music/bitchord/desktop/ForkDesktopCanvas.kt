@@ -33,8 +33,18 @@ internal object ForkDesktopCanvas {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Answer>) = size > 64
     }
 
-    suspend fun canvasFor(song: Song): CanvasArtwork? {
-        com.music.bitchord.data.navidrome.NavidromeClips.canvasFor(song)?.let { return it } // kept clips from before
+    suspend fun canvasFor(playing: Song): CanvasArtwork? =
+        lookUp(playing)?.let { found ->
+            // A server song's clip, named after the song itself: the player checks a clip against the
+            // playing song's title, artists and album (`CanvasArtwork.matches`), and the query differs.
+            if (!com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(playing.videoId)) found
+            else found.copy(title = playing.title, artist = playing.artist, album = playing.albumName)
+        }
+
+    private suspend fun lookUp(playing: Song): CanvasArtwork? {
+        com.music.bitchord.data.navidrome.NavidromeClips.canvasFor(playing)?.let { return it } // kept clips from before
+        // A server song is asked about without its album or a repeated "Artist - " (see NavidromeCanvasQuery).
+        val song = com.music.bitchord.data.navidrome.NavidromeCanvasQuery.searchable(playing)
         val first = withContext(Dispatchers.IO) { DesktopCanvasClient.lookup(song) }
         // Nothing found means Spotify, the last source asked, had nothing either: not asked twice.
         if (first == null || first.source == DesktopCanvasSource.SPOTIFY || !ForkCanvasSwitch.backdrops.value) {

@@ -20,7 +20,6 @@ include(":shared")
 include(":sharedUi")
 // fork: the desktop app needs JDK 21 just to configure, the Android image and CI run on 17.
 if (JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_21)) {
-    include(":desktopUi")
     include(":desktopApp")
 }
 

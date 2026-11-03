@@ -38,6 +38,19 @@ PC bugs, done on `pc` 2026-11-03 (tested in the app through the bridge, not list
 
 Next (owner, 2026-11-03, after a compaction): new work runs in an Opus 5.5 subagent at medium effort. Open: the PC look (recommendation: back to `sharedUi`), the PC release as one folder with a real `BitChord.exe` and all data inside it, the PC loop mix (proposed task), PC-Continued's PoToken change and its two engine pieces (upgrade hold during a mix, cue correction). No SponsorBlock.
 
+Plan (owner, 2026-11-03, second half):
+1. PC loop mix like the phone's (Opus subagent), then cue correction and the upgrade hold during a mix, since they touch the same engine.
+2. The PC back on `sharedUi` (the phone's UI), `desktopUi` deleted at the end.
+3. Later: PC-Continued's PoToken change (reuse the token page when only the session changes; a loading page isn't abandoned). Shared code, so tested on the phone and the PC together.
+4. Later: the PC release as one folder with `BitChord.exe` and all data inside it.
+
+Done 2026-11-03 (evening):
+- The PC draws the phone's `sharedUi`; `desktopUi` is deleted. The phone's UI compiled for the PC unchanged; the PC needed the five new `PlayerHost` members, the #795 drawer parameters dropped (the ⋯ menu sits centred), the Search "Navidrome" heading moved into the shared screen, and the offline flag for the shared Explore. Seen in the app: Home, album, player (landscape), lyrics, queue, ⋯ menu, Explore (Navidrome + YouTube panels), Search (Navidrome first). Phone: 1360 tests, 0 failures.
+- A caption strip over the player's top edge moves the window (double-click maximizes) with the player open. Not tried with a real mouse: the owner tries it.
+- Crash fixed: an exception from a network read crossed FFmpeg's C frames and killed the app (`DesktopAudioDecoder` callbacks).
+- PC loop mix (Opus subagent): the phone's renderer ported to Kotlin, armed from the shared plan. Seen once: Midnight Sun -> FAITH spliced at +0.00 ms (r=1.000), FAITH lined up on its deck and carried on at 28.2 s. Not heard: the owner listens. Cue correction (be257dad) ported with it.
+- Open: on the PC, "Midnight Sun" (server) finds no Apple clip though the phone finds one, even with the server album left out of the query now (`NavidromeCanvasQuery`); the storefront from Windows' region is a suspect. Hover highlights from #795 not carried over. YouTube showed a signed-out session ("could not renew the session") and one stream that wouldn't decode: the owner signs in again.
+
 Round 3, 2026-11-03 (two Opus audits, phone and PC, before the final build; their findings fixed):
 - Phone and PC clips: a cover clip and a Spotify backdrop together (`ForkCanvas`, `ForkDesktopCanvas`); a server song's title without a repeated "Artist - "; Spotify hits checked by name (`ForkSpotifyMatch`, the PC's Pathfinder search). Seen on the emulator: "Sad Girls" (YouTube) and "Midnight Sun" (server) with the Apple clip moving in the square and the Spotify Canvas behind, landscape and portrait; "In the Name of Love" (server) with a Spotify backdrop; "Monody" matched after the prefix strip, but Spotify only has a still image for it. Found while testing: the phone's extra Spotify search ran on the main thread (refused, "http -1"), and a server song's clip was turned away by the player's title/album check; both fixed.
 - PC: the quality swap seeks a second ahead and starts the cross once that copy has audio (it used to make the audio thread wait for the decoder's seek), and is dropped on any song change; the incoming deck slowed as well as sped up (0.9-1.25); stricter `worthSwapping`; Listen Together's default server; the Library grid crash (also on the phone); the debug bridge refuses web pages. Seen: `/reload` crossfaded at 19.77 s with the position continuous; a request with an Origin header refused.

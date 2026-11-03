@@ -210,6 +210,14 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
     override val smartFadeEnabled = MutableStateFlow(false)
     override val smartMixInProgress = MutableStateFlow(false)
     override val smartMixBlend = MutableStateFlow<MixBlend?>(null)
+    // fork: members the phone's player (sharedUi) asks for. No watch caps the stream here; the
+    // output / Listen Together pill as on the phone; the mix popup and stats line stay empty
+    // until the PC engine reports them.
+    override val streamCeilingOverride = MutableStateFlow<AudioQuality?>(null)
+    override val showListenTogetherButton = MutableStateFlow(true)
+    override val automixDetail = MutableStateFlow<String?>(null)
+    override val smartMixView = MutableStateFlow<com.music.bitchord.data.settings.MixTransitionView?>(null)
+    override val smartMixProgress = MutableStateFlow(0f)
     override val smartTransitionWindow = MutableStateFlow<TransitionWindow?>(null)
     override val spotifyCanvasAutoHide = MutableStateFlow(false) // fork: was true; the controls stay until tapped away, the phone's default
     override val syncedLyrics = MutableStateFlow(true)
@@ -253,8 +261,6 @@ private fun DesktopAudioPipeline.toOutputFormat(): OutputFormatUi {
         ?.let { "${"%.1f".format(Locale.ROOT, it / 1000f).removeSuffix(".0")} kHz" }
     return OutputFormatUi(
         summary = listOfNotNull(depth, rate).joinToString(" · "),
-        carriesHiRes = outputIsFloat == true || (outputBytesPerSample ?: 2) > 2 ||
-            (outputSampleRateHz ?: 0) > 48_000,
     )
 }
 

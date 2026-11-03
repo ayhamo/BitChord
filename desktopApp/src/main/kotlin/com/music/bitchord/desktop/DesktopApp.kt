@@ -3012,20 +3012,8 @@ fun BitChordDesktopApp() {
 
     // The menu the shared player's "…" opens.
     var playerMenuOpen by remember(selectedSong?.videoId) { mutableStateOf(false) }
-    // The player's own overflow (volume, the lyrics/output/queue row, the lyric
-    // footer), raised from the song menu's "More…" and drawn by the shared
-    // player. Held here so the desktop song menu can open it.
-    val playerOverflowOpen = remember(selectedSong?.videoId) { mutableStateOf(false) }
-    // Requests the song menu sends the player (switch lyrics/queue, translate),
-    // flipped here and consumed by it, and the player's state mirrored back so the
-    // menu's rows say what is on screen. Not keyed to the track: the player's own
-    // panel and translation state outlive a skip, so copies recreated per track
-    // would contradict it until it next changed.
-    val playerQueueToggle = remember { mutableStateOf(false) }
-    val playerQueueShowing = remember { mutableStateOf(false) }
-    val playerTranslateToggle = remember { mutableStateOf(false) }
-    val playerShowingTranslation = remember { mutableStateOf(false) }
     // Where the player's "…" is, in window coordinates, so its menu hangs off it.
+    // fork: the phone's player (sharedUi) doesn't report it, so the menu sits centred.
     val playerMenuAnchor = remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
 
     /** The song menu's verbs for [song], as the player sheet offers them. */
@@ -3509,15 +3497,11 @@ fun BitChordDesktopApp() {
                             onDismissLyricsOffset = {},
                             windowWidth = windowWidth,
                             windowHeight = windowHeight,
-                            playerOverflowOpen = playerOverflowOpen,
-                            playerQueueToggle = playerQueueToggle,
-                            playerQueueShowing = playerQueueShowing,
-                            playerMenuAnchor = playerMenuAnchor,
-                            playerTranslateToggle = playerTranslateToggle,
-                            playerShowingTranslation = playerShowingTranslation,
+                            menuOpen = { playerMenuOpen }, // fork: the phone's player (sharedUi) has no #795 drawer parameters
                         )
                         // The sheet's own origin in the window, so the menu below can be
                         // placed on the "…" button the player reports in window terms.
+                        ForkPlayerCaption() // fork: the window can be moved with the player open
                         val sheetOrigin = remember { mutableStateOf(Offset.Zero) }
                         Spacer(
                             Modifier
@@ -3564,20 +3548,8 @@ fun BitChordDesktopApp() {
                                         DesktopOriginalVersion.clear(current.videoId)
                                         playbackEngine.reloadCurrent(forceSourceRefresh = true)
                                     }.takeIf { DesktopOriginalVersion.isPinned(current.videoId) },
-                                    onMore = {
-                                        playerMenuOpen = false
-                                        playerOverflowOpen.value = true
-                                    },
-                                    onSwitchLyricsQueue = {
-                                        playerMenuOpen = false
-                                        playerQueueToggle.value = true
-                                    },
-                                    queueShowing = playerQueueShowing.value,
-                                    onTranslate = {
-                                        playerMenuOpen = false
-                                        playerTranslateToggle.value = true
-                                    },
-                                    showingTranslation = playerShowingTranslation.value,
+                                    // fork: no "More…", lyrics/queue or translate rows: they drove the old
+                                    // player's drawer, and the phone's player (sharedUi) has its own buttons.
                                     translateEnabled = !sharedLyrics.isNullOrEmpty(),
                                     lyricsProviders = menuLyricsProviders,
                                     onSelectLyricsProvider = { label -> lyricsOnly = label },
@@ -4478,7 +4450,7 @@ private fun DesktopTopBar(
     // gently rather than strobing on the beat — the desktop's calm reading of a mix.
     val mixBlend = DesktopPlayerSettings.smartMixBlend.collectAsState()
     val reduceAnimation by DesktopPlayerSettings.reduceAnimation.collectAsState()
-    val mixPulse = rememberMixPulse({ mixBlend.value }, enabled = !reduceAnimation, slow = true)
+    val mixPulse = rememberMixPulse({ mixBlend.value }, enabled = !reduceAnimation)
     val currentProgress by rememberUpdatedState(progress)
 
     // Apple Music uses one calm strip for both player controls and window furniture. The left

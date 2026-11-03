@@ -231,7 +231,7 @@ private val MAC_GLYPH = Color(0xB3000000)
  * Windows knows, so it never sends the caption's own double click. Without the native frame the
  * window is moved from the pointer, as WindowDraggableArea did.
  */
-private fun Modifier.captionPress(scope: WindowScope, actions: DesktopWindowActions?): Modifier =
+internal fun Modifier.captionPress(scope: WindowScope, actions: DesktopWindowActions?): Modifier = // fork: was private; the player's caption strip (ForkPlayerCaption)
     pointerInput(scope, actions) {
         var lastPressAt = 0L
         var lastPressPosition = Offset.Zero

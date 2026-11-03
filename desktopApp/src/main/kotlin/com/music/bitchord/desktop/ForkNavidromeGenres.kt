@@ -25,6 +25,8 @@ internal object ForkNavidromeGenres {
 
     fun install() {
         NavidromePlatform.onGenres = { ForkExplore.navidromeGenres.value = it }
+        // The phone's Explore (sharedUi) hides the server's panel by this flag, the phone's offline mode.
+        scope.launch { ForkOffline.offline.collect { com.music.bitchord.ui.screens.ForkLibraryPlaylists.offlineMode.value = it } }
         scope.launch {
             combine(NavidromeSettings.saved, ForkOffline.offline) { _, offline -> offline }.collectLatest { offline ->
                 when {

@@ -68,9 +68,9 @@ internal object DesktopAppUiHost : AppUiHost {
         runCatching { LibraryViewType.valueOf(persistence.string(KEY_HOME_RECENTS_VIEW, LibraryViewType.LIST.name)) }
             .getOrDefault(LibraryViewType.LIST),
     )
-    override val homeRecentsViewType: StateFlow<LibraryViewType> = _homeRecentsViewType
+    val homeRecentsViewType: StateFlow<LibraryViewType> = _homeRecentsViewType
 
-    override fun setHomeRecentsViewType(value: LibraryViewType) {
+    fun setHomeRecentsViewType(value: LibraryViewType) {
         persistence.saveString(KEY_HOME_RECENTS_VIEW, value.name)
         _homeRecentsViewType.value = value
     }

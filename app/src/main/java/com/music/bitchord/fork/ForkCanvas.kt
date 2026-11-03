@@ -106,14 +106,8 @@ object ForkCanvas {
         return if (title == song.title) song else song.copy(title = title)
     }
 
-    internal fun withoutArtistPrefix(title: String, artist: String): String {
-        val dash = Regex("""^\s*(.+?)\s+[-–—]\s+(.+)$""").matchEntire(title) ?: return title
-        val (front, rest) = dash.destructured
-        val artists = artist.split(Regex("""\s*(?:,|&|\bx\b|\bfeat\.?|\bft\.?)\s*""", RegexOption.IGNORE_CASE))
-            .map { it.trim().lowercase() }.filter { it.isNotEmpty() }
-        val frontNames = front.split(Regex("""\s*(?:,|&)\s*""")).map { it.trim().lowercase() }
-        return if (frontNames.isNotEmpty() && frontNames.all { it in artists } || front.trim().lowercase() == artist.trim().lowercase()) rest else title
-    }
+    internal fun withoutArtistPrefix(title: String, artist: String): String =
+        com.music.bitchord.data.navidrome.NavidromeCanvasQuery.withoutArtistPrefix(title, artist) // shared with the PC
 
     private const val MAX_SONGS = 64
     private const val MISS_MS = 10L * 60 * 1000
