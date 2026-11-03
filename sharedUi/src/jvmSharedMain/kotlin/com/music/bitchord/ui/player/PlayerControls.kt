@@ -35,6 +35,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -745,6 +746,7 @@ internal fun CircleGlyph(
             .size(34.dp)
             .clip(CircleShape)
             .background(LocalPlayerTint.current.copy(alpha = discAlpha))
+            .playerHoverDisc() // fork: lights under a mouse (ForkPlayerHover); touch has no hover
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -1044,13 +1046,16 @@ private fun PillSegment(
 ) {
     val haptics = rememberHaptics()
     val lastTap = remember { mutableLongStateOf(-tapWindowMs) }
+    val forkHover = remember { MutableInteractionSource() } // fork: ForkPlayerHover
+    val hover by rememberPlayerHover(forkHover) // fork
     Box(
         modifier = Modifier
             .width(width)
             .height(BOTTOM_ACTION_SIZE)
-            .background(if (highlighted) LocalPlayerTint.current.copy(alpha = 0.14f) else Color.Transparent)
+            .background(LocalPlayerTint.current.copy(alpha = (if (highlighted) 0.14f else 0f) + 0.08f * hover)) // fork: was highlighted-only
+            .hoverable(forkHover) // fork
             .clickable(
-                interactionSource = remember { MutableInteractionSource() },
+                interactionSource = forkHover, // fork: was a fresh MutableInteractionSource()
                 indication = null,
                 enabled = !loading,
             ) {

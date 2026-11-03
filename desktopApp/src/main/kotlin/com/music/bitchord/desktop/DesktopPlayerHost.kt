@@ -211,8 +211,9 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
     override val smartMixInProgress = MutableStateFlow(false)
     override val smartMixBlend = MutableStateFlow<MixBlend?>(null)
     // fork: members the phone's player (sharedUi) asks for. No watch caps the stream here; the
-    // output / Listen Together pill as on the phone; the mix popup and stats line stay empty
-    // until the PC engine reports them.
+    // output / Listen Together pill as on the phone; the stats line, the mix popup's view and its
+    // progress are written by the engine's audio thread as the phone's CrossfadeController writes
+    // them (ForkAutomixReporter, ForkAutomixReport.kt).
     override val streamCeilingOverride = MutableStateFlow<AudioQuality?>(null)
     override val showListenTogetherButton = MutableStateFlow(true)
     override val automixDetail = MutableStateFlow<String?>(null)

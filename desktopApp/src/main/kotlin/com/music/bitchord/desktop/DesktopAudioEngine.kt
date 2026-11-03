@@ -810,6 +810,7 @@ class DesktopPlaybackEngine(
 
     private fun step() {
         drainCommands()
+        forkReportAutomix(current) // fork: the stats line and the mix popup (ForkAutomixReport)
         val track = current
         if (track == null || paused) {
             if (paused) sink.pause()
@@ -818,6 +819,7 @@ class DesktopPlaybackEngine(
             return
         }
         sink.resume()
+        if (forkInstallHeldUpgrade(track)) return // fork: a better copy held through a mix (ForkMixUpgradeHold)
 
         if (forkLoopStep(track)) return // fork: the loop mix writes this block (ForkDesktopLoopMix)
         forkStartWaitingSwap(track) // fork
@@ -1335,6 +1337,7 @@ class DesktopPlaybackEngine(
                 Command.Flush -> {
                     forkLoopBail("a new song", settle = false) // fork
                     forkDropSwap() // fork
+                    forkDropHeldUpgrade() // fork
                     current?.decoder?.close()
                     current = null
                     upcoming?.decoder?.close()
@@ -1357,6 +1360,7 @@ class DesktopPlaybackEngine(
      * blend is running; this just builds the forced plan the shared [armIncomingBlend] arms with.
      */
     private fun startSkipMix(fadeSeconds: Int) {
+        forkLoopYieldToSkip() // fork: ForkDesktopLoopMix
         val outgoing = current ?: return
         val incoming = upcoming ?: return
         if (fadeRemaining > 0) return
@@ -1387,6 +1391,7 @@ class DesktopPlaybackEngine(
      * vanished; with no incoming deck there could be neither a seekbar marker nor an Automix.
      */
     private fun replaceCurrent(track: Track, playWhenReady: Boolean) {
+        if (forkHoldUpgrade(track)) return // fork: kept for after the mix instead of closed (ForkMixUpgradeHold)
         // An upgrade that arrives after the handoff has begun is no longer worth interrupting the
         // audible transition. Keep the running pair intact and retire the unused decoder.
         if (fadeRemaining > 0 || displaySwitched) {
@@ -1952,6 +1957,7 @@ class DesktopPlaybackEngine(
 
     /** The marker on the scrubber, showing where the mix will happen before it happens. */
     private fun publishTransitionWindow(track: Track, plan: TransitionPlan, duration: Long) {
+        forkLastPlan = plan // fork: the stats line's planned mix (ForkAutomixReport)
         val status = analysisStatus(track)
         val markable = !plan.blocked &&
             plan.markerVisible &&
@@ -2111,6 +2117,7 @@ class DesktopPlaybackEngine(
             command.track?.decoder?.close()
             return
         }
+        forkLoopYieldToSkip() // fork: ForkDesktopLoopMix
         val outgoing = current
         val incoming = command.track ?: upcoming?.takeIf { it.song.videoId == command.song.videoId }
         if (outgoing == null || incoming == null || paused || fadeRemaining > 0 || outgoing.song.videoId == command.song.videoId) {
@@ -2234,7 +2241,12 @@ class DesktopPlaybackEngine(
             return spliced
         }
         if (!run.spliced) {
+            // Armed seconds ahead, so whatever [ForkLoopMixRules.refusal] turns a pair away for is
+            // checked again until the splice: Automix switched off with a crossfade length still set
+            // keeps the next deck, and a party joined mid-song doesn't touch it, so neither ended the mix.
             val why = when {
+                !automixEnabled -> "Automix is off"
+                DesktopListenTogether.state.value.inParty -> "in a Listen Together party"
                 playbackSpeed != 1f -> "playback speed is not 1x"
                 skipSilenceEnabled -> "skip silence is on"
                 deckRate(track) != 1.0 -> "the song is still easing out of its own mix"
@@ -2443,6 +2455,20 @@ class DesktopPlaybackEngine(
         }
     }
 
+    /**
+     * A skip that reached the audio thread while a loop mix is armed or running. [beginSkipMix] and
+     * [forkSkipTo] read [blendActive] on the caller's thread, so one pressed just before the mix armed
+     * still arrives here as a blend: armed under the mix's decks, the blend ran on the ordinary path
+     * until the splice took the step over, both mixes at once. A mix not yet heard gives way (its
+     * incoming deck goes back to the start the blend expects); one heard settles first, as for a seek,
+     * which past its move to the incoming song promotes that song; the skip then blends from wherever
+     * that leaves the player, or cuts when it has no deck left to blend into.
+     */
+    private fun forkLoopYieldToSkip() {
+        val run = forkLoopRun ?: return
+        if (run.engaged) forkLoopBail("a skip", settle = true) else forkLoopCancel("a skip")
+    }
+
     /** A better copy of the playing song under a loop mix: ignored once spliced, and the mix dropped before. */
     private fun forkLoopRefusesUpgrade(track: Track): Boolean {
         val run = forkLoopRun ?: return false
@@ -2452,6 +2478,138 @@ class DesktopPlaybackEngine(
         }
         forkLoopCancel("a better copy of the song arrived")
         return false
+    }
+
+    // ---- fork: a better copy that arrives during a mix waits for it, see ForkMixUpgradeHold -----
+
+    private val forkUpgradeHold = ForkMixUpgradeHold<Track>()
+
+    /**
+     * Whether a mix is playing: a blend (a skip's too) still running or past its display switch, or a
+     * loop mix's decks spliced in. The times [replaceCurrent] used to close a better copy.
+     */
+    private fun forkMixing(): Boolean = fadeRemaining > 0 || displaySwitched || forkLoopRun?.engaged == true
+
+    /** From [replaceCurrent]: a copy arriving mid-mix, or just after one, is held instead of closed. */
+    private fun forkHoldUpgrade(track: Track): Boolean {
+        if (!forkUpgradeHold.mustWait(forkMixing(), System.nanoTime())) return false
+        forkUpgradeHold.hold(track)?.decoder?.close()
+        DesktopTrackLog.log(
+            "holding the better copy of '${track.song.title}' " +
+                "(${track.stream.format.summary.ifBlank { "another rendition" }}) until the mix settles",
+        )
+        return true
+    }
+
+    /**
+     * From [step], every block: the held copy once the mix has settled, for the song playing then. The
+     * crossfaded swap takes it where it can (and the step carries on reading the old copy, which it
+     * fades out of); otherwise the old cut-over, re-cued to where the song now is, since the copy was
+     * opened at the playhead of the moment it was offered. True when the cut-over changed the deck.
+     */
+    private fun forkInstallHeldUpgrade(playing: Track): Boolean {
+        val held = forkUpgradeHold.due(forkMixing(), System.nanoTime()) ?: return false
+        val shown = _state.value
+        if (held.song.videoId != playing.song.videoId || shown.song?.videoId != held.song.videoId) {
+            DesktopTrackLog.log(
+                "dropping the held copy of '${held.song.title}': '${shown.song?.title ?: playing.song.title}' is playing now",
+            )
+            held.decoder.close()
+            return false
+        }
+        // Another copy may have gone in meanwhile (the song's own second look, after the mix).
+        if (!DesktopMusicSources.worthSwapping(held.stream.format, shown.streamFormat)) {
+            DesktopTrackLog.log("dropping the held copy of '${held.song.title}': what plays is as good")
+            held.decoder.close()
+            return false
+        }
+        DesktopTrackLog.log(
+            "the mix has settled: '${held.song.title}' upgrades to the held " +
+                held.stream.format.summary.ifBlank { "rendition" },
+        )
+        if (forkQueueSwap(held)) return false
+        if (kotlin.math.abs(shown.positionMs - held.startUs / 1_000) >= UPGRADE_RESEEK_THRESHOLD_MS) {
+            held.decoder.seek(shown.positionMs * 1_000)
+            held.startUs = shown.positionMs * 1_000
+        }
+        replaceCurrent(held, playWhenReady = true)
+        return true
+    }
+
+    private fun forkDropHeldUpgrade() {
+        forkUpgradeHold.drop()?.decoder?.close()
+    }
+
+    // ---- fork: Automix reported as on the phone, see ForkAutomixReport -------------------------
+
+    private val forkReport = ForkAutomixReporter()
+
+    /** The newest plan [publishTransitionWindow] was handed, for the stats line (the phone's `lastSmartPlan`). */
+    private var forkLastPlan: TransitionPlan? = null
+
+    /**
+     * From [step], every pass, paused too: the mix popup's view and progress for a real blend, and the
+     * stats line. Audio thread, where every field it reads is written.
+     */
+    private fun forkReportAutomix(track: Track?) {
+        val incoming = upcoming
+        val plan = activePlan
+        if (track != null && incoming != null && plan != null && isSmartMixInProgress()) {
+            forkReport.showBlend(plan) {
+                ForkMixView.build(
+                    plan = plan,
+                    outSong = track.song,
+                    inSong = incoming.song,
+                    outAnalysis = analyzer.analysisFor(track.song.videoId),
+                    inAnalysis = analyzer.analysisFor(incoming.song.videoId),
+                    outStartSec = plan.transitionStart,
+                    inStartSec = incoming.startUs / 1e6,
+                    incomingRate = incoming.tempoRate,
+                    outDurationMs = (track.decoder.durationUs ?: 0L) / 1_000,
+                    inDurationMs = (incoming.decoder.durationUs ?: 0L) / 1_000,
+                )
+            }
+            val channels = sink.format.channels.coerceAtLeast(1)
+            val queued = ((framesWritten - sink.framesPlayed()).coerceAtLeast(0L) * channels * playbackSpeed).toLong()
+            forkReport.progress(
+                ForkMixView.heardProgress((transitionTotal - fadeRemaining).toLong(), queued, fadeTotal.toLong()),
+            )
+        } else {
+            forkReport.clearBlend()
+        }
+        if (forkReport.detailDue(System.nanoTime())) forkReport.publishDetail(forkAutomixDetail(track))
+    }
+
+    /** The phone's `describeAutomix` on this engine's decks; null with Automix off, in a party, or nothing playing. */
+    private fun forkAutomixDetail(track: Track?): String? {
+        if (track == null || !automixEnabled || DesktopListenTogether.state.value.inParty) return null
+        val positionSec = _state.value.positionMs / 1000.0
+        forkLoopRun?.let { run ->
+            val mixSec = if (run.engaged) {
+                (sink.framesPlayed() - run.originFrame).toDouble() / sink.format.sampleRate.coerceAtLeast(1)
+            } else {
+                null
+            }
+            return ForkAutomixDetail.loopRunning(run.plan, mixSec, run.clock.releaseAt, run.plan.out.loopStart - positionSec)
+        }
+        // Past the display switch the incoming song is the one shown, and the song after it is next.
+        val shown = if (displaySwitched) upcoming?.song ?: track.song else track.song
+        val next = if (displaySwitched) deferredNext else upcoming?.song ?: nextSong
+        // Mid-blend the phone has already cleared its marker, so its line goes back to the analysis.
+        val blending = fadeRemaining > 0 || displaySwitched
+        if (!blending && next != null) {
+            forkLoop.plannedFor(track.song.videoId, next.videoId)?.let {
+                return ForkAutomixDetail.loopPlanned(it, it.out.loopStart - positionSec)
+            }
+            val plan = forkLastPlan
+            if (plan != null && !plan.blocked && _state.value.transitionWindow != null) {
+                return ForkAutomixDetail.planned(plan, plan.transitionStart - positionSec, forkLoop.refusal)
+            }
+        }
+        fun label(song: Song?, outgoing: Boolean): String = song?.videoId?.let {
+            ForkAutomixDetail.label(analyzer.analysisFor(it), analyzer.stateFor(it), outgoing)
+        } ?: "none"
+        return ForkAutomixDetail.analysis(label(shown, outgoing = true), label(next, outgoing = false))
     }
 
     // ---- fork: decks measured from where their streams landed, see ForkCueCorrection ------------
@@ -2512,6 +2670,7 @@ class DesktopPlaybackEngine(
 
     private fun closeEverything() {
         forkDropSwap() // fork
+        forkDropHeldUpgrade() // fork
         current?.decoder?.close()
         upcoming?.decoder?.close()
         current = null

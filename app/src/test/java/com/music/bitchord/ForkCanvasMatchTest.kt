@@ -57,5 +57,14 @@ class ForkCanvasMatchTest {
         assertEquals("Fly Away", ForkCanvas.withoutArtistPrefix("TheFatRat & Anjulie - Fly Away", "TheFatRat, Anjulie"))
         // A dash that isn't the artist stays.
         assertEquals("Song - Live", ForkCanvas.withoutArtistPrefix("Song - Live", "Band"))
+        // "feat" only as a word: "Feather" used to split into "her" and never match its own name.
+        assertEquals("Song", ForkCanvas.withoutArtistPrefix("Feather & Sia - Song", "Feather, Sia"))
+    }
+
+    @Test
+    fun creditsSplitOnWholeWordsAndPlus() {
+        assertEquals(listOf("feather", "sia"), ForkSpotifyMatch.split("Feather feat. Sia"))
+        val answer = items(Triple("spotify:track:f", "Dog Days Are Over", listOf("Florence + The Machine")))
+        assertEquals("spotify:track:f", ForkSpotifyMatch.pick(answer, "Dog Days Are Over", "Florence and the Machine")?.uri)
     }
 }

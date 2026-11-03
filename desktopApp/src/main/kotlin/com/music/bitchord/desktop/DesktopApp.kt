@@ -3013,7 +3013,6 @@ fun BitChordDesktopApp() {
     // The menu the shared player's "…" opens.
     var playerMenuOpen by remember(selectedSong?.videoId) { mutableStateOf(false) }
     // Where the player's "…" is, in window coordinates, so its menu hangs off it.
-    // fork: the phone's player (sharedUi) doesn't report it, so the menu sits centred.
     val playerMenuAnchor = remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
 
     /** The song menu's verbs for [song], as the player sheet offers them. */
@@ -3455,7 +3454,11 @@ fun BitChordDesktopApp() {
                             onRemoveFromQueue = ::removeFromQueue,
                             onMoveInQueue = ::moveInQueue,
                             onClearQueue = ::clearQueue,
-                            onOpenMenu = { playerMenuOpen = true },
+                            onOpenMenu = {
+                                // fork: the shared player's ⋯ records where it was pressed (MenuAnchor), as the phone's does
+                                playerMenuAnchor.value = com.music.bitchord.ui.components.MenuAnchor.consume()
+                                playerMenuOpen = true
+                            },
                             onOpenAlbum = { id ->
                                 overlays.nowPlaying = false
                                 openAlbum(id)

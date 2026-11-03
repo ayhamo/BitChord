@@ -43,3 +43,21 @@ internal fun ForkLibraryPlaylistsRow(
         }
     }
 }
+
+/**
+ * Fork: the "Show all" grid's keys (`LibraryGridPage`), one per card and never repeated.
+ *
+ * Upstream keyed on `browseId ?: title`: a song shelf has no browse id and two tracks can share a
+ * title, so keys repeated and the grid crashed (PC-Continued aaaaee54). That port keyed every card on
+ * its index as well, which made every key new whenever a pin or a sort moved the cards, and the grid
+ * lost each card's identity (and its scroll anchor) on exactly the reorders the page is built for.
+ * Here a card keeps its plain id, and only a repeat of one gets `#n`, its count so far.
+ */
+internal fun forkShelfKeys(items: List<ShelfItem>): List<String> {
+    val seen = HashMap<String, Int>()
+    return items.map { item ->
+        val base = "card:${item.videoId ?: item.browseId ?: item.title}"
+        val n = seen.merge(base, 1, Int::plus)!! - 1
+        if (n == 0) base else "$base#$n"
+    }
+}

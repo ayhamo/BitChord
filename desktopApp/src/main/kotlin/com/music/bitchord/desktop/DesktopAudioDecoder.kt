@@ -469,12 +469,13 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
         val container = format ?: return false
         val context = codec ?: return false
         val target = ((micros + streamStartUs) / 1_000_000.0 / streamTimeBase).toLong()
+        // fork: the landing is taken again even when the seek fails, so the next block says where the stream really is rather than leaving the open's (ForkCueCorrection)
+        forkLandingPending = true; forkLandedUs = null; forkAskedUs = micros
         if (av_seek_frame(container, streamIndex, target, AVSEEK_FLAG_BACKWARD) < 0) return false
         avcodec_flush_buffers(context)
         drained = false
         positionUs = micros
         trimBeforeUs = micros.takeIf { it > 0 }
-        forkLandingPending = true; forkLandedUs = null; forkAskedUs = micros // fork
         return true
     }
 

@@ -350,7 +350,7 @@ internal object DesktopAppleMusicCanvas {
     @Volatile private var tokenExpiresAtMs = 0L
     @Volatile private var retryTokenAfterMs = 0L
 
-    private fun get(url: String, bearer: String): String? {
+    private fun get(url: String, bearer: String, retried: Boolean = false): String? {
         // fork: the status is kept, as the phone's AppleMusicCanvas does: a token the catalog turns
         // down (401) is dropped and scraped again, where the PC used to keep sending it until it
         // expired; and every failure is logged, so "no clip" can be told from "Apple said no".
@@ -367,6 +367,13 @@ internal object DesktopAppleMusicCanvas {
                 cachedToken = null
                 tokenExpiresAtMs = 0L
             }
+        }
+        // fork: and the request asked again once on the new token. Dropping it alone answered this
+        // request "nothing", which DesktopCanvasClient cached as the song's miss, so the song that
+        // found the token stale kept no clip after the token was put right.
+        if (status == 401 && !retried) {
+            val fresh = token()
+            if (fresh != null && fresh != bearer) return get(url, fresh, retried = true)
         }
         if (body == null) DesktopTrackLog.log("canvas: Apple Music answered ${if (status < 0) "nothing" else "HTTP $status"}")
         return body

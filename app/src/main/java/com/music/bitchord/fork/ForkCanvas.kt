@@ -39,7 +39,12 @@ object ForkCanvas {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Answer>) = size > MAX_SONGS
     }
 
-    /** One Spotify search at a time: a restarted lookup (the album landing) waits for the first one's answer. */
+    /**
+     * One Spotify search at a time, as the repository serialises its own. A restarted lookup (the
+     * album landing) waits for the cancelled one's request to finish, but cannot use its answer:
+     * `withContext` throws on a cancelled caller and the request's result is dropped with it, so the
+     * restart asks again (the same as the repository's own `resolve`).
+     */
     private val lock = Mutex()
 
     fun cached(song: Song): CanvasArtwork? {

@@ -94,6 +94,10 @@ object ForkAutomix {
         return values[k - 1] + (values[k] - values[k - 1]) * (t - times[k - 1]) / span
     }
 
-    /** Whether [analysis] is worth keeping on disk: it has the beat model's grid, not only the DSP fallback's. */
+    /**
+     * Whether [analysis] has the beat model's grid, not only the DSP fallback's. Every analysis is
+     * saved again (upstream's rule); a saved one without the model's grid is measured once more
+     * instead of restored (`ForkAnalysisRedo` on the phone), then kept.
+     */
     fun worthStoring(analysis: TrackAnalysis): Boolean = analysis.headBeats != null || analysis.tailBeats != null
 }

@@ -77,7 +77,12 @@ object ForkSpotifyMatch {
             .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
             .trim()
 
+    /**
+     * The separate names in an artist credit. `feat`/`ft` must be whole words: as bare prefixes they
+     * cut "Feather" in two. "+" separates too, so Spotify's "Florence + The Machine" and
+     * a credit reading "Florence and the Machine" come out as the same two names.
+     */
     internal fun split(value: String): List<String> =
-        value.split(Regex("""\s*(?:,|&|\bx\b|\band\b|\bfeat\.?|\bft\.?|\bwith\b)\s*""", RegexOption.IGNORE_CASE))
+        value.split(Regex("""\s*(?:,|&|\+|\bx\b|\band\b|\bfeat\b\.?|\bft\b\.?|\bwith\b)\s*""", RegexOption.IGNORE_CASE))
             .map(::normal).filter { it.isNotEmpty() }
 }

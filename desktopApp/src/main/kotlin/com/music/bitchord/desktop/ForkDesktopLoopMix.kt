@@ -15,6 +15,7 @@ import kotlin.math.roundToLong
 import kotlin.math.sqrt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /*
@@ -550,6 +551,14 @@ internal class ForkDesktopLoopMix(private val scope: CoroutineScope) {
 
     private var buildFor: String? = null
     private var buildJob: Job? = null
+
+    /**
+     * Bumped by every build started or cancelled; a build hands its decks over only while it is still
+     * the newest. Checking [buildFor] instead let a cancelled build (a seek, then the same pair planned
+     * again from the new playhead) finish under the new one's name and hand over decks of the old plan:
+     * `cancel()` doesn't stop a decode that never suspends.
+     */
+    @Volatile private var buildGeneration = 0
     @Volatile private var built: ForkLoopMixSession? = null
     @Volatile private var buildFailed: String? = null
 
@@ -631,6 +640,7 @@ internal class ForkDesktopLoopMix(private val scope: CoroutineScope) {
         buildFor = pair
         built = null
         buildFailed = null
+        val generation = ++buildGeneration
         val sampleRate = p.sampleRate
         val outStream = p.outStream
         val inStream = p.inStream
@@ -645,11 +655,13 @@ internal class ForkDesktopLoopMix(private val scope: CoroutineScope) {
             val session = runCatching {
                 val (outFrom, outTo) = ForkLoopMixSession.outRange(plan)
                 val (inFrom, inTo) = ForkLoopMixSession.inRange(plan)
-                val outRegion = decodeRegion(outStream, outFrom, outTo, sampleRate) ?: return@runCatching null
-                val inRegion = decodeRegion(inStream, inFrom, inTo, sampleRate) ?: return@runCatching null
+                // A cancelled build stops decoding (and reading the network) at its next block.
+                val alive = { isActive && buildGeneration == generation }
+                val outRegion = decodeRegion(outStream, outFrom, outTo, sampleRate, alive) ?: return@runCatching null
+                val inRegion = decodeRegion(inStream, inFrom, inTo, sampleRate, alive) ?: return@runCatching null
                 ForkLoopMixSession.build(plan, sampleRate, outRegion, inRegion, outId, inId, outStream.url, inStream.url)
             }.onFailure { DesktopTrackLog.log("loop mix: building the decks failed: ${it.message}") }.getOrNull()
-            if (buildFor != pair) return@launch
+            if (buildGeneration != generation) return@launch
             if (session == null) {
                 buildFailed = "the decks would not build"
                 return@launch
@@ -677,6 +689,13 @@ internal class ForkDesktopLoopMix(private val scope: CoroutineScope) {
         refusal = reason
     }
 
+    /**
+     * The loop mix planned for [outId] -> [inId], for the stats line (`ForkAutomixDetail.loopPlanned`,
+     * the phone's `loopPlanned` read against its `loopPlanKey`); null when the pair gets its blend.
+     */
+    fun plannedFor(outId: String, inId: String): LoopMix.Plan? =
+        planned?.takeIf { planKey?.startsWith("$outId->$inId|") == true }
+
     /** A seek or a new song: whatever was planned is planned again from the new playhead. */
     fun forget() {
         cancelBuild()
@@ -685,6 +704,7 @@ internal class ForkDesktopLoopMix(private val scope: CoroutineScope) {
     }
 
     private fun cancelBuild() {
+        buildGeneration++
         buildJob?.cancel()
         buildJob = null
         buildFor = null
@@ -731,8 +751,15 @@ internal class ForkDesktopLoopMix(private val scope: CoroutineScope) {
          * Track seconds [from]..[to] of [stream], stereo at [sampleRate], from a decoder of its own (the
          * playing deck can't be seeked under the song); null when it won't open or ends short. Blocking.
          * The region starts where the decoder says it landed (`forkLandedUs`), not where it was asked.
+         * Gives up (null) as soon as [alive] says the build is no longer wanted.
          */
-        fun decodeRegion(stream: DesktopStream, from: Double, to: Double, sampleRate: Int): ForkLoopRegion? {
+        fun decodeRegion(
+            stream: DesktopStream,
+            from: Double,
+            to: Double,
+            sampleRate: Int,
+            alive: () -> Boolean = { true },
+        ): ForkLoopRegion? {
             val decoder = DesktopAudioDecoder()
             try {
                 decoder.open(
@@ -753,6 +780,7 @@ internal class ForkDesktopLoopMix(private val scope: CoroutineScope) {
                 var frames = 0
                 var start: Double? = null
                 while (frames < wanted) {
+                    if (!alive()) return null
                     val block = decoder.readSamples() ?: break
                     var count = decoder.sampleCount
                     if (count <= 0) continue

@@ -270,7 +270,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         executor.execute {
             val stored = store.load(trackId) ?: return@execute
             // fork: a saved one without the model's grid is measured again, once (ForkAnalysisRedo)
-            if (!ForkAutomix.worthStoring(stored) && com.music.bitchord.fork.ForkAnalysisRedo.firstTime(context.filesDir, trackId)) return@execute
+            if (!ForkAutomix.worthStoring(stored) && com.music.bitchord.fork.ForkAnalysisRedo.skipRestore(context.filesDir, trackId)) return@execute
             Log.d(TAG, "Restored analysis for $trackId: bpm=${stored.bpm} conf=${stored.beatConfidence}")
             results.putIfAbsent(trackId, stored)
         }
@@ -453,6 +453,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                         // would freeze a deliberately partial answer in place of
                         // the complete one that supersedes it minutes later.
                         store.save(trackId, whole)
+                        com.music.bitchord.fork.ForkAnalysisRedo.measured(context.filesDir, trackId) // fork: a skipped weak restore counts as measured again only now
                         restoreAttempted.add(trackId)
                     } else if (outcome.decodedShort &&
                         shortDecodes.merge(trackId, 1, Int::plus)!! >= MAX_SHORT_DECODE_ATTEMPTS

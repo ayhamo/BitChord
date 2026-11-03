@@ -436,11 +436,10 @@ fun LibraryGridPage(
                     )
                 }
             }
-            // fork (PC-Continued aaaaee54): a song shelf has no browse id and two tracks can share a
-            // title, so keying on the title repeated keys and crashed the grid
+            val forkKeys = forkShelfKeys(sortedShelf.items) // fork: unique keys (ForkLibraryPlaylists.kt)
             itemsIndexed(
                 sortedShelf.items,
-                key = { index, item -> "${item.videoId ?: item.browseId ?: item.title}#$index" },
+                key = { index, _ -> forkKeys[index] }, // fork: was { it.browseId ?: it.title }, which repeated
             ) { _, item ->
                 ShelfCard(
                     item = item,

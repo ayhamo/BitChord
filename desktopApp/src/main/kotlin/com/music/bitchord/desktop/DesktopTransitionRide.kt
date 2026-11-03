@@ -276,7 +276,7 @@ internal object DesktopTransitionRide {
     private fun glide(from: Double, to: Double, amount: Double): Double =
         from * (to / from).pow(amount.coerceIn(0.0, 1.0))
 
-    private fun filterSwapAt(plan: TransitionPlan): Double = onBar(
+    internal fun filterSwapAt(plan: TransitionPlan): Double = onBar( // fork: was private; the mix popup's bass mark (ForkMixView)
         plan,
         when (plan.filterVariant) {
             FilterTransitionVariant.SWEEP -> FILTER_BASS_SWAP_AT

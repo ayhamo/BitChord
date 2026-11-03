@@ -21,9 +21,9 @@ import kotlin.math.abs
  * the engine knows where in the song the last block it took ends. [correctedStart] moves a cue to its
  * landing; [drift] compares the blend's count with the deck's own clock at the hand-over.
  *
- * Not taken from PC-Continued: their hold on quality upgrades while a mix is engaged. This fork's
- * upgrade crossfades onto the better copy instead (`forkQueueSwap`), and that swap now lines the copy
- * up on its landing too.
+ * Their hold on quality upgrades while a mix is engaged is in `ForkMixUpgradeHold`: the held copy
+ * goes in through this fork's crossfaded swap (`forkQueueSwap`), which lines the copy up on its
+ * landing too.
  */
 internal object ForkCueCorrection {
     /** A landing this far from the ask is the deck's real start; nearer is a block's own granularity (theirs). */

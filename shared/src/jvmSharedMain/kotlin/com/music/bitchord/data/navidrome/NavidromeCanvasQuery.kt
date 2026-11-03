@@ -24,7 +24,7 @@ object NavidromeCanvasQuery {
     fun withoutArtistPrefix(title: String, artist: String): String {
         val dash = Regex("""^\s*(.+?)\s+[-–—]\s+(.+)$""").matchEntire(title) ?: return title
         val (front, rest) = dash.destructured
-        val artists = artist.split(Regex("""\s*(?:,|&|\bx\b|\bfeat\.?|\bft\.?)\s*""", RegexOption.IGNORE_CASE))
+        val artists = artist.split(Regex("""\s*(?:,|&|\bx\b|\bfeat\b\.?|\bft\b\.?)\s*""", RegexOption.IGNORE_CASE)) // feat/ft whole words: "Feather" stays one name
             .map { it.trim().lowercase() }.filter { it.isNotEmpty() }
         val frontNames = front.split(Regex("""\s*(?:,|&)\s*""")).map { it.trim().lowercase() }
         return if (frontNames.isNotEmpty() && frontNames.all { it in artists } || front.trim().lowercase() == artist.trim().lowercase()) rest else title
