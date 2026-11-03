@@ -71,6 +71,18 @@ internal fun ForkOfflineRow(target: BrowseTarget, accent: Color) {
     val estimate = remember(target.songs, pages, running == null, swept) {
         com.music.bitchord.data.navidrome.NavidromeOffline.estimate(target.songs)
     }
+    val status = when {
+        running != null -> "${(running * 100).toInt()}%"
+        kept && missing > 0 -> keptBytes?.let {
+            stringResource(R.string.fork_offline_kept_partial, target.songs.size - missing, target.songs.size, forkSize(it))
+        }
+        kept -> keptBytes?.let { stringResource(R.string.fork_offline_kept, forkSize(it)) }
+        estimate != null -> stringResource(R.string.fork_offline_size, forkSize(estimate))
+        else -> null
+    }
+    // The album page's pop-up menu is narrow: "145 MB to download" beside the label squeezed
+    // "Available offline" into "Av / a…", so there it goes on the dimmer second line.
+    val menu = LocalActionRowStyle.current == ActionRowStyle.Menu
     ActionRow(
         icon = when {
             running != null -> Icons.Rounded.Downloading
@@ -78,15 +90,8 @@ internal fun ForkOfflineRow(target: BrowseTarget, accent: Color) {
             else -> Icons.Rounded.DownloadForOffline
         },
         label = stringResource(R.string.fork_offline_keep),
-        value = when {
-            running != null -> "${(running * 100).toInt()}%"
-            kept && missing > 0 -> keptBytes?.let {
-                stringResource(R.string.fork_offline_kept_partial, target.songs.size - missing, target.songs.size, forkSize(it))
-            }
-            kept -> keptBytes?.let { stringResource(R.string.fork_offline_kept, forkSize(it)) }
-            estimate != null -> stringResource(R.string.fork_offline_size, forkSize(estimate))
-            else -> null
-        },
+        value = status.takeUnless { menu },
+        description = status.takeIf { menu },
         accent = accent,
     ) {
         if (running != null) {

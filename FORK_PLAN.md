@@ -90,7 +90,7 @@ Later in this phase, if wanted: `NavidromeSource : MusicSource` so Navidrome res
 - `AppUpdateChecker` → `ayhamo/BitChord` releases.
 - GitHub workflow: daily merge of upstream `main` (or its releases), build, sign with secrets, publish `fork-vX.Y.Z`. Reuse the psysonic fork workflow's approach. On conflict: fail and tell me, I fix it with Claude.
 
-- Done: own package `com.ayhamo.bitchord` ("BitChord Fork"), own release key; the workflow builds `assembleProdRelease`. Push / first release only when I say so.
+- Done: own package `com.ayhamo.bitchord` (named "BitChord"), own release key; the workflow builds `assembleProdRelease`. Push / first release only when I say so.
 
 ## Phase 8: offline, caches, YouTube
 

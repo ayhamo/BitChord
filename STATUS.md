@@ -2,7 +2,30 @@
 
 Snapshot for picking the work up again. Plan: `FORK_PLAN.md`. Every touched upstream line: `FORK.md`.
 
-## Now (2026-10-30)
+## Now (2026-11-03)
+
+The owner's list from using the phone and PC. Done and tested on the emulator (branch `android-fixes`):
+- Settings: the Navidrome rows are their own "Navidrome" group, no longer under Listen together. Crossfade on skip, Animated covers and Backdrop videos are full rows with icons (they were sub-rows), and the fork's switches use upstream's `IosSwitch`.
+- Automix hiding the Crossfade slider is upstream's (`if (!smartFade)` in `SettingsSheet`, "Automix decides its own length"): left as is.
+- The release app is named "BitChord" (package still `com.ayhamo.bitchord`, so it still installs beside the official app).
+- The album page's pop-up menu: "Available offline" with its size on a second line (it was squeezed to "Av / a...").
+- Server songs no longer ask the server for clips (the clips left the server): their animated covers and backdrops come from the online services like a YouTube song's. Clips kept offline before still play; "Available offline" no longer fetches new ones. Seen: a server song asked Spotify, no x-clip request.
+- YouTube start with addons on: measured 0.9 s to first audio with a failing addon (Qobuz, HTTP 402) ranked above YouTube, Direct Source Stream off. Upstream races addons against YouTube and swaps up mid-song, with a short break (ExoPlayer can't change sources gaplessly). Direct Source Stream (under Sources) waits up to 15 s for addons and holds the next song until 25 s before it plays: the likely cause of the owner's buffering, to check on their phone.
+
+Automix, phone (found by comparing with upstream's web app, bitchord-8bw.pages.dev, whose bundle matches `web/`; nothing changed yet, the owner decides). The Firefox extension 0.4.4 has no Automix in it.
+- The phone keeps one tempo per song, from its ending, and the loop mix anchors that grid on the song's first downbeat (`TrackAnalyzer.kt` around 1121-1145, `LoopMix.constantGrid`). The web keeps a head grid and a tail grid. Likely the biggest cause of loops off the bar.
+- No grid-confidence floor before a loop mix (web: 0.2, `autodj.ts` `MIN_GRID_CONFIDENCE`).
+- The loop mix is refused more often on the phone (lyrics still loading, a re-analysis running, another source's copy), and then `TransitionPlanner`'s blend plays, which is not the web's.
+- The seek bar mark only shows once both songs are analysed; "next: analysing..." means a 6 s plain crossfade if the outro comes first (web: 12 s).
+- Saved analyses (`AnalysisStore`, schema 3) are kept for good and never tied to the copy or model; planning is deterministic, so one bad analysis is the same bad mix every time.
+
+PC, to do after PC-Continued's commits (the owner's report):
+- Automix works, but when an addon's lossless copy replaces YouTube's the sound cuts, and during a mix it stops and resumes (`DesktopAudioEngine.swapStream`, `upgradeIncoming`).
+- Backdrop videos don't play, animated covers stutter, and the PC's look differs from the phone's.
+- The PC's own strings for the clip switches still mention server clips.
+
+
+## Before that (2026-10-30)
 
 Checkout is on branch `hooks`. PR https://github.com/ayhamo/BitChord/pull/1 (hooks into main) is open. CI's one Android packaging failure passed on re-run (it also passed when reproduced locally).
 
@@ -87,12 +110,12 @@ Facts worth keeping:
 - Deep audit (3 reviewers) done; every finding fixed or noted.
 - Settings: every fork switch in its normal place and again in "Fork settings" before Advanced.
 - Audio Pipeline: Source says Navidrome; decoder name survives crossfades.
-- Phase 7: updater reads `ayhamo/BitChord` releases (`fork-v<version>`); workflow `.github/workflows/fork-sync-release.yml` builds the **prod** flavor (`com.ayhamo.bitchord`, "BitChord Fork", installs beside the official app) signed with the fork's own release key (secrets on GitHub; local copy in `docker/keys/release/`, gitignored, back it up).
+- Phase 7: updater reads `ayhamo/BitChord` releases (`fork-v<version>`); workflow `.github/workflows/fork-sync-release.yml` builds the **prod** flavor (`com.ayhamo.bitchord`, named "BitChord", installs beside the official app) signed with the fork's own release key (secrets on GitHub; local copy in `docker/keys/release/`, gitignored, back it up).
 
 ## Left
 
 - Push to GitHub and the first release: only when the owner says so (don't ask).
-- Package `com.ayhamo.bitchord` ("BitChord Fork") sits beside the official app; the first fork release is a fresh install (its own data).
+- Package `com.ayhamo.bitchord` (named "BitChord") sits beside the official app; the first fork release is a fresh install (its own data).
 
 ## Problematic / to watch
 

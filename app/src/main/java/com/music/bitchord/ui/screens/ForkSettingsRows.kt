@@ -10,19 +10,17 @@ import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.FastForward
 import androidx.compose.material.icons.rounded.OfflinePin
 import androidx.compose.material.icons.rounded.SignalCellularAlt
+import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.VideoLibrary
 import androidx.compose.material.icons.rounded.Wallpaper
-import androidx.compose.material.icons.rounded.Waves
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -50,7 +48,7 @@ import kotlinx.coroutines.flow.StateFlow
  */
 @Composable
 internal fun ForkCrossfadeOnSkipRow() = ForkSwitchRow(
-    icon = Icons.Rounded.Waves,
+    icon = Icons.Rounded.SkipNext,
     title = stringResource(R.string.fork_crossfade_on_skip),
     subtitle = stringResource(R.string.fork_crossfade_on_skip_subtitle),
     state = ForkSettings.crossfadeOnSkip,
@@ -89,14 +87,8 @@ private fun ForkSwitchRow(
         title = title,
         subtitle = subtitle,
         trailing = {
-            Switch(
-                checked = checked,
-                onCheckedChange = onChange,
-                colors = SwitchDefaults.colors(
-                    checkedTrackColor = MaterialTheme.colorScheme.primary,
-                    checkedBorderColor = MaterialTheme.colorScheme.primary,
-                ),
-            )
+            // Upstream's switch, so these rows look like the ones around them
+            com.music.bitchord.ui.components.IosSwitch(checked = checked, onCheckedChange = onChange)
         },
         onClick = { onChange(!checked) },
     )
@@ -309,7 +301,7 @@ internal fun ForkAnimatedCoversRow() = ForkSwitchRow(
 
 // ---- The fork's rows inside upstream's settings groups, so SettingsSheet carries one line each ----
 
-/** After "Account & integrations": what the Navidrome library adds. */
+/** The "Navidrome" group, after "Account & integrations": what the Navidrome library adds. */
 @Composable
 internal fun SettingsGroupScope.forkNavidromeRows() {
     row(stringResource(R.string.fork_navidrome_scrobble), "navidrome", "scrobbling", "now playing") { ForkNavidromeScrobbleRow() }
@@ -321,28 +313,23 @@ internal fun SettingsGroupScope.forkNavidromeRows() {
     row(stringResource(R.string.fork_preload), "navidrome", "preload", "cache", "next") { ForkPreloadRow() }
 }
 
-/** Next / Previous blend too, with a crossfade length or Automix's own fallback ([shown]); after the Crossfade slider, which Automix hides. */
+/**
+ * Next / Previous blend too, with a crossfade length or Automix's own fallback ([shown]); after the
+ * Crossfade slider, which Automix hides. A full row with its own icon, not a sub-row: with Automix on
+ * the slider it would hang from is gone (upstream's choice), and it read as part of whatever was above.
+ */
 @Composable
 internal fun SettingsGroupScope.forkCrossfadeOnSkipRow(shown: Boolean) {
     if (!shown) return
-    val title = stringResource(R.string.fork_crossfade_on_skip)
-    row(title, "fade", "skip", "next", "previous") {
-        ForkSubRow(title, stringResource(R.string.fork_crossfade_on_skip_subtitle), ForkSettings.crossfadeOnSkip, ForkSettings::setCrossfadeOnSkip)
-    }
+    row(stringResource(R.string.fork_crossfade_on_skip), "fade", "skip", "next", "previous") { ForkCrossfadeOnSkipRow() }
 }
 
-/** "Animated covers" and "Backdrop videos", which play through the canvas switched on ([shown]) above them. */
+/** "Animated covers" and "Backdrop videos", which play through the canvas switched on ([shown]) above them; full rows with icons, as in the fork's own group. */
 @Composable
 internal fun SettingsGroupScope.forkCanvasRows(shown: Boolean) {
     if (!shown) return
-    val covers = stringResource(R.string.fork_animated_covers)
-    row(covers, "canvas", "apple", "animated", "cover", "video", divided = false) {
-        ForkSubRow(covers, stringResource(R.string.fork_animated_covers_subtitle), ForkSettings.animatedCovers, ForkSettings::setAnimatedCovers)
-    }
-    val backdrops = stringResource(R.string.fork_backdrop_clips)
-    row(backdrops, "canvas", "navidrome", "backdrop", "video", divided = false) {
-        ForkSubRow(backdrops, stringResource(R.string.fork_backdrop_clips_subtitle), ForkSettings.backdropClips, ForkSettings::setBackdropClips)
-    }
+    row(stringResource(R.string.fork_animated_covers), "canvas", "apple", "animated", "cover", "video") { ForkAnimatedCoversRow() }
+    row(stringResource(R.string.fork_backdrop_clips), "canvas", "navidrome", "backdrop", "video") { ForkBackdropClipsRow() }
 }
 
 /** After "Clear image cache": the video clip cache's size and the clear buttons. */
@@ -373,11 +360,4 @@ internal fun SettingsGroupScope.forkSettingsRows() {
         row(stringResource(R.string.fork_download_mobile), "fork", "offline", "mobile") { ForkDownloadOnMobileRow() }
         row(stringResource(R.string.fork_preload), "fork", "navidrome", "preload") { ForkPreloadRow() }
     }
-}
-
-/** A setting drawn as part of the row above it ([SettingsSubRow]). */
-@Composable
-private fun ForkSubRow(title: String, subtitle: String, state: StateFlow<Boolean>, onChange: (Boolean) -> Unit) {
-    val checked by state.collectAsStateWithLifecycle()
-    SettingsSubRow(title = title, subtitle = subtitle, checked = checked, onCheckedChange = onChange)
 }
