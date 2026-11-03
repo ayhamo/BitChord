@@ -13,6 +13,9 @@ internal interface DesktopSampleSource {
 
     fun seek(micros: Long): Boolean
 
+    /** Fork: where the first block after the open or the last seek really begins; see ForkCueCorrection. */
+    val forkLandedUs: Long? get() = null
+
     fun close()
 }
 
@@ -58,6 +61,12 @@ internal class DesktopDecodeAhead(
     var sampleCount: Int = 0
         private set
 
+    /** Fork: where the queued blocks sit in the song (ForkCueCorrection). */
+    internal val forkClock = ForkDeckClock()
+
+    /** Fork: where the first block since the last seek really begins; null until one is decoded. */
+    val forkLandedUs: Long? get() = forkClock.landedUs
+
     private val worker = Thread(::decodeLoop, name).apply {
         isDaemon = true
         // Above the UI, below the audio thread itself.
@@ -81,6 +90,7 @@ internal class DesktopDecodeAhead(
             return null
         }
         queuedSamples -= block.size
+        forkClock.taken() // fork
         started = true
         wake.signal()
         sampleCount = block.size
@@ -99,6 +109,7 @@ internal class DesktopDecodeAhead(
             ended = false
             started = false
             pendingSeekUs = micros
+            forkClock.seeked() // fork
             wake.signal()
         }
         return true
@@ -140,6 +151,7 @@ internal class DesktopDecodeAhead(
                     DesktopTrackLog.log("decode-ahead: decoder failed, ending the track: ${failure.message}")
                     null
                 }
+                val forkLanded = source.forkLandedUs // fork: read on the decoder's own thread
                 lock.withLock {
                     // A seek came in while this block was being read; it belongs to the old position.
                     if (decodingFor != generation) return@withLock
@@ -153,6 +165,7 @@ internal class DesktopDecodeAhead(
                         ended = true
                     } else if (decoded.isNotEmpty()) {
                         queue.addLast(decoded)
+                        forkClock.appended(decoded.size / outputFormat.channels.coerceAtLeast(1), outputFormat.sampleRate, forkLanded) // fork
                         queuedSamples += decoded.size
                     }
                     ready.signalAll()

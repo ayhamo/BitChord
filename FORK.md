@@ -20,7 +20,6 @@ Everything this fork adds lives in new files where possible. This file lists eve
 | `desktopApp/src/main/kotlin/com/music/bitchord/desktop/ForkSpotifyToken.kt` | Spotify's token from its real page in a hidden JavaFX browser, as the phone does |
 | `desktopApp/src/main/kotlin/com/music/bitchord/desktop/ForkNavidromeSearch.kt` | Search: the server's songs (kept songs only, offline) for a typed search, read beside YouTube's request |
 | `desktopApp/src/main/kotlin/com/music/bitchord/desktop/ForkNavidromeGenres.kt` | Reads Explore's genre tiles, following the login and offline |
-| `desktopUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/screens/ForkExplore.kt` | The desktop's copy of Explore's panels: "Navidrome" (hidden offline) and "YouTube", no "Spotify" |
 | `desktopApp/src/main/kotlin/com/music/bitchord/desktop/ForkPlayerMenu.kt` | The player menu's three switches (`ForkPlayerMenuRows`) and their wording, shared with Settings |
 | `desktopApp/src/main/kotlin/com/music/bitchord/desktop/ForkNavidromeSettings.kt` | "Report plays to Navidrome", "Navidrome on Home" and the clip cache's size, saved; Settings' "Navidrome" group |
 | `desktopApp/src/main/kotlin/com/music/bitchord/desktop/ForkClipCache.kt` | The clips' own size limit and the "Clear backdrop videos" / "Clear animated covers" rows, which also forget the old "no clip" notes; kept offline files are in another folder |
@@ -100,7 +99,7 @@ Everything this fork adds lives in new files where possible. This file lists eve
 | `data/canvas/CanvasCache.kt` | `cache` is `internal`; evictor is `ForkClipCache.evictor` |
 | `ui/player/AndroidPlayerHost.kt` | `cachedCanvas` / `canvasFor` through `ForkCanvas` |
 | `data/canvas/SpotifyCanvas.kt` `searchViaPathfinder`, `searchViaRest` | `ForkSpotifyMatch.pick` first, the hit then carrying the names asked for; named hits with none matching answer null and skip the REST search (`noteNamedMiss` / `takeNamedMiss`) |
-| `sharedUi/…/ui/screens/LibraryScreen.kt`, `desktopUi/…/ui/screens/LibraryScreen.kt` | The shelf grid keyed by `videoId ?: browseId ?: title` plus the index (`itemsIndexed`): two same-titled songs crashed it (from PC-Continued aaaaee54) |
+| `sharedUi/…/ui/screens/LibraryScreen.kt` | The shelf grid keyed by `videoId ?: browseId ?: title` plus the index (`itemsIndexed`): two same-titled songs crashed it (from PC-Continued aaaaee54) |
 | `data/canvas/CanvasRepository.kt` | `canvasFor()`: `NavidromeClips.canvasFor(song)` first; a Navidrome song is looked up without its album (a server album can be a collection, "Youtube Topic", whose name failed `matches()` for every right hit) |
 | `data/settings/AppSettings.kt` | `SongSort.REVERSED` ("Reverse order") after DEFAULT |
 | `data/lyrics/EmbeddedLyrics.kt` | `forUri()`: first two lines hand a Navidrome stream URL to `NavidromeLyrics` |
@@ -152,7 +151,7 @@ Everything this fork adds lives in new files where possible. This file lists eve
 
 ## The desktop app (branch `pc`)
 
-Upstream removed `desktopApp` and `desktopUi` in `e4dd63d8`; `pc` restores them from `e4dd63d8^`, so they count as upstream files.
+Upstream removed `desktopApp` and `desktopUi` in `e4dd63d8`; `pc` restores `desktopApp` from `e4dd63d8^`, so it counts as upstream files. Since 2026-11-03 the PC draws the phone's own `sharedUi` (`desktopUi`, upstream's Oct-14 copy with PR #795, is deleted): every upstream phone UI change reaches the PC, and the PC build compiles `sharedUi`'s desktop side after each merge.
 
 | File | Hook |
 |---|---|
@@ -163,12 +162,20 @@ Upstream removed `desktopApp` and `desktopUi` in `e4dd63d8`; `pc` restores them 
 | `desktopApp/build.gradle.kts` `listenTogetherServer` | Falls back to the phone's public party server (the PC had none, so Listen Together was greyed out) |
 | `DesktopAudioEngine.kt` (quality upgrade) | `replaceCurrent`: `forkQueueSwap` first (not with listening speed or Skip silence, which hold audio ahead of the write point); the better copy waits while a beatmatch stretch eases out, is seeked a second ahead of the write point by its decoder's worker (`forkStartWaitingSwap`, `FORK_SWAP_LEAD_US`), and once the write point reaches it with audio decoded (`DesktopDecodeAhead.forkHasSamples`) is lined up and crossfaded in over 200 ms (`forkEnterArmedSwap`, `forkMixSwap`, `forkFinishSwap`); re-armed up to 3 times, then given up with the old copy playing: no sink flush, no reopen, the Automix plan kept. `step()`: `forkStartWaitingSwap`, `forkMixSwap` after `readCurrent`, the old copy ending first finishes it; `forkSwapBeforeSeek` in `performSeek`; `forkDropSwap` in `startTrack`, `promoteUpcoming`, `forkStartSkip`, `Flush`, `closeEverything`. `armIncomingBlend` snaps a rate within `FORK_TEMPO_UNITY` to 1 |
 | `DesktopPlayerHost.kt` `canvasFor` | `ForkDesktopCanvas.canvasFor(song)` |
+| `desktopApp/build.gradle.kts` | `implementation(project(":sharedUi"))` (was `:desktopUi`) |
+| `DesktopApp.kt` (player) | `NowPlayingScreen(…, menuOpen = { playerMenuOpen })`: the six #795 drawer parameters are gone with `desktopUi`, and so are the song menu's "More…", lyrics/queue and translate rows that drove them; the ⋯ menu sits centred (the shared player reports no anchor). `rememberMixPulse` without `slow` |
+| `DesktopPlayerHost.kt` `DesktopPlayerSettings` | The members the phone's player asks for: `streamCeilingOverride` (null), `showListenTogetherButton` (true), `automixDetail`, `smartMixView`, `smartMixProgress` (empty). `OutputFormatUi` without `carriesHiRes` |
+| `DesktopSharedPages.kt` | `homeRecentsViewType` / `setHomeRecentsViewType` no longer override (the phone's `AppUiHost` has neither) |
+| `DesktopAudioDecoder.kt` `windowedContext` | The read and seek callbacks catch everything and return `AVERROR(EIO)` / -1: an exception from a read crossed FFmpeg's C frames and crashed the app (seen 2026-11-03, a cancelled analysis) |
+| `ForkNavidromeGenres.kt` | Mirrors the PC's offline flag into `ForkLibraryPlaylists.offlineMode`, which the shared Explore and Library read |
+| `shared/…/data/navidrome/NavidromeCanvasQuery.kt` (new) | A server song asked about without its album or a repeated "Artist - "; `ForkDesktopCanvas` uses it whole (the PC sent the server album and lost Apple/Tidal hits), the phone's `ForkCanvas.withoutArtistPrefix` delegates to it |
+| `sharedUi/…/player/ForkSleeveClip.kt`, `NowPlayingScreen.kt` | `ForkCanvasSwitch.bigArtFits`, set next to `forkArtAwake`, for the PC menu's "Fullscreen cover art" row |
 | `DesktopSpotifyCanvas.kt` | `searchTrack` tries `forkSearchViaPathfinder` (the web player's search, as on the phone, with a name check) before the REST search, which 429s |
 | `DesktopCanvasDecoder.kt` | Opens the smallest rendition that still reaches `MAX_EDGE` (`forkSmallestFitting`), discards the others (`forkDiscardOthers`), and decodes with FFmpeg's own thread count in slice threading (frame threading held frames back, and the loop dropped them) |
 | `ForkPlayerMenu.kt` | The two video switches' subtitles no longer mention the server's clips |
-| `settings.gradle.kts` | `include(":desktopUi")`, `include(":desktopApp")`, only on JDK 21 or newer (the Android image and CI run on 17) |
+| `settings.gradle.kts` | `include(":desktopApp")`, only on JDK 21 or newer (the Android image and CI run on 17) |
 | `.gitignore` | `/desktopApp/bin/` |
-| `desktopUi/build.gradle.kts` | `CMP_DESKTOP`: the build's target decides, not its host, so a Windows zip cross-built from Linux gets Compose 1.10.3 |
+| `sharedUi/build.gradle.kts` | `CMP_DESKTOP`: the build's target decides, not its host, so a Windows zip cross-built from Linux gets Compose 1.10.3 |
 | `desktopApp/native/window/CMakeLists.txt` | Cross-building: the same `jni_md.h` stand-in the analyser uses |
 | `desktopApp/.../Main.kt` | `ForkDebugBridge.install()`, `ForkNavidrome.install()`, `ForkDebugBridge.attach(composeWindow)` |
 | `desktopApp/.../DesktopApp.kt` | `ForkDebugBridge.queue` and `.engine`. `DesktopDestination.NAVIDROME` with its sidebar row and page. `rate()`: a Navidrome song's heart is its star on the server |
@@ -188,7 +195,6 @@ Upstream removed `desktopApp` and `desktopUi` in `e4dd63d8`; `pc` restores them 
 | `desktopApp/.../DesktopTrackAnalyzer.kt` (vocals) | `vocalActivityMask` on the model's scale, as the phone since v1.9 |
 | `desktopApp/.../DesktopApp.kt` (notice) | `ForkNotice.Host()`. `startRadio`: "No similar songs found" on a Navidrome song |
 | `desktopApp/.../DesktopApp.kt` (switches) | `ForkPlayerMenu.onFullBleedChange`. Settings: "Fullscreen cover art" renamed, "Backdrop videos" and "Animated covers" under "Animated canvas". Album headers follow "Animated covers" |
-| `desktopUi/.../player/NowPlayingScreen.kt` | The heart also shows for a Navidrome song (and in `LandscapePlayer.kt`). `forkCanvases`, `ForkLandscapeBackdrop` and `fillsPhone`, as on the phone (copies of `ForkSleeveClip`, `ForkBackdropIntro`, `ForkLandscapeBackdrop` live in `desktopUi`). `heroMode` as on the phone: `forkFillsScreen`, `forkBigArtFits`, `rememberForkArtAwake`; publishes `ForkCanvasSwitch.bigArtFits` for the menu |
 | `desktopApp/.../DesktopCanvas.kt` | `fileFor`: the server's clips go through `ForkNavidrome.fetchClip`; a failed download is deleted (**fixes upstream**); the file's extension from `ForkClipCache.extension`, so a backdrop can be told from a cover |
 | `desktopApp/.../DesktopMediaCache.kt` | `trim()`: `ForkClipCache.trim()` first, and the song limit leaves `.mp4` clips alone |
 | `desktopApp/.../DesktopApp.kt` (settings) | `DesktopSettingsSection.NAVIDROME` and its `ForkNavidromeSettingsGroup()`. Storage: `ForkClipCacheRows()` after "Clear image cache", `ForkClipCache.afterSongCacheCleared()` in "Clear song cache". `SettingsGroup`, `SettingsToggle`, `SettingsRow` are internal. Home reloads when "Navidrome on Home" changes |
@@ -207,15 +213,19 @@ Upstream removed `desktopApp` and `desktopUi` in `e4dd63d8`; `pc` restores them 
 | `desktopApp/.../DesktopAudioEngine.kt` (Crossfade on skip) | `Command.ForkSkip` and its `drainCommands` line. `loadInternal`: drops `forkSkipTicket`. `prepareNext`: held while one is set. `finishTrack`: no `onEnded()` while one is set. `ClearUpcoming`: past the switch, `promoteUpcoming()` first. The section `forkSkipTicket`, `forkSkipTo`, `forkSkipPlainly`, `forkStartSkip` |
 | `desktopApp/.../DesktopApp.kt` (Crossfade on skip) | `playCurrent(forkSkipSeconds)`: above 0 it calls `forkSkipTo` instead of `load()`. `playNext` (two lines), `playPrevious` pass it. Settings: the "Crossfade on skip" switch after "Automix on skip" |
 | `desktopApp/.../ForkCrossfadeOnSkip.kt` (new) | The switch (on by default, as on the phone), the skip's fade length and plan |
-| `desktopUi/.../player/NowPlayingScreen.kt` (covers) | `ForkPreloadCovers(queue, song)` |
-| `desktopUi/.../player/ForkPreloadCovers.kt` (new) | Copy of the `sharedUi` file: the next two covers warmed at the player's size |
 | `desktopApp/.../DesktopApp.kt` (search) | `forkSearchRows`. `search()`: `ForkNavidromeSearch.start`. `SearchScreen` call: `results` shows the server's songs while YouTube loads or fails and ahead of its rows, `loadingMore = searchLoading`, `onSongClick`: a Navidrome row plays the server's rows in order and isn't recorded in recents |
-| `desktopUi/.../screens/SearchScreen.kt` | `searchSections()`: the server's songs under a "Navidrome" heading, first |
+| `sharedUi/…/ui/screens/SearchScreen.kt` | `searchSections()`: the server's songs under a "Navidrome" heading, first (only the PC feeds server songs into these rows, so the phone is unchanged) |
 | `desktopApp/.../DesktopApp.kt` (Explore) | `openMoodGenre()`: a server genre's tile opens as a collection page |
-| `desktopUi/.../screens/ExploreScreen.kt` | `val fork = rememberForkExplore()`; `forkPanelsAbove(…)` and `if (!fork.panels \|\| fork.youtubeOpen)` before `when (state)`; `MoodGenreRow` is `internal` |
 | `desktopApp/.../ForkQueues.kt` (new) | Saved queues, the phone's `ForkQueues` and its row: `bitchord/fork_queues.json` in the data folder (max 20); a Navidrome row keeps no address, only its cover's id, and gets both from today's login when played |
 | `desktopApp/.../DesktopApp.kt` (saved queues) | `playCurrent`: `startAtMs`, passed to `playbackEngine.load`. After `playSongs`: `ForkQueues.currentQueue`, `.playingAtMs`, `.restore` |
 | `desktopApp/.../DesktopSongMenuUi.kt` (saved queues) | `forkSavedQueues` and its drawer at the top of `DesktopMenuSurface`; `ForkSavedQueuesRow` after `ForkPlayerMenuRows` |
+| `desktopApp/.../ForkLoopMixRenderer.kt` (new) | The phone's native loop-mix renderer in Kotlin: two decks looped on whole bars along the shared `LoopMix` knots, gain/bass-shelf/high-pass automation as natively, the stretch a WSOLA anchored to each knot (transparent at rate 1, at most 5 ms off a knot otherwise) |
+| `desktopApp/.../ForkDesktopLoopMix.kt` (new) | The loop mix on the PC: `ForkLoopMixRules` (refusals: Automix off, party, speed, Skip silence, not stereo, deck still easing, quality swap, analysis, a copy that isn't the analysed recording), `ForkLoopMixSession` (decks from `LoopMix.Plan` with `ForkAutomix.trimmedGains`, the splice and its measured lag, the handover frames, positions, settle points), `ForkDesktopLoopMix` (plan once per pair and analysis, synced lyrics with the 8 s wait, regions decoded on a worker 12 s before the loop, fallback) |
+| `DesktopAudioEngine.kt` (loop mix) | `step()`: `forkLoopStep` first. `maybeStartCrossfade`: `forkLoopConsider` after the blend's marker (a loop plan holds the blend). `drainCommands`: `ReplaceUpcoming` not while a loop mix runs; `Reconfigure` and `ClearUpcoming` bail it (settling on the mix's position), `Flush` drops it. `replaceCurrent`: `forkLoopRefusesUpgrade`. `performSeek`: `forkLoopBail` first. The section `forkLoop*` (arm, splice, render, line-up, publish, hand-off, promote, cancel, bail) |
+| `desktopApp/.../ForkCueCorrection.kt` (new) | Decks measured from where their streams landed (PC-Continued be257dad `correctCueFromDeck` / `reconcileIncomingFromDeck`, without their mix-engaged upgrade hold): landing, cue correction, drift; `ForkDeckClock` dates the decode-ahead queue's blocks |
+| `DesktopAudioDecoder.kt`, `DesktopDecodeAhead.kt` (landing) | `forkLandedUs` on `DesktopSampleSource` and the decoder (set in `convert` on the first block after open or `seek`); `DesktopDecodeAhead.forkClock` (`seeked`, `appended`, `taken`) and `forkLandedUs` |
+| `DesktopAudioEngine.kt` (cue correction) | `step()`: `forkCheckCue` (armed in `startTrack` and `performSeek`). `blend()`: `forkCorrectCue` on the incoming deck's first block. `switchDisplay`, `promoteUpcoming`: `forkReconcileIncoming`. `forkEnterArmedSwap`: the better copy is lined up on its landing (`ForkCueCorrection.swapStart`), and dropped when it landed too far back |
+| `desktopApp/src/test/.../ForkLoopMixRendererTest.kt`, `ForkDesktopLoopMixTest.kt`, `ForkCueCorrectionTest.kt` | Tests for the renderer, the session and refusals, and the cue math |
 
 ## Upstream bugs the fork fixes
 

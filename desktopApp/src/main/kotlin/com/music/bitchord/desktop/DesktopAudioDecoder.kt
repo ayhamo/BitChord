@@ -123,6 +123,12 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
     /** After a seek, decoded audio before this song position is dropped; see [seek]. */
     private var trimBeforeUs: Long? = null
 
+    /** Fork: where the first block after the open or the last [seek] really begins (ForkCueCorrection). */
+    override var forkLandedUs: Long? = null
+        private set
+    private var forkLandingPending = true // fork
+    private var forkAskedUs = 0L // fork
+
     /** What is actually being decoded, once [open] has succeeded. */
     var measuredFormat: DesktopStreamFormat? = null
         private set
@@ -273,7 +279,11 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
         val read = object : Read_packet_Pointer_BytePointer_int() {
             override fun call(opaque: Pointer?, buffer: BytePointer?, size: Int): Int {
                 if (buffer == null) return AVERROR_EOF
-                val taken = source.read(scratch, minOf(size, scratch.size))
+                // fork: nothing may be thrown back into FFmpeg's C frames. An exception from the read
+                // (a network error, or the analyser's job cancelled mid-read) crossed them as a C++
+                // exception and took the whole app down (0x20474343 in av_read_frame, 2026-11-03).
+                // AVERROR(EIO) instead: the decoder reports a failed read as it does any other.
+                val taken = try { source.read(scratch, minOf(size, scratch.size)) } catch (_: Throwable) { return FORK_AVERROR_EIO }
                 if (taken <= 0) return AVERROR_EOF
                 buffer.put(scratch, 0, taken)
                 return taken
@@ -282,13 +292,13 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
         val seek = object : Seek_Pointer_long_int() {
             override fun call(opaque: Pointer?, offset: Long, whence: Int): Long {
                 // FFmpeg asks for the length this way rather than with a seek.
-                if (whence == AVSEEK_SIZE) return source.length
+                if (whence == AVSEEK_SIZE) return runCatching { source.length }.getOrDefault(-1) // fork: see the read above
                 val target = when (whence) {
                     SEEK_CUR -> source.position() + offset
                     SEEK_END -> source.length + offset
                     else -> offset
                 }
-                source.seek(target)
+                try { source.seek(target) } catch (_: Throwable) { return -1 } // fork: see the read above
                 return target
             }
         }
@@ -425,6 +435,7 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
             }
         }
         if (skip >= produced) return ByteArray(0)
+        if (forkLandingPending) { forkLandingPending = false; forkLandedUs = ForkCueCorrection.landing(frameUs, skip, target.sampleRate, forkAskedUs) } // fork
 
         val bytes = (produced - skip) * target.frameBytes
         if (scratch.size < bytes) scratch = ByteArray(bytes)
@@ -463,6 +474,7 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
         drained = false
         positionUs = micros
         trimBeforeUs = micros.takeIf { it > 0 }
+        forkLandingPending = true; forkLandedUs = null; forkAskedUs = micros // fork
         return true
     }
 
@@ -526,3 +538,6 @@ internal fun DesktopPcmFormat.sampleFormat(): Int = when {
     bytesPerSample >= 4 -> AV_SAMPLE_FMT_S32
     else -> AV_SAMPLE_FMT_S16
 }
+
+/** Fork: AVERROR(EIO), what a read callback returns when the read itself failed. */
+private const val FORK_AVERROR_EIO = -5

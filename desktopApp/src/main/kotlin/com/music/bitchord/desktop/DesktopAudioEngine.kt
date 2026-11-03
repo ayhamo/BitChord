@@ -819,6 +819,7 @@ class DesktopPlaybackEngine(
         }
         sink.resume()
 
+        if (forkLoopStep(track)) return // fork: the loop mix writes this block (ForkDesktopLoopMix)
         forkStartWaitingSwap(track) // fork
         val block = readCurrent(track)
         val count = currentReadCount
@@ -840,6 +841,7 @@ class DesktopPlaybackEngine(
             return
         }
         if (count == 0) return
+        forkCheckCue(track) // fork: a start or seek measured from where its stream landed (ForkCueCorrection)
 
         val (blended, blendedCount) = blend(track, block, count)
         val quiet = silence?.also { it.enabled = skipSilenceEnabled }
@@ -900,6 +902,7 @@ class DesktopPlaybackEngine(
         val other = readIncoming(incoming, count)
         val otherCount = incomingReadCount
         val incomingRate = deckRate(incoming)
+        if (incomingSourceFrames == 0.0 && otherCount > 0) forkCorrectCue(incoming) // fork: ForkCueCorrection
         incomingSourceFrames += otherCount.toDouble() / sink.format.channels.coerceAtLeast(1) * incomingRate
         if (other != null) {
             widen(spatialIncoming, incoming, other, otherCount)
@@ -1180,6 +1183,7 @@ class DesktopPlaybackEngine(
         // audio, which only a manual seek could put right.
         // Less what is still queued in the sink: [playhead] restarts from the played-frame count
         // here, so the queued audio — this track's — is counted again as it plays out.
+        forkReconcileIncoming(incoming) // fork: ForkCueCorrection
         val handoverUs = incoming.startUs + incomingElapsedUs() - queuedSourceUs(deckRate(incoming))
         resetPlayhead(incoming, handoverUs)
         DesktopTrackLog.log(
@@ -1206,6 +1210,7 @@ class DesktopPlaybackEngine(
     private fun switchDisplay(incoming: Track) {
         synchronized(blendLock) { displaySwitched = true }
         DesktopTrackLog.log("blend midpoint: showing '${incoming.song.title}'")
+        forkReconcileIncoming(incoming) // fork: ForkCueCorrection
         publishTrack(incoming, isPlaying = !paused, positionUs = incomingHeardUs(incoming))
         onCrossfaded(incoming.song)
     }
@@ -1297,7 +1302,7 @@ class DesktopPlaybackEngine(
                 }
                 is Command.ReplaceUpcoming -> {
                     val track = command.track
-                    if (upcoming?.song?.videoId == track.song.videoId && fadeRemaining <= 0 && !displaySwitched) {
+                    if (upcoming?.song?.videoId == track.song.videoId && fadeRemaining <= 0 && !displaySwitched && forkLoopRun == null) { // fork: not under a loop mix's decks
                         DesktopTrackLog.log(
                             "incoming '${track.song.title}' upgraded to " +
                                 "${track.stream.format.summary.ifBlank { "another rendition" }} before its transition",
@@ -1314,8 +1319,9 @@ class DesktopPlaybackEngine(
                 is Command.SeekTo -> performSeek(command.millis)
                 is Command.MixNow -> startSkipMix(command.fadeSeconds)
                 is Command.ForkSkip -> forkStartSkip(command)
-                Command.Reconfigure -> reconfigureSink()
+                Command.Reconfigure -> { forkLoopBail("the output was reopened", settle = true); reconfigureSink() } // fork
                 Command.ClearUpcoming -> {
+                    forkLoopBail("the next song changed", settle = true) // fork
                     // fork: past the switch the listener is on the incoming song (a skip's blend is from its first frame); a setting turned off mid-blend ends the blend there rather than dropping that song and playing on the old one under its title.
                     if (displaySwitched && upcoming != null) promoteUpcoming()
                     upcoming?.decoder?.close()
@@ -1327,6 +1333,7 @@ class DesktopPlaybackEngine(
                     if (wasBlending) endBlend()
                 }
                 Command.Flush -> {
+                    forkLoopBail("a new song", settle = false) // fork
                     forkDropSwap() // fork
                     current?.decoder?.close()
                     current = null
@@ -1386,6 +1393,7 @@ class DesktopPlaybackEngine(
             track.decoder.close()
             return
         }
+        if (forkLoopRefusesUpgrade(track)) return // fork: ForkDesktopLoopMix
         if (forkQueueSwap(track)) return // fork: crossfade onto the better copy instead of cutting over
         sink.flush()
         framesWritten = sink.framesPlayed()
@@ -1538,7 +1546,16 @@ class DesktopPlaybackEngine(
             current?.let { forkStartWaitingSwap(it) }
             return
         }
-        val skipFrames = (lateUs * rate / 1_000_000L).toInt()
+        // Lined up on where the copy's stream really starts, not on where it was asked to (ForkCueCorrection).
+        val fromUs = ForkCueCorrection.swapStart(forkArmedAtUs, track.decoder.forkLandedUs)
+        if (fromUs > atUs) return
+        if (atUs - fromUs > FORK_SWAP_LEAD_US + FORK_SWAP_LATE_US) {
+            DesktopTrackLog.log("better copy of '${track.song.title}' landed ${(atUs - fromUs) / 1000} ms back; staying on what plays")
+            forkArmedSwap = null
+            track.decoder.close()
+            return
+        }
+        val skipFrames = ((atUs - fromUs) * rate / 1_000_000L).toInt()
         var left = skipFrames * channels
         while (left > 0) {
             readIncoming(track, minOf(left, 4096 * channels)) ?: break
@@ -1573,6 +1590,7 @@ class DesktopPlaybackEngine(
         if (current !== track) current?.decoder?.close()
         current = track
         fadeRemaining = 0
+        forkArmCueCheck(track, track.startUs) // fork: ForkCueCorrection
 
         val decoded = track.decoder.outputFormat
         // Only renegotiate when the device would actually have to change.
@@ -1663,6 +1681,7 @@ class DesktopPlaybackEngine(
     }
 
     private fun performSeek(millis: Long) {
+        forkLoopBail("a seek", settle = false) // fork: the seek itself says where to be
         // Past the midpoint the listener is looking at — and seeking in — the incoming song, so
         // the blend is finished on the spot and the seek lands on that one.
         if (displaySwitched && upcoming != null) promoteUpcoming()
@@ -1687,6 +1706,7 @@ class DesktopPlaybackEngine(
         equalizerIncoming.reset()
         silence?.reset()
         resetPlayhead(track, millis * 1_000)
+        forkArmCueCheck(track, millis * 1_000) // fork: ForkCueCorrection
         // Cleared by [play] once the first of the new position's audio is on its way out.
         _state.update {
             it.copy(
@@ -1819,6 +1839,7 @@ class DesktopPlaybackEngine(
 
         val plan = transitionPlan(track, incoming.song, (incoming.decoder.durationUs ?: 0L) / 1_000, positionMs, duration)
         publishTransitionWindow(track, plan, duration)
+        if (forkLoopConsider(track, incoming, positionMs, duration)) return // fork: a loop mix holds the blend (ForkDesktopLoopMix)
 
         if (!plan.shouldStart || plan.blocked) return
         armIncomingBlend(incoming, plan)
@@ -2119,6 +2140,374 @@ class DesktopPlaybackEngine(
             forkSkipTicket = null
         }
         publishTrack(incoming, isPlaying = true, positionUs = incomingHeardUs(incoming))
+    }
+
+    // ---- fork: the Automix loop mix, see ForkDesktopLoopMix -------------------------------------
+    //
+    // Automix's top rung, as on the phone: a pair with clean instrumental bars at the seam loops them
+    // while one tempo ramps between the songs. Tried before any blend; a pair it can't do gets the
+    // planner's blend exactly as before. Everything here runs on the audio thread, on one frame count:
+    // the outgoing song is spliced into the renderer at its loop's sample, the renderer's blocks are
+    // written as the song's would be (through the same widener and equaliser), and the incoming deck,
+    // seeked ahead of time and lined up to the renderer's own sample, crosses in for the last 25 ms.
+
+    private val forkLoop = ForkDesktopLoopMix(scope)
+
+    /** The loop mix being run, from arming to the incoming song's takeover, and its two decks. */
+    private var forkLoopRun: ForkLoopMixSession? = null
+    private var forkLoopOut: Track? = null
+    private var forkLoopIn: Track? = null
+
+    /** From [maybeStartCrossfade]: whether a loop mix holds this pair's blend; arms it once its decks are built. */
+    private fun forkLoopConsider(track: Track, incoming: Track, positionMs: Long, durationMs: Long): Boolean {
+        forkLoopRun?.let { run ->
+            forkLoopMarker(run.plan.out.loopStart, run.plan.out.loopStart + run.clock.releaseAt, durationMs)
+            return true
+        }
+        val hold = forkLoop.consider(
+            ForkLoopPair(
+                outSong = track.song,
+                inSong = incoming.song,
+                outStream = track.stream,
+                inStream = incoming.stream,
+                outAnalysis = analyzer.analysisFor(track.song.videoId),
+                inAnalysis = analyzer.analysisFor(incoming.song.videoId),
+                outState = analyzer.stateFor(track.song.videoId),
+                inState = analyzer.stateFor(incoming.song.videoId),
+                outDurationSec = durationMs / 1000.0,
+                inDurationSec = (incoming.decoder.durationUs ?: 0L) / 1e6,
+                positionSec = positionMs / 1000.0,
+                sampleRate = sink.format.sampleRate,
+                channels = sink.format.channels,
+                automix = automixEnabled,
+                inParty = DesktopListenTogether.state.value.inParty,
+                speed = playbackSpeed,
+                skipSilence = skipSilenceEnabled,
+                deckRate = deckRate(track),
+                swapping = forkSwap != null || forkArmedSwap != null || forkWaitingSwap != null,
+            ),
+        ) ?: return false
+        forkLoopMarker(hold.startSec, hold.endSec, durationMs)
+        val built = forkLoop.takeBuilt(track.song.videoId, incoming.song.videoId) ?: return true
+        if (built.outUrl != track.stream.url || built.inUrl != incoming.stream.url || built.sampleRate != sink.format.sampleRate) {
+            forkLoop.fallBack("a deck changed copies while it was built")
+            return false
+        }
+        forkLoopArm(built, track, incoming)
+        return true
+    }
+
+    /** The scrubber's marker over the loop mix, in place of the blend's [publishTransitionWindow] just set. */
+    private fun forkLoopMarker(startSec: Double, endSec: Double, durationMs: Long) {
+        if (durationMs <= 0) return
+        val window = TransitionWindow(
+            start = (startSec * 1_000.0 / durationMs).toFloat().coerceIn(0f, 1f),
+            end = (endSec * 1_000.0 / durationMs).toFloat().coerceIn(0f, 1f),
+        )
+        if (_state.value.transitionWindow != window) _state.update { it.copy(transitionWindow = window) }
+    }
+
+    /** The decks are built: the incoming deck is seeked to wait at its handover, and the splice is armed. */
+    private fun forkLoopArm(run: ForkLoopMixSession, track: Track, incoming: Track) {
+        incoming.dropTempo()
+        incoming.decoder.seek(run.inStartUs)
+        incoming.startUs = run.inStartUs
+        forkLoopRun = run
+        forkLoopOut = track
+        forkLoopIn = incoming
+        // A skip now cuts rather than blending over the mix (beginSkipMix, forkSkipTo).
+        blendActive = true
+        DesktopTrackLog.log(
+            "loop mix armed: '${track.song.title}' -> '${incoming.song.title}', loop at " +
+                "${"%.2f".format(run.plan.out.loopStart)}s, incoming waits at ${"%.2f".format(run.inStartUs / 1e6)}s, " +
+                "mix ${"%.1f".format(run.clock.elementAt)}s · ${ForkLoopMixRules.describe(run.plan)}",
+        )
+    }
+
+    /** One step of the armed or running loop mix; false leaves the step to the ordinary path. */
+    private fun forkLoopStep(track: Track): Boolean {
+        val run = forkLoopRun ?: return false
+        val incoming = forkLoopIn
+        if (incoming == null || upcoming !== incoming || track !== forkLoopOut) {
+            val spliced = run.spliced
+            forkLoopBail("the pair changed under it", settle = spliced)
+            return spliced
+        }
+        if (!run.spliced) {
+            val why = when {
+                playbackSpeed != 1f -> "playback speed is not 1x"
+                skipSilenceEnabled -> "skip silence is on"
+                deckRate(track) != 1.0 -> "the song is still easing out of its own mix"
+                forkSwap != null || forkArmedSwap != null || forkWaitingSwap != null -> "a better copy is crossing in"
+                sink.format.channels != 2 || sink.format.sampleRate != run.sampleRate -> "the output changed"
+                else -> null
+            }
+            if (why != null) {
+                val engaged = run.engaged
+                if (engaged) forkLoopBail(why, settle = true) else forkLoopCancel(why)
+                return engaged
+            }
+            val writeUs = playhead.peek(framesWritten)
+            if (!run.spliceNear(writeUs)) return false
+            if (!run.engaged && run.mixFrameOf(writeUs) > 0) {
+                forkLoopCancel("the song passed its loop before the splice")
+                return false
+            }
+            val song = readCurrent(track)
+            if (song == null) {
+                forkLoopCancel("the song ended before its loop")
+                return false
+            }
+            val count = currentReadCount
+            if (count == 0) return true
+            val wasEngaged = run.engaged
+            run.splice(song, count, writeUs, framesWritten)
+            if (!wasEngaged && run.engaged) {
+                val lag = run.spliceLag
+                DesktopTrackLog.log(
+                    "loop mix: splicing into the decks at ${"%.3f".format(run.plan.out.loopStart)}s, outgoing deck " +
+                        (if (lag != null) "%+.2f ms (r=%.3f)".format(lag * 1000.0 / run.sampleRate, run.spliceScore) else "not measured") +
+                        " against its song",
+                )
+            }
+            forkLoopWrite(track, song, count)
+            publishPosition(track)
+            return true
+        }
+        if (playbackSpeed != 1f) {
+            forkLoopBail("the playback speed changed", settle = true)
+            return true
+        }
+        val mf = framesWritten - run.originFrame
+        if (mf >= run.handoverEndFrame) {
+            forkLoopPromote(run, track, incoming)
+            return true
+        }
+        val frames = run.blockFrames(mf, ForkLoopMixSession.BLOCK_FRAMES)
+        val block = run.render(mf, frames)
+        if (mf >= run.handoverFrame) {
+            if (!run.inAligned) forkLoopLineUp(run, incoming)
+            val other = readIncoming(incoming, frames * 2)
+            if (other != null) {
+                val got = incomingReadCount
+                for (i in 0 until frames) {
+                    val gain = run.inGain(mf + i)
+                    val l = 2 * i
+                    if (l < got) block[l] += other[l] * gain
+                    if (l + 1 < got) block[l + 1] += other[l + 1] * gain
+                }
+            }
+        }
+        forkLoopWrite(track, block, frames * 2)
+        forkLoopPublish(run, incoming)
+        return true
+    }
+
+    /** A loop-mix block goes out as the song's own would: widened, equalised, played. */
+    private fun forkLoopWrite(track: Track, block: FloatArray, count: Int) {
+        widen(spatial, track, block, count)
+        equalise(equalizer, block, count)
+        play(track, block, count)
+    }
+
+    /**
+     * Lines the incoming deck's decoder up on the renderer's incoming deck: reads off and drops the
+     * frames between where its stream really landed and the sample the deck is at on the handover, so
+     * the two cross on the same audio. The deck's own position is used, not the plan's: its grains may
+     * sit a few milliseconds off their knots, and that is where its audio actually is.
+     */
+    private fun forkLoopLineUp(run: ForkLoopMixSession, incoming: Track) {
+        val landed = incoming.decoder.forkLandedUs ?: incoming.startUs
+        var drop = run.dropFramesFor(landed)
+        if (drop < 0) {
+            DesktopTrackLog.log("loop mix: the incoming deck landed ${-drop} frames past its handover; crossing in unaligned")
+            drop = 0
+        }
+        val channels = sink.format.channels.coerceAtLeast(1)
+        var left = drop * channels
+        while (left > 0) {
+            readIncoming(incoming, minOf(left, 4_096L * channels).toInt()) ?: break
+            left -= incomingReadCount.coerceAtLeast(1)
+        }
+        DesktopTrackLog.log(
+            "loop mix: '${incoming.song.title}' lined up on its deck at ${"%.3f".format(run.handoverTrackUs / 1e6)}s " +
+                "(landed ${"%.3f".format(landed / 1e6)}s, $drop frames dropped)",
+        )
+    }
+
+    /** Position, the scrubber's beat and the mid-ramp move to the incoming song, from what is heard. */
+    private fun forkLoopPublish(run: ForkLoopMixSession, incoming: Track) {
+        val heardMf = sink.framesPlayed() - run.originFrame
+        if (!run.handedOff && heardMf >= run.handoffFrame) forkLoopHandOff(run, incoming, heardMf)
+        val positionMs = run.positionMs(heardMf) ?: (playhead.at(sink.framesPlayed()) / 1_000)
+        // A loop wrapping back is a deliberate jump: told as one, as the phone's `onMixPositionJump`.
+        val wrapped = run.lastPositionMs >= 0 && positionMs < run.lastPositionMs - 500
+        val moved = run.lastPositionMs / 250 != positionMs / 250
+        run.lastPositionMs = positionMs
+        if (moved || wrapped) {
+            val sampledAt = System.nanoTime()
+            _state.update {
+                it.copy(
+                    positionMs = positionMs,
+                    positionSampledAtNanos = sampledAt,
+                    isPlaying = !paused,
+                    mixing = true,
+                    seeks = if (wrapped) it.seeks + 1 else it.seeks,
+                )
+            }
+        }
+        // The scrubber's beat pulse, on the mix's own beats (they move through the ramp).
+        if (!automixEnabled || heardMf < 0) return
+        val m = heardMf / sink.format.sampleRate.coerceAtLeast(1).toDouble()
+        val (beat, _) = run.clock.beatAt(m)
+        val times = run.clock.beatTimes
+        if (beat == run.lastBeat || beat !in 0 until times.size - 1) return
+        run.lastBeat = beat
+        DesktopPlayerSettings.smartMixBlend.value = MixBlend(
+            beatMs = ((times[beat + 1] - times[beat]) * 1000).toFloat(),
+            beatAnchorNanos = System.nanoTime() - ((m - times[beat]) * 1e9).toLong(),
+            playing = !paused,
+        )
+    }
+
+    /** Mid-ramp, heard: the player and the queue move to the incoming song (the phone's `handOff`). */
+    private fun forkLoopHandOff(run: ForkLoopMixSession, incoming: Track, heardMf: Long) {
+        run.handedOff = true
+        synchronized(blendLock) { displaySwitched = true }
+        val positionMs = run.positionMs(heardMf) ?: 0L
+        run.lastPositionMs = positionMs
+        DesktopTrackLog.log("loop mix: showing '${incoming.song.title}' at ${positionMs / 1000.0}s")
+        publishTrack(incoming, isPlaying = !paused, positionUs = positionMs * 1_000)
+        _state.update { it.copy(mixing = true) }
+        onCrossfaded(incoming.song)
+    }
+
+    /** The mix played out: the incoming deck is the song, read from its decoder at the very sample its deck left off. */
+    private fun forkLoopPromote(run: ForkLoopMixSession, track: Track, incoming: Track) {
+        if (!run.handedOff) forkLoopHandOff(run, incoming, sink.framesPlayed() - run.originFrame)
+        forkLoopRun = null
+        forkLoopOut = null
+        forkLoopIn = null
+        if (track !== incoming) track.decoder.close()
+        current = incoming
+        upcoming = null
+        nextSong = null
+        nextDeckOpenId = null
+        blendActive = false
+        // After the release the incoming song runs at rate 1 on both sides of the handover, so the
+        // position heard now is the next written frame's less what the sink still holds.
+        val rate = sink.format.sampleRate.coerceAtLeast(1)
+        val writeUs = run.inTrackUsAfter(framesWritten - run.originFrame)
+        val queuedUs = (framesWritten - sink.framesPlayed()).coerceAtLeast(0L) * 1_000_000L / rate
+        val heardUs = (writeUs - queuedUs).coerceAtLeast(0L)
+        resetPlayhead(incoming, heardUs)
+        DesktopTrackLog.log("loop mix done: '${incoming.song.title}' carries on at ${"%.2f".format(heardUs / 1e6)}s")
+        publishTrack(incoming, isPlaying = !paused, positionUs = heardUs)
+        endBlend()
+    }
+
+    /** Before anything of it was heard: the pair takes its blend instead (the phone's `loopFallBack`). */
+    private fun forkLoopCancel(reason: String) {
+        forkLoop.fallBack(reason)
+        forkLoopEnd()
+    }
+
+    /**
+     * The mix can't go on (a seek, the next song changed, the output reopened, the speed changed): with
+     * [settle], onto whichever song is shown at the mix's own position for it (the phone's `loopBail`).
+     */
+    private fun forkLoopBail(reason: String, settle: Boolean) {
+        val run = forkLoopRun ?: return
+        val heardMf = if (run.engaged) sink.framesPlayed() - run.originFrame else 0L
+        val target = if (settle) run.settleMs(heardMf) else null
+        DesktopTrackLog.log("loop mix stops: $reason")
+        forkLoop.forget()
+        forkLoopEnd()
+        DesktopPlayerSettings.smartMixBlend.value = null
+        // Past the move to the incoming song, [performSeek] promotes it first.
+        if (target != null) performSeek(target)
+    }
+
+    private fun forkLoopEnd() {
+        val run = forkLoopRun
+        val incoming = forkLoopIn
+        forkLoopRun = null
+        forkLoopOut = null
+        forkLoopIn = null
+        blendActive = false
+        // Not shown yet: its deck goes back to its start, where a blend expects to find it.
+        if (run != null && !run.handedOff && incoming != null && incoming === upcoming) {
+            incoming.dropTempo()
+            incoming.decoder.seek(0L)
+            incoming.startUs = 0L
+        }
+    }
+
+    /** A better copy of the playing song under a loop mix: ignored once spliced, and the mix dropped before. */
+    private fun forkLoopRefusesUpgrade(track: Track): Boolean {
+        val run = forkLoopRun ?: return false
+        if (run.engaged) {
+            track.decoder.close()
+            return true
+        }
+        forkLoopCancel("a better copy of the song arrived")
+        return false
+    }
+
+    // ---- fork: decks measured from where their streams landed, see ForkCueCorrection ------------
+
+    /** A started or seeked deck to check against its landing on its first block, and the position it was asked for. */
+    private var forkCueCheck: Track? = null
+    private var forkCueAskUs = 0L
+
+    private fun forkArmCueCheck(track: Track, askedUs: Long) {
+        forkCueCheck = track.takeIf { askedUs > 0 }
+        forkCueAskUs = askedUs
+    }
+
+    /** The first block after a start or a seek: a stream that landed elsewhere is counted from where it landed. */
+    private fun forkCheckCue(track: Track) {
+        if (forkCueCheck !== track) return
+        val landed = track.decoder.forkLandedUs ?: return
+        forkCueCheck = null
+        val start = ForkCueCorrection.correctedStart(forkCueAskUs, landed) ?: return
+        val moved = start - forkCueAskUs
+        DesktopTrackLog.log(
+            "'${track.song.title}' was asked for ${"%.1f".format(forkCueAskUs / 1e6)}s but its stream starts at " +
+                "${"%.1f".format(start / 1e6)}s; measuring from there",
+        )
+        track.startUs += moved
+        resetPlayhead(track, (outgoingHeardUs() + moved).coerceAtLeast(0L))
+    }
+
+    /** The incoming deck's first block in a blend: its cue is where its stream landed, not where it was asked. */
+    private fun forkCorrectCue(incoming: Track) {
+        val start = ForkCueCorrection.correctedStart(incoming.startUs, incoming.decoder.forkLandedUs) ?: return
+        DesktopTrackLog.log(
+            "'${incoming.song.title}' was cued for ${"%.1f".format(incoming.startUs / 1e6)}s but its stream starts at " +
+                "${"%.1f".format(start / 1e6)}s; measuring from there",
+        )
+        incoming.startUs = start
+    }
+
+    /**
+     * At the blend's move to the incoming song and at its end: the blend's count of the incoming deck
+     * against the deck's own clock — the end of the last block it gave, less what its stretch buffer
+     * still holds — and the start moved when they disagree, so the position and the lyrics follow the
+     * audio from here.
+     */
+    private fun forkReconcileIncoming(incoming: Track) {
+        if (incomingSourceFrames <= 0.0) return
+        val rate = sink.format.sampleRate.takeIf { it > 0 } ?: return
+        val channels = sink.format.channels.coerceAtLeast(1)
+        val heldFrames = (incoming.tempo?.available ?: 0) / channels
+        val heldUs = (heldFrames * 1_000_000.0 / rate * deckRate(incoming)).toLong()
+        val drift = ForkCueCorrection.drift(incoming.startUs, incomingElapsedUs(), incoming.decoder.forkClock.takenEndUs, heldUs) ?: return
+        DesktopTrackLog.log(
+            "'${incoming.song.title}' was counted ${"%.1f".format(drift / 1e6)}s away from the audio its deck handed " +
+                "over; measuring from ${"%.1f".format((incoming.startUs - drift) / 1e6)}s instead",
+        )
+        incoming.startUs = (incoming.startUs - drift).coerceAtLeast(0L)
     }
 
     private fun closeEverything() {
