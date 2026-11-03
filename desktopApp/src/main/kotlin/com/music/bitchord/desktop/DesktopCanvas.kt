@@ -114,7 +114,11 @@ object DesktopCanvasClient {
      * download carries both a videoId and a local path, and skipping on the path alone is what
      * left downloaded tracks with no canvas.
      */
-    suspend fun lookup(song: Song): DesktopCanvasArtwork? {
+    suspend fun lookup(asked: Song): DesktopCanvasArtwork? {
+        // fork: a server song without its album or a repeated "Artist - " (NavidromeCanvasQuery), for
+        // every caller: the window's own lookup asked with the server album, was turned away, and its
+        // miss was cached for the song, so the player's lookup found "none" too.
+        val song = com.music.bitchord.data.navidrome.NavidromeCanvasQuery.searchable(asked)
         if (song.videoId.isBlank() && (song.localUri != null || song.localPath != null)) return null
         if (com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(song.videoId)) return null // fork: a station's name is no song's, a hit would be another track's video
         val title = song.title.cleanedForCanvas()
@@ -181,8 +185,13 @@ object DesktopCanvasClient {
         accept: (DesktopCanvasArtwork) -> Boolean,
     ): DesktopCanvasArtwork? {
         for (source in sources) {
-            val found = runCatching { source() }.getOrNull() ?: continue
-            if (!accept(found)) continue
+            val found = runCatching { source() }
+                .onFailure { DesktopTrackLog.log("canvas: a source failed: $it") } // fork: was silent
+                .getOrNull() ?: continue
+            if (!accept(found)) {
+                DesktopTrackLog.log("canvas: turned away '${found.title}' by ${found.artist} on '${found.album}'") // fork
+                continue
+            }
             return found
         }
         return null

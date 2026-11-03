@@ -79,6 +79,16 @@ private val canvasClient: HttpClient = HttpClient.newBuilder()
  *
  * Canvas is decoration: no provider failure is allowed to reach the player.
  */
+/** Fork: [canvasGet] with the status code kept (-1 when nothing came back). */
+internal fun canvasGetWithStatus(url: String, headers: Map<String, String> = emptyMap()): Pair<Int, String?> = runCatching {
+    val builder = HttpRequest.newBuilder(URI.create(url))
+        .timeout(Duration.ofSeconds(15))
+        .header("User-Agent", CANVAS_UA)
+    headers.forEach { (name, value) -> builder.header(name, value) }
+    val response = canvasClient.send(builder.GET().build(), HttpResponse.BodyHandlers.ofString())
+    response.statusCode() to response.body()?.takeIf { response.statusCode() in 200..299 }
+}.getOrElse { -1 to null }
+
 internal fun canvasGet(url: String, headers: Map<String, String> = emptyMap()): String? = runCatching {
     val builder = HttpRequest.newBuilder(URI.create(url))
         .timeout(Duration.ofSeconds(15))
@@ -145,13 +155,17 @@ internal object DesktopAppleMusicCanvas {
             ?.get("results")?.jsonObject
             ?.get("songs")?.jsonObject
             ?.get("data")?.jsonArray
-            ?: return null
+            ?: return null.also { DesktopTrackLog.log("canvas: Apple Music: no songs for '$title'") } // fork: was silent
 
         val ranked = hits.mapNotNull { hit ->
             val song = hit as? JsonObject ?: return@mapNotNull null
             score(song, title, artist, album)?.let { it to song }
         }.sortedByDescending { it.first }
 
+        // fork: why nothing came of a search, for the log (see get)
+        if (ranked.firstOrNull()?.first.let { it == null || it < MIN_SCORE }) {
+            DesktopTrackLog.log("canvas: Apple Music: ${hits.size} hits for '$title', best score ${ranked.firstOrNull()?.first}")
+        }
         for ((value, song) in ranked) {
             if (value < MIN_SCORE) break
             val attributes = song["attributes"]?.jsonObject ?: continue
@@ -336,14 +350,27 @@ internal object DesktopAppleMusicCanvas {
     @Volatile private var tokenExpiresAtMs = 0L
     @Volatile private var retryTokenAfterMs = 0L
 
-    private fun get(url: String, bearer: String): String? = canvasGet(
-        url,
-        mapOf(
-            "Authorization" to "Bearer $bearer",
-            "Origin" to "https://music.apple.com",
-            "Referer" to "https://music.apple.com/",
-        ),
-    )
+    private fun get(url: String, bearer: String): String? {
+        // fork: the status is kept, as the phone's AppleMusicCanvas does: a token the catalog turns
+        // down (401) is dropped and scraped again, where the PC used to keep sending it until it
+        // expired; and every failure is logged, so "no clip" can be told from "Apple said no".
+        val (status, body) = canvasGetWithStatus(
+            url,
+            mapOf(
+                "Authorization" to "Bearer $bearer",
+                "Origin" to "https://music.apple.com",
+                "Referer" to "https://music.apple.com/",
+            ),
+        )
+        if (status == 401) synchronized(this) {
+            if (cachedToken == bearer) {
+                cachedToken = null
+                tokenExpiresAtMs = 0L
+            }
+        }
+        if (body == null) DesktopTrackLog.log("canvas: Apple Music answered ${if (status < 0) "nothing" else "HTTP $status"}")
+        return body
+    }
 
     @Synchronized
     private fun token(): String? {
