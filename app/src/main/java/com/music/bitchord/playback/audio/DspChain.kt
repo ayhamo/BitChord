@@ -38,6 +38,19 @@ class DspChain(
     val loudness: LoudnessProcessor = LoudnessProcessor(),
 ) : FloatAudioProcessor {
 
+    /**
+     * Fork: true while this chain carries Automix's loop mix, set by the sink block by block.
+     *
+     * The loop-mix renderer sums both songs into this one stream, at gains that
+     * overlap at up to 1.6 (outgoing 1 to 0.6 while the incoming loop rises 0.55
+     * to 1). On a modern master that peaks near full scale the sum goes well past
+     * it, and with no normalization gain and no EQ the loudness stage parks, so
+     * nothing caught it: a 16-bit output clipped hard, heard as crackling only
+     * during Automix (owner, S21 FE over Bluetooth, 16-bit PCM output). The
+     * limiter runs for the mix instead.
+     */
+    var forkMixing = false
+
     private var currentSampleRate: Int = 0
     private var processCounter: Long = 0L
 
@@ -82,7 +95,7 @@ class DspChain(
         transition.process(block)
         // The equaliser leaves its overs in place for the stages after it to
         // see; the loudness stage's limiter is what catches whatever survives.
-        loudness.holdLimiter = equalizer.isShaping
+        loudness.holdLimiter = equalizer.isShaping || forkMixing // fork: || forkMixing
         loudness.process(block)
     }
 

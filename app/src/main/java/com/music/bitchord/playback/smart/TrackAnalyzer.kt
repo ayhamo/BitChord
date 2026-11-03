@@ -269,6 +269,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         if (!restoreAttempted.add(trackId)) return
         executor.execute {
             val stored = store.load(trackId) ?: return@execute
+            // fork: one saved before the rule above, without the model's grid, is measured again
+            if (!ForkAutomix.worthStoring(stored)) return@execute
             Log.d(TAG, "Restored analysis for $trackId: bpm=${stored.bpm} conf=${stored.beatConfidence}")
             results.putIfAbsent(trackId, stored)
         }
@@ -450,7 +452,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                         // mix-out anchor, the energy curve — and storing one
                         // would freeze a deliberately partial answer in place of
                         // the complete one that supersedes it minutes later.
-                        store.save(trackId, whole)
+                        if (ForkAutomix.worthStoring(whole)) store.save(trackId, whole) // fork: a DSP-only grid is measured again next session
                         restoreAttempted.add(trackId)
                     } else if (outcome.decodedShort &&
                         shortDecodes.merge(trackId, 1, Int::plus)!! >= MAX_SHORT_DECODE_ATTEMPTS

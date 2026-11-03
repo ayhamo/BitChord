@@ -329,7 +329,7 @@ internal fun SettingsGroupScope.forkCrossfadeOnSkipRow(shown: Boolean) {
 internal fun SettingsGroupScope.forkCanvasRows(shown: Boolean) {
     if (!shown) return
     row(stringResource(R.string.fork_animated_covers), "canvas", "apple", "animated", "cover", "video") { ForkAnimatedCoversRow() }
-    row(stringResource(R.string.fork_backdrop_clips), "canvas", "navidrome", "backdrop", "video") { ForkBackdropClipsRow() }
+    row(stringResource(R.string.fork_backdrop_clips), "canvas", "spotify", "backdrop", "video") { ForkBackdropClipsRow() }
 }
 
 /** After "Clear image cache": the video clip cache's size and the clear buttons. */
@@ -347,7 +347,7 @@ internal fun SettingsGroupScope.forkSettingsRows() {
     run {
         row(stringResource(R.string.fork_crossfade_on_skip), "fork", "fade", "skip") { ForkCrossfadeOnSkipRow() }
         row(stringResource(R.string.fork_animated_covers), "fork", "apple", "animated", "cover") { ForkAnimatedCoversRow() }
-        row(stringResource(R.string.fork_backdrop_clips), "fork", "navidrome", "backdrop", "video") { ForkBackdropClipsRow() }
+        row(stringResource(R.string.fork_backdrop_clips), "fork", "spotify", "backdrop", "video") { ForkBackdropClipsRow() }
         row(stringResource(R.string.fork_navidrome_scrobble), "fork", "navidrome", "scrobbling") { ForkNavidromeScrobbleRow() }
         row(stringResource(R.string.fork_navidrome_home_shelves), "fork", "navidrome", "home", "shelves") { ForkNavidromeHomeShelvesRow() }
         row(stringResource(R.string.fork_navidrome_yt_history), "fork", "navidrome", "youtube", "history") { ForkNavidromeYouTubeHistoryRow() }

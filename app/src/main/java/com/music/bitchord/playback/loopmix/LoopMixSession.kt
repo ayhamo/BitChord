@@ -191,16 +191,15 @@ class LoopMixSession private constructor(
             // Gains: the outgoing deck takes over from its song, the incoming loop
             // rises over the entry and the ramp, the outgoing one falls away.
             val h = LoopMix.HANDOVER_SEC
-            renderer.setEnvelope(
-                LoopMixRenderer.OUT, LoopMixRenderer.KIND_GAIN,
-                doubleArrayOf(-h, 0.0, clock.enterEnd, clock.rampEnd, clock.releaseAt),
-                floatArrayOf(0f, 1f, 1f, 0.6f, 0f),
+            // fork: both curves trimmed where they overlap past full scale (ForkAutomix.trimmedGains)
+            val gains = com.music.bitchord.playback.smart.ForkAutomix.trimmedGains(
+                outTimes = doubleArrayOf(-h, 0.0, clock.enterEnd, clock.rampEnd, clock.releaseAt),
+                outGains = floatArrayOf(0f, 1f, 1f, 0.6f, 0f),
+                inTimes = doubleArrayOf(0.0, clock.enterEnd, clock.rampEnd),
+                inGains = floatArrayOf(0f, 0.55f, 1f),
             )
-            renderer.setEnvelope(
-                LoopMixRenderer.IN, LoopMixRenderer.KIND_GAIN,
-                doubleArrayOf(0.0, clock.enterEnd, clock.rampEnd),
-                floatArrayOf(0f, 0.55f, 1f),
-            )
+            renderer.setEnvelope(LoopMixRenderer.OUT, LoopMixRenderer.KIND_GAIN, gains.outTimes, gains.outGains)
+            renderer.setEnvelope(LoopMixRenderer.IN, LoopMixRenderer.KIND_GAIN, gains.inTimes, gains.inGains)
             // Bass: the incoming loop comes in without it; they swap over one bar mid-ramp.
             val swapFrom = clock.handoffAt - clock.swapBar / 2
             val swapTo = clock.handoffAt + clock.swapBar / 2

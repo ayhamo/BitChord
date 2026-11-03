@@ -21,28 +21,19 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
- * Video clips from the owner's server (fork-only), as in the psysonic fork: a
- * song file can have looping clips next to it, a square `<file name>.cover.mp4`
- * (an animated cover) and a `<file name>.background.mp4` (a backdrop), served
- * at `/rest/x-clip/<folder>/<clip name>` behind Navidrome's own login
- * (`X-ND-Authorization: Bearer <token>`).
+ * Video clips from the owner's server (fork-only), as in the psysonic fork: a song file could have
+ * looping clips next to it, a square `<file name>.cover.mp4` and a `<file name>.background.mp4`,
+ * served at `/rest/x-clip/<folder>/<clip name>` behind Navidrome's own login.
  *
- * BitChord plays one clip at a time, the canvas. A backdrop (9:16, made as a
- * phone background) is handed over as [CanvasSource.BACKDROP], which the player
- * presents like Spotify's Canvas: full screen, the cover back on top while
- * paused. Without one, the cover clip plays over the sleeve. Each has its own
- * switch (`ForkSettings`).
- * The clip is handed to the player as an ordinary canvas ([CanvasArtwork]),
- * tried before the catalogue searches, so it plays through BitChord's canvas
- * player (the still cover first, the clip fading in once it draws, paused in
- * the background) and its disk cache, under the same "Animated cover art" and
- * cellular switches.
- * The login header can't travel in a URL, so [interceptor] (plugged into
- * [Http.client]) adds it to x-clip and native-API requests for the configured
- * server, and logs in again once on a 401.
+ * Since 2026-11 the server has no clips, so nothing here asks it for one: only clips kept on the
+ * device by "Available offline" before then still play ([clip]), handed to the player as an
+ * ordinary canvas ([CanvasArtwork]) ahead of the catalogue searches. Every other server song gets
+ * its animated cover and backdrop from the online services, like a YouTube song.
  *
- * A song's real file path only comes from Navidrome's native API
- * (`/api/song/<id>`); the Subsonic `path` is made up from the tags.
+ * What stays in use: [init] plugs the HTTP layer's fork interceptor in, which answers kept covers
+ * and clips from the device and adds the Subsonic login to this server's `/rest/` requests
+ * ([withSubsonicLogin]). The Navidrome login token ([token]) is only for its native API, which
+ * nothing calls now.
  */
 object NavidromeClips {
 
@@ -135,7 +126,8 @@ object NavidromeClips {
         val base = base() ?: return false
         if (url.host != base.host || url.port != base.port) return false
         val path = url.encodedPath
-        return "/rest/x-clip/" in path || "/api/" in path
+        // Not x-clip any more: a kept clip whose file is gone would otherwise log in to ask a server that has none.
+        return "/api/" in path
     }
 
     private val interceptor = Interceptor { chain ->

@@ -97,7 +97,7 @@ internal object ForkClipCache {
      */
     suspend fun clear(kind: Kind) = withContext(Dispatchers.IO) {
         clips(kind).forEach { runCatching { Files.deleteIfExists(it) } }
-        // And the "no clip" notes, so a clip added on the server since shows now, not in up to a week.
+        // And the old "no clip" notes, left from when the server had clips (NavidromeClips asks it for none now).
         NavidromeClips.forgetMisses(kind.notes)
         cleared.value++
     }

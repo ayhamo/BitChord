@@ -25,6 +25,7 @@ import com.music.bitchord.playback.loopmix.LoopMixSession
 import com.music.bitchord.playback.loopmix.LoopRegion
 import com.music.bitchord.playback.smart.CrossfadeMode
 import com.music.bitchord.playback.smart.LoopMix
+import com.music.bitchord.playback.smart.ForkAutomix // fork
 import com.music.bitchord.playback.smart.FILTER_ECHO_AT
 import com.music.bitchord.playback.smart.FilterTransitionVariant
 import com.music.bitchord.playback.smart.MixWaveform
@@ -1674,8 +1675,9 @@ class CrossfadeController(
             rampStep = rampSteps
             out.setPlaybackSpeed((AppSettings.playbackSpeed.value * outgoingPlaybackRate).toFloat())
         }
-        outgoingAnalysis = out.currentMediaItem?.let(analysisFor) ?: TrackAnalysis()
-        incomingAnalysis = into.currentMediaItem?.let(analysisFor) ?: TrackAnalysis()
+        // fork: the same sides the plan was made from (ForkAutomix), so phase lock and easing use its tempos
+        outgoingAnalysis = ForkAutomix.outgoing(out.currentMediaItem?.let(analysisFor) ?: TrackAnalysis())
+        incomingAnalysis = ForkAutomix.incoming(into.currentMediaItem?.let(analysisFor) ?: TrackAnalysis())
 
         Log.d(TAG, "blend start at cue=${into.currentPosition}ms out=${out.currentPosition}ms")
 
@@ -2226,10 +2228,25 @@ class CrossfadeController(
     private val lyricSpans = java.util.concurrent.ConcurrentHashMap<String, LyricSpans>()
     private val lyricsAsked = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
+    /**
+     * Fork: when each song's lyrics were asked for. A lookup still running after
+     * [FORK_LYRICS_WAIT_MS] no longer holds the loop mix back: the song is cleared by the
+     * vocal mask instead, as one with no synced lyrics is. Waiting on slow lyrics providers is
+     * one of the ways a pair ended up with the plain blend.
+     */
+    private val forkLyricsAskedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    private fun forkLyricsFor(id: String): LyricSpans? = lyricSpans[id]
+        ?: forkLyricsAskedAt[id]?.takeIf { android.os.SystemClock.elapsedRealtime() - it >= FORK_LYRICS_WAIT_MS }?.let { forkNoLyricsYet }
+
+    /** Fork: what [forkLyricsFor] stands in with; the plan's key tells it apart, so the pair plans again once real lyrics land. */
+    private val forkNoLyricsYet = LyricSpans(null)
+
     /** Asks for [item]'s synced lyrics once; a loop they vouch for needs no vocal mask. */
     private fun askLyrics(item: MediaItem, durationMs: Long) {
         val id = item.mediaId
         if (!lyricsAsked.add(id)) return
+        forkLyricsAskedAt[id] = android.os.SystemClock.elapsedRealtime() // fork
         scope.launch(Dispatchers.IO) {
             val lines = runCatching { syncedLines(item, durationMs) }.getOrNull()
             // Only line-synced lyrics say where a voice is; plain text says nothing about time.
@@ -2285,13 +2302,14 @@ class CrossfadeController(
         }
         askLyrics(current, durationMs)
         askLyrics(next, nextDurationMs)
-        val outLyrics = lyricSpans[current.mediaId]
-        val inLyrics = lyricSpans[next.mediaId]
+        val outLyrics = forkLyricsFor(current.mediaId) // fork: not held up past FORK_LYRICS_WAIT_MS
+        val inLyrics = forkLyricsFor(next.mediaId) // fork
         if (outLyrics == null || inLyrics == null) {
             noteLoopVerdict(pair, null, "waiting on lyrics")
             return null
         }
-        val key = "$pair|${System.identityHashCode(currentAnalysis)}|${System.identityHashCode(nextAnalysis)}"
+        val key = "$pair|${System.identityHashCode(currentAnalysis)}|${System.identityHashCode(nextAnalysis)}" +
+            "|${outLyrics === forkNoLyricsYet}${inLyrics === forkNoLyricsYet}" // fork: plans again once late lyrics arrive
         val cached = loopPlanned
         // Kept while its loop is still far enough ahead to set up; a seek past
         // that plans again from the new playhead.
@@ -4103,6 +4121,9 @@ class CrossfadeController(
         const val LOOP_SETUP_SECONDS = 15.0
         const val LOOP_ARM_LEAD_MS = 12_000L
         const val LOOP_MIN_LEAD_MS = 9_000L
+
+        /** Fork: how long a loop mix waits on a song's synced lyrics; see `forkLyricsAskedAt`. */
+        const val FORK_LYRICS_WAIT_MS = 8_000L
         const val LOOP_BUILD_TIMEOUT_MS = 8_000L
 
         /** After the incoming player starts, how long its clock settles before it is measured against the deck. */

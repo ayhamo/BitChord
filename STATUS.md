@@ -19,6 +19,16 @@ Automix, phone (found by comparing with upstream's web app, bitchord-8bw.pages.d
 - The seek bar mark only shows once both songs are analysed; "next: analysing..." means a 6 s plain crossfade if the outro comes first (web: 12 s).
 - Saved analyses (`AnalysisStore`, schema 3) are kept for good and never tied to the copy or model; planning is deterministic, so one bad analysis is the same bad mix every time.
 
+Done on the same branch, 2026-11-03 (the owner asked for all four, then an audit of the round before the final build):
+- Each side of a mix uses its own grid: the plan and the blend executor see the incoming song at its opening's tempo, the outgoing at its ending's (`ForkAutomix.incoming` / `.outgoing`); the loop mix's fallback grid counts bars from the stretch it loops in.
+- The web's 0.2 grid-confidence floor before a loop mix (in practice it only turns away empty or DSP-only grids: head and tail share one averaged score).
+- Lyrics still loading after 8 s no longer hold the loop mix back; the plan is made again when they land. Letting a still-refining next song in was tried and taken out after the audit: its head pass has no loudness or vocal windows.
+- The phone keeps only analyses with the model's grid, and measures again a saved one without it. No schema bump (the stored fields didn't change; the PC's analyses have no head/tail sides, so the rule is the phone's only).
+- Crackling during Automix (owner, S21 FE, Bluetooth, 16-bit output): the loop mix sums both songs at gains reaching 1.6 and nothing limited it when normalization was idle, so a 16-bit output clipped. Both gain curves are now trimmed by `1/sqrt(sum)` where they pass 1 (`ForkAutomix.trimmedGains`), and the limiter runs for the mix (`DspChain.forkMixing`). Not heard: the owner has to listen.
+- Audit (one agent over the round's diff and the code it reaches, phone and PC): 1 high (the PC would have stopped saving analyses), 3 medium, 8 low, all handled. Not a whole-codebase audit; that was 2026-10-30.
+- Spotify secrets file (thetadev `secretDict.json`, versions 59-61): the phone doesn't sign tokens (WebView); the PC signs only as a fallback with version 12. Not used.
+Tested: unit tests 1226 app (1 skipped), 129 shared; the PC zip builds; on the emulator analyses run with the model grid, the lyrics wait clears, a YouTube song starts in 0.8 s, no errors.
+
 PC, to do after PC-Continued's commits (the owner's report):
 - Automix works, but when an addon's lossless copy replaces YouTube's the sound cuts, and during a mix it stops and resumes (`DesktopAudioEngine.swapStream`, `upgradeIncoming`).
 - Backdrop videos don't play, animated covers stutter, and the PC's look differs from the phone's.

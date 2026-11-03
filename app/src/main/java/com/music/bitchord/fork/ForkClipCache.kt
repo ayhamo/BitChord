@@ -50,7 +50,7 @@ object ForkClipCache {
     suspend fun clear(kind: Kind) = withContext(Dispatchers.IO) {
         val cache = runCatching { CanvasCache.cache }.getOrNull() ?: return@withContext
         cache.keys.filter { it.forKind(kind) }.forEach { key -> runCatching { cache.removeResource(key) } }
-        // And the "no clip" notes, so a clip added on the server since shows now, not in up to a week.
+        // And the old "no clip" notes, left from when the server had clips (NavidromeClips asks it for none now).
         com.music.bitchord.data.navidrome.NavidromeClips.forgetMisses(
             if (kind == Kind.BACKDROPS) com.music.bitchord.data.navidrome.NavidromeClips.Kind.BACKDROP
             else com.music.bitchord.data.navidrome.NavidromeClips.Kind.COVER,
