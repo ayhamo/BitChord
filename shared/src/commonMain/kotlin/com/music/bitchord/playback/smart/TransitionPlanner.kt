@@ -1421,8 +1421,8 @@ fun planTransition(
     mixWindow: Boolean = false,
 ): TransitionPlan {
     val plan = planTransitionInner(
-        analysis = analysis,
-        nextAnalysis = nextAnalysis,
+        analysis = ForkAutomix.outgoing(analysis), // fork: the ending's grid for the song going out
+        nextAnalysis = ForkAutomix.incoming(nextAnalysis), // fork: the opening's grid for the song coming in
         currentTrack = currentTrack,
         nextTrack = nextTrack,
         currentTime = currentTime,

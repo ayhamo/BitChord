@@ -2,7 +2,40 @@
 
 Snapshot for picking the work up again. Plan: `FORK_PLAN.md`. Every touched upstream line: `FORK.md`.
 
-## Now (2026-10-30)
+## Now (2026-11-03)
+
+The owner's list from using the phone and PC. Done and tested on the emulator (branch `android-fixes`):
+- Settings: the Navidrome rows are their own "Navidrome" group, no longer under Listen together. Crossfade on skip, Animated covers and Backdrop videos are full rows with icons (they were sub-rows), and the fork's switches use upstream's `IosSwitch`.
+- Automix hiding the Crossfade slider is upstream's (`if (!smartFade)` in `SettingsSheet`, "Automix decides its own length"): left as is.
+- The release app is named "BitChord" (package still `com.ayhamo.bitchord`, so it still installs beside the official app).
+- The album page's pop-up menu: "Available offline" with its size on a second line (it was squeezed to "Av / a...").
+- Server songs no longer ask the server for clips (the clips left the server): their animated covers and backdrops come from the online services like a YouTube song's. Clips kept offline before still play; "Available offline" no longer fetches new ones. Seen: a server song asked Spotify, no x-clip request.
+- YouTube start with addons on: measured 0.9 s to first audio with a failing addon (Qobuz, HTTP 402) ranked above YouTube, Direct Source Stream off. Upstream races addons against YouTube and swaps up mid-song, with a short break (ExoPlayer can't change sources gaplessly). Direct Source Stream (under Sources) waits up to 15 s for addons and holds the next song until 25 s before it plays: the likely cause of the owner's buffering, to check on their phone.
+
+Automix, phone (found by comparing with upstream's web app, bitchord-8bw.pages.dev, whose bundle matches `web/`; nothing changed yet, the owner decides). The Firefox extension 0.4.4 has no Automix in it.
+- The phone keeps one tempo per song, from its ending, and the loop mix anchors that grid on the song's first downbeat (`TrackAnalyzer.kt` around 1121-1145, `LoopMix.constantGrid`). The web keeps a head grid and a tail grid. Likely the biggest cause of loops off the bar.
+- No grid-confidence floor before a loop mix (web: 0.2, `autodj.ts` `MIN_GRID_CONFIDENCE`).
+- The loop mix is refused more often on the phone (lyrics still loading, a re-analysis running, another source's copy), and then `TransitionPlanner`'s blend plays, which is not the web's.
+- The seek bar mark only shows once both songs are analysed; "next: analysing..." means a 6 s plain crossfade if the outro comes first (web: 12 s).
+- Saved analyses (`AnalysisStore`, schema 3) are kept for good and never tied to the copy or model; planning is deterministic, so one bad analysis is the same bad mix every time.
+
+Done on the same branch, 2026-11-03 (the owner asked for all four, then an audit of the round before the final build):
+- Each side of a mix uses its own grid: the plan and the blend executor see the incoming song at its opening's tempo, the outgoing at its ending's (`ForkAutomix.incoming` / `.outgoing`); the loop mix's fallback grid counts bars from the stretch it loops in.
+- The web's 0.2 grid-confidence floor before a loop mix (in practice it only turns away empty or DSP-only grids: head and tail share one averaged score).
+- Lyrics still loading after 8 s no longer hold the loop mix back; the plan is made again when they land. Letting a still-refining next song in was tried and taken out after the audit: its head pass has no loudness or vocal windows.
+- The phone keeps only analyses with the model's grid, and measures again a saved one without it. No schema bump (the stored fields didn't change; the PC's analyses have no head/tail sides, so the rule is the phone's only).
+- Crackling during Automix (owner, S21 FE, Bluetooth, 16-bit output): the loop mix sums both songs at gains reaching 1.6 and nothing limited it when normalization was idle, so a 16-bit output clipped. Both gain curves are now trimmed by `1/sqrt(sum)` where they pass 1 (`ForkAutomix.trimmedGains`), and the limiter runs for the mix (`DspChain.forkMixing`). Not heard: the owner has to listen.
+- Audit (one agent over the round's diff and the code it reaches, phone and PC): 1 high (the PC would have stopped saving analyses), 3 medium, 8 low, all handled. Not a whole-codebase audit; that was 2026-10-30.
+- Spotify secrets file (thetadev `secretDict.json`, versions 59-61): the phone doesn't sign tokens (WebView); the PC signs only as a fallback with version 12. Not used.
+Tested: unit tests 1226 app (1 skipped), 129 shared; the PC zip builds; on the emulator analyses run with the model grid, the lyrics wait clears, a YouTube song starts in 0.8 s, no errors.
+
+PC, to do after PC-Continued's commits (the owner's report):
+- Automix works, but when an addon's lossless copy replaces YouTube's the sound cuts, and during a mix it stops and resumes (`DesktopAudioEngine.swapStream`, `upgradeIncoming`).
+- Backdrop videos don't play, animated covers stutter, and the PC's look differs from the phone's.
+- The PC's own strings for the clip switches still mention server clips.
+
+
+## Before that (2026-10-30)
 
 Checkout is on branch `hooks`. PR https://github.com/ayhamo/BitChord/pull/1 (hooks into main) is open. CI's one Android packaging failure passed on re-run (it also passed when reproduced locally).
 
@@ -46,7 +79,7 @@ Upstream's own, reported only: Spotify, Last.fm, ListenBrainz and PaxSenix secre
 Left, low: cover clip rebuilt on pause under Fullscreen, Home counts for one frame, a bailed skip or pre-load losing a cache entry, pre-loaded songs not in the cached rows, clip miss notes not pruned, radio lookup naming a private host.
 Checked after the fixes: 1226 app tests (1 skipped), 123 shared, no failures. On the emulator: covers, a streamed server song, the notification's cover, a saved queue resuming at its second and closing the menu, a station making no radio requests over 40 s, the backdrop across skips between backdrop songs, kept songs in airplane mode, new cache entries login-free. Old entries in `exoplayer_internal.db` and `fork_queues.json` keep their logins until replaced (out of backups; a clean reinstall removes them). An audit claim that pre-load runs on at 0 was wrong: `around()` cancels it. The PC runs on the same addresses: covers, FFmpeg, clips, no login in its log.
 Released 2026-10-30 at the owner's word: `pc` fast-forwarded into `main` at c36684d1, `fork-sync-release.yml` run 41131939415 published `fork-v1.9` (https://github.com/ayhamo/BitChord/releases/tag/fork-v1.9): universal, arm64-v8a, armeabi-v7a, x86_64, SHA256SUMS. The released x86_64 APK matched its checksum, installed as `com.ayhamo.bitchord` version 1.9 on the emulator, opens with Home's content, no crash. Its server features haven't run in a release build: that needs the owner's login. `main` and `pc` are one line of code again. Upstream's `android.yml` fails on every push to `main` here, since this fork lacks its signing secrets.
-PC test builds: `fork-pc-release.yml`, run by hand, publishes `fork-pc-v<version>` as a pre-release: `BitChord-<version>-windows-portable.zip` with a pinned Temurin 21 Windows Java inside (`docker/pc-jre.sh`), `BitChord.bat` with the measured memory flags, `BitChord-log.bat` writing `bitchord.log`. A pre-release isn't "latest": the phone's updater and the PC's own never see it, so a full PC release later must attach the zip to a normal release. Tested as a real launch from a folder with a space: its own Java, server songs, covers, backdrop, lyrics, 900 MB working set and 1270 MB private, level over 90 s. A real launch uses the real profile: the Java Preferences in `HKCU\Software\JavaSoft\Prefs\com\music` are the test app's, so it opens signed in to what that was.
+PC test build published: `fork-pc-v1.9` at a444b375 (https://github.com/ayhamo/BitChord/releases/tag/fork-pc-v1.9); the downloaded zip was run and played a server song. It builds in `eclipse-temurin:21-jdk` (Ubuntu 26.04), because the media keys code needs newer MinGW headers than the Ubuntu 24.04 runner has. `fork-pc-release.yml`, run by hand, publishes `fork-pc-v<version>` as a pre-release: `BitChord-<version>-windows-portable.zip` with a pinned Temurin 21 Windows Java inside (`docker/pc-jre.sh`), `BitChord.bat` with the measured memory flags, `BitChord-log.bat` writing `bitchord.log`. A pre-release isn't "latest": the phone's updater and the PC's own never see it, so a full PC release later must attach the zip to a normal release. Tested as a real launch from a folder with a space: its own Java, server songs, covers, backdrop, lyrics, 900 MB working set and 1270 MB private, level over 90 s. A real launch uses the real profile: the Java Preferences in `HKCU\Software\JavaSoft\Prefs\com\music` are the test app's, so it opens signed in to what that was.
 Next: the owner's verdict on PC Automix and real use of the zip, PC-Continued's commits, then a full PC release.
 Later, the owner's list (2026-10-30), still only on the phone: Home's collapsible sections, Library's Navidrome albums and playlists rows, Spotify's tiles on Explore, the offline strip, Song Info for server songs, pre-loading whole songs. Order the owner chose: upstream's v1.9 now, then PC-Continued's commits, then a code audit, then publish. Clean up last, including the test saved queue.
 Later, the owner's call: yt-dlp out of process; look at how PC-Continued did it first (`DesktopYtDlpResolver.kt` in `c310d0e3`). Upstream's v1.9 is out (356 files, 12 conflicts with main in a trial merge) and waits until the PC client is finished; the daily job can't publish it because the merge conflicts. Known: an instrumental can get another song's online lyrics (golden hour); Home scrolling through the bridge is untested; in an upright window the player's menu can open away from its button, because the button's place is only reported in the wide layout (upstream).
@@ -87,12 +120,12 @@ Facts worth keeping:
 - Deep audit (3 reviewers) done; every finding fixed or noted.
 - Settings: every fork switch in its normal place and again in "Fork settings" before Advanced.
 - Audio Pipeline: Source says Navidrome; decoder name survives crossfades.
-- Phase 7: updater reads `ayhamo/BitChord` releases (`fork-v<version>`); workflow `.github/workflows/fork-sync-release.yml` builds the **prod** flavor (`com.ayhamo.bitchord`, "BitChord Fork", installs beside the official app) signed with the fork's own release key (secrets on GitHub; local copy in `docker/keys/release/`, gitignored, back it up).
+- Phase 7: updater reads `ayhamo/BitChord` releases (`fork-v<version>`); workflow `.github/workflows/fork-sync-release.yml` builds the **prod** flavor (`com.ayhamo.bitchord`, named "BitChord", installs beside the official app) signed with the fork's own release key (secrets on GitHub; local copy in `docker/keys/release/`, gitignored, back it up).
 
 ## Left
 
 - Push to GitHub and the first release: only when the owner says so (don't ask).
-- Package `com.ayhamo.bitchord` ("BitChord Fork") sits beside the official app; the first fork release is a fresh install (its own data).
+- Package `com.ayhamo.bitchord` (named "BitChord") sits beside the official app; the first fork release is a fresh install (its own data).
 
 ## Problematic / to watch
 

@@ -174,14 +174,17 @@ object LoopMix {
         why: StringBuilder? = null,
     ): Plan? {
         if (outVideo || inVideo) return null.also { why?.append("a music video") }
-        val outGrid = constantGrid(out) ?: return null.also { why?.append("no grid on the outgoing song") }
-        val inGrid = constantGrid(inn) ?: return null.also { why?.append("no grid on the incoming song") }
+        // fork: as the web does, no loop on a grid the model is unsure of (ForkAutomix)
+        if (ForkAutomix.confidence(out, out.tailBeats) < ForkAutomix.MIN_LOOP_CONFIDENCE) return null.also { why?.append("weak grid on the outgoing song") }
+        if (ForkAutomix.confidence(inn, inn.headBeats) < ForkAutomix.MIN_LOOP_CONFIDENCE) return null.also { why?.append("weak grid on the incoming song") }
+        val outEnd = outDuration - 0.5
+        val outFirst = max(earliestOutSec, outDuration - OUT_SEARCH_SEC)
+        val outGrid = constantGrid(out, out.tailBeats, outFirst) ?: return null.also { why?.append("no grid on the outgoing song") } // fork: each side's own grid
+        val inGrid = constantGrid(inn, inn.headBeats, 0.0) ?: return null.also { why?.append("no grid on the incoming song") } // fork: each side's own grid
         val outCount = Rejections()
         val inCount = Rejections()
 
         // outgoing: the latest instrumental loop that ends before the song does
-        val outEnd = outDuration - 0.5
-        val outFirst = max(earliestOutSec, outDuration - OUT_SEARCH_SEC)
         val outPick = firstClean(
             candidates = { bars -> loopsBetween(out.tailBeats, outGrid, outFirst, outEnd, bars).asReversed() },
             analysis = out,
@@ -237,14 +240,10 @@ object LoopMix {
         val barSec: Double get() = beatSec * 4
     }
 
-    private fun constantGrid(analysis: TrackAnalysis): Grid? {
-        val beat = analysis.beatInterval.takeIf { it.isFinite() && it > 0 }
-            ?: analysis.bpm.takeIf { it.isFinite() && it > 0 }?.let { 60 / it }
-            ?: return null
-        val anchor = analysis.downbeats.firstOrNull { it.isFinite() } ?: analysis.firstBeat
-        if (!anchor.isFinite()) return null
-        return Grid(beat, anchor)
-    }
+    // fork: the side's own tempo and a bar line near the search, not the ending's tempo counted from
+    // the opening's first downbeat (ForkAutomix.grid)
+    private fun constantGrid(analysis: TrackAnalysis, side: BeatSide?, near: Double): Grid? =
+        ForkAutomix.grid(analysis, side, near)?.let { (beat, anchor) -> Grid(beat, anchor) }
 
     private open class Loop(val start: Double, val end: Double)
 

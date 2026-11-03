@@ -1,5 +1,5 @@
 > 
-> **This is a personal fork of [BitChord](https://github.com/kushagrasinghx/BitChord)**, made to play my own [Navidrome](https://www.navidrome.org/) server alongside YouTube Music. It installs as **BitChord Fork** (`com.ayhamo.bitchord`), next to the official app, and updates from [this fork's releases](https://github.com/ayhamo/BitChord/releases). Each upstream release is merged and rebuilt automatically. Everything below this box is upstream's README.
+> **This is a personal fork of [BitChord](https://github.com/kushagrasinghx/BitChord)**, made to play my own [Navidrome](https://www.navidrome.org/) server alongside YouTube Music. It installs as **BitChord** under its own package (`com.ayhamo.bitchord`), next to the official app, and updates from [this fork's releases](https://github.com/ayhamo/BitChord/releases). Each upstream release is merged and rebuilt automatically. Everything below this box is upstream's README.
 
 ## What this fork adds
 

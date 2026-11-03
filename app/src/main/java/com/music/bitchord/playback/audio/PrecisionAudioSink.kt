@@ -409,6 +409,7 @@ class PrecisionAudioSink(
             }
 
             // Process normalized Float32 samples through custom DSP chain
+            dspChain.forkMixing = loopRendering // fork: the loop mix sums two songs; see DspChain.forkMixing
             dspChain.process(audioBlock)
 
             // Encode processed samples to target PCM output buffer (Float32 or PCM16)
@@ -588,6 +589,7 @@ class PrecisionAudioSink(
             audioBlock.reset(frames)
             arm.renderer.render(loopNextFrame, audioBlock.samples, 0, frames)
             loopNextFrame += frames
+            dspChain.forkMixing = true // fork: see DspChain.forkMixing
             dspChain.process(audioBlock)
             outputByteBuffer.clear()
             PcmBoundary.encode(sourceBlock = audioBlock, encoding = outEncoding, outputBuffer = outputByteBuffer)

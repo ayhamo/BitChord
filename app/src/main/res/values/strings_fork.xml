@@ -19,7 +19,7 @@
         <item quantity="other">%d songs</item>
     </plurals>
     <string name="fork_backdrop_clips">Backdrop videos</string>
-    <string name="fork_backdrop_clips_subtitle">A video that fills the player: a song\'s backdrop from your server, or Spotify\'s Canvas. The cover comes back while paused</string>
+    <string name="fork_backdrop_clips_subtitle">A video that fills the player: Spotify\'s Canvas, for YouTube and server songs alike. The cover comes back while paused</string>
     <string name="fork_navidrome_scrobble">Report plays to Navidrome</string>
     <string name="fork_navidrome_scrobble_subtitle">Your server shows what is playing, and counts songs played to the end</string>
     <string name="fork_settings">Fork settings</string>
@@ -32,7 +32,7 @@
     <string name="fork_library_navidrome_albums">Navidrome albums</string>
     <string name="fork_backdrop_menu">Backdrop videos</string>
     <string name="fork_animated_covers">Animated covers</string>
-    <string name="fork_animated_covers_subtitle">Video in the cover square: your server\'s cover clips and the moving covers from Apple Music and other services. Backdrops have their own switch</string>
+    <string name="fork_animated_covers_subtitle">Video in the cover square: the moving covers from Apple Music and other services, for YouTube and server songs alike. Backdrops have their own switch</string>
     <string name="fork_on">On</string>
     <string name="fork_off">Off</string>
     <string name="fork_clip_cache_size">Video clip cache</string>

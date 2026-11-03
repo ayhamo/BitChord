@@ -476,8 +476,8 @@ fun SettingsScreen(
                         onClick = onListenTogether,
                     )
                 }
-                forkNavidromeRows() // fork
             }
+            SearchableSettingsGroup(search, header = stringResource(R.string.navidrome)) { forkNavidromeRows() } // fork
 
             // The row that used to sit at the top of this group was called
             // "Lossless / HQ Audio" and toggled `SourceRegistry.setModuleEnabled` —

@@ -8,7 +8,6 @@ import com.music.bitchord.data.model.Song
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -20,48 +19,31 @@ import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Video clips from the owner's server (fork-only), as in the psysonic fork: a
- * song file can have looping clips next to it, a square `<file name>.cover.mp4`
- * (an animated cover) and a `<file name>.background.mp4` (a backdrop), served
- * at `/rest/x-clip/<folder>/<clip name>` behind Navidrome's own login
- * (`X-ND-Authorization: Bearer <token>`).
+ * Video clips from the owner's server (fork-only), as in the psysonic fork: a song file could have
+ * looping clips next to it, a square `<file name>.cover.mp4` and a `<file name>.background.mp4`,
+ * served at `/rest/x-clip/<folder>/<clip name>` behind Navidrome's own login.
  *
- * BitChord plays one clip at a time, the canvas. A backdrop (9:16, made as a
- * phone background) is handed over as [CanvasSource.BACKDROP], which the player
- * presents like Spotify's Canvas: full screen, the cover back on top while
- * paused. Without one, the cover clip plays over the sleeve. Each has its own
- * switch (`ForkSettings`).
- * The clip is handed to the player as an ordinary canvas ([CanvasArtwork]),
- * tried before the catalogue searches, so it plays through BitChord's canvas
- * player (the still cover first, the clip fading in once it draws, paused in
- * the background) and its disk cache, under the same "Animated cover art" and
- * cellular switches.
- * The login header can't travel in a URL, so [interceptor] (plugged into
- * [Http.client]) adds it to x-clip and native-API requests for the configured
- * server, and logs in again once on a 401.
+ * Since 2026-11 the server has no clips, so nothing here asks it for one: only clips kept on the
+ * device by "Available offline" before then still play ([clip]), handed to the player as an
+ * ordinary canvas ([CanvasArtwork]) ahead of the catalogue searches. Every other server song gets
+ * its animated cover and backdrop from the online services, like a YouTube song.
  *
- * A song's real file path only comes from Navidrome's native API
- * (`/api/song/<id>`); the Subsonic `path` is made up from the tags.
+ * What stays in use: [init] plugs the HTTP layer's fork interceptor in, which answers kept covers
+ * and clips from the device and adds the Subsonic login to this server's `/rest/` requests
+ * ([withSubsonicLogin]). The Navidrome login token ([token]) is only for its native API, which
+ * nothing calls now.
  */
 object NavidromeClips {
 
     private const val TAG = "BitChordNavidrome"
-    private const val MISS_MS = 7L * 24 * 60 * 60 * 1000
 
     private lateinit var prefs: NavidromePlatform.Store
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     /** The two clips a song can have, in the order they are tried. */
     enum class Kind(val suffix: String) { COVER(".cover.mp4"), BACKDROP(".background.mp4") }
-
-    /** Clip URLs found this session, by "<song id>|<kind>". */
-    private val found = ConcurrentHashMap<String, String>()
-
-    /** Song paths read this session, by song id, so trying a second clip costs no second lookup. */
-    private val paths = ConcurrentHashMap<String, String>()
 
     @Volatile private var token: String? = null
     private val tokenLock = Any()
@@ -75,8 +57,6 @@ object NavidromeClips {
     /** The settings changed: a different server or account answers differently. */
     fun reset() {
         token = null
-        found.clear()
-        paths.clear()
         if (::prefs.isInitialized) prefs.clear()
     }
 
@@ -87,7 +67,7 @@ object NavidromeClips {
         prefs.remove(prefs.keys().filter { it.endsWith(suffix) })
     }
 
-    /** The song's clip, cover first, or null (none, switched off, not a Navidrome song, or the server couldn't be asked). */
+    /** The song's kept clip, backdrop first, or null (none kept, or not a Navidrome song): then the online services are asked. */
     suspend fun canvasFor(song: Song): CanvasArtwork? {
         // Checked before the IO hop: every YouTube song comes through here first.
         if (!NavidromeSettings.isNavidromeId(song.videoId) || !NavidromeSettings.isConfigured()) return null
@@ -115,59 +95,16 @@ object NavidromeClips {
         )
     }
 
-    /** The song's clip of [kind], kept or looked up; for "Available offline". */
+    /** The song's kept clip of [kind], or null; for "Available offline", which no longer gets new ones. */
     fun find(id: String, kind: Kind): String? = clip(id, kind)
 
-    private fun clip(id: String, kind: Kind): String? {
-        NavidromePlatform.kept.clipUrl(id, kind == Kind.BACKDROP)?.let { return it }
-        val key = "$id|${kind.name}"
-        found[key]?.let { return it }
-        if (System.currentTimeMillis() - prefs.long(key) < MISS_MS) return null
-        return lookUp(id, kind, key)
-    }
-
-    private fun lookUp(id: String, kind: Kind, key: String): String? = try {
-        val base = base() ?: return null
-        val path = paths[id] ?: songPath(base, id)?.also { paths[id] = it } ?: return null
-        val url = clipUrl(base, path, kind)?.toString() ?: return null
-        // One byte, to know whether there is a clip before the player mounts it.
-        val probe = Request.Builder().url(url).header("Range", "bytes=0-0").get().build()
-        Http.client.newCall(probe).execute().use { response ->
-            when {
-                // A login page in front of the server answers 200 too. Not a clip, and not "no clip" either.
-                response.isSuccessful && response.body.contentType()?.type == "text" -> null.also { Log.d(TAG, "$key: a page, not a clip") }
-                response.isSuccessful -> url.also {
-                    found[key] = it
-                    Log.d(TAG, "$key: found")
-                }
-                // Only the clip route's own "no clip" is remembered: it always sends
-                // `Cache-Control: private, max-age=604800`. A 404 without it (route missing, proxy
-                // reloading), a 5xx or a timeout is a failure, asked again next time.
-                response.code == 404 && response.header("Cache-Control")?.contains("max-age") == true -> {
-                    prefs.putLong(key, System.currentTimeMillis())
-                    null
-                }
-                else -> null.also { Log.d(TAG, "$key: HTTP ${response.code}") }
-            }
-        }
-    } catch (e: java.io.IOException) {
-        Log.d(TAG, "$key: ${e.message}")
-        null
-    }
-
-    /** The file's path as stored on the server, from the native API. */
-    private fun songPath(base: HttpUrl, id: String): String? {
-        val url = base.newBuilder().addPathSegment("api").addPathSegment("song").addPathSegment(id).build()
-        Http.client.newCall(Request.Builder().url(url).get().build()).execute().use { response ->
-            if (!response.isSuccessful) {
-                Log.d(TAG, "song $id: HTTP ${response.code}")
-                return null
-            }
-            val song = runCatching { json.parseToJsonElement(response.body.string()) }.getOrNull() as? JsonObject
-            return (song?.get("path") as? JsonPrimitive)?.contentOrNull
-                .also { if (it == null) Log.d(TAG, "song $id: no path in the answer") }
-        }
-    }
+    /**
+     * Only a clip already kept on the device. The server's x-clip route is gone (2026-11, the
+     * clips left the server), so nothing is asked of it any more: a server song's animated cover
+     * and backdrop come from the online services in [com.music.bitchord.data.canvas] like any
+     * YouTube song's, and asking first only cost two requests and a miss on every play.
+     */
+    private fun clip(id: String, kind: Kind): String? = NavidromePlatform.kept.clipUrl(id, kind == Kind.BACKDROP)
 
     /** `…/Youtube FLAC/001-Song.flac` → `<base>/rest/x-clip/Youtube FLAC/001-Song.cover.mp4` (or `.background.mp4`). */
     fun clipUrl(base: HttpUrl, songPath: String, kind: Kind): HttpUrl? {
@@ -189,7 +126,8 @@ object NavidromeClips {
         val base = base() ?: return false
         if (url.host != base.host || url.port != base.port) return false
         val path = url.encodedPath
-        return "/rest/x-clip/" in path || "/api/" in path
+        // Not x-clip any more: a kept clip whose file is gone would otherwise log in to ask a server that has none.
+        return "/api/" in path
     }
 
     private val interceptor = Interceptor { chain ->
