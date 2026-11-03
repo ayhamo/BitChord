@@ -14,9 +14,9 @@ internal object ForkPlayerMenu {
     const val FULLSCREEN_TITLE = "Fullscreen cover art"
     const val FULLSCREEN_SUBTITLE = "In a narrow or upright window, runs the cover to the edges of the player instead of a square sleeve. Paused, the small cover comes back"
     const val BACKDROPS_TITLE = "Backdrop videos"
-    const val BACKDROPS_SUBTITLE = "A video behind the player: a song's backdrop from your server, or Spotify's Canvas. The cover comes back while paused"
+    const val BACKDROPS_SUBTITLE = "A video behind the player: Spotify's Canvas, for YouTube and server songs alike. The cover comes back while paused"
     const val COVERS_TITLE = "Animated covers"
-    const val COVERS_SUBTITLE = "Video in the cover square: your server's cover clips and the moving covers from Apple Music and other services. Backdrops have their own switch"
+    const val COVERS_SUBTITLE = "Video in the cover square: the moving covers from Apple Music and other services, for YouTube and server songs alike. Backdrops have their own switch"
 
     /** Set by the window, which owns and saves "Fullscreen cover art". */
     var onFullBleedChange: (Boolean) -> Unit = {}

@@ -29,6 +29,15 @@ Done on the same branch, 2026-11-03 (the owner asked for all four, then an audit
 - Spotify secrets file (thetadev `secretDict.json`, versions 59-61): the phone doesn't sign tokens (WebView); the PC signs only as a fallback with version 12. Not used.
 Tested: unit tests 1226 app (1 skipped), 129 shared; the PC zip builds; on the emulator analyses run with the model grid, the lyrics wait clears, a YouTube song starts in 0.8 s, no errors.
 
+PC bugs, done on `pc` 2026-11-03 (tested in the app through the bridge, not listened to):
+- A quality upgrade no longer cuts the sound or drops the Automix plan: the better copy crossfades in over 200 ms at the decode point (`forkSwap` in `DesktopAudioEngine`). Seen: `/reload` mid-song crossfaded at 15.7 s, the position kept counting. Not tried with a real addon (none in the test profile) or a sample-rate change.
+- Backdrops: the PC asked Spotify last and only when nothing else had a clip, and its REST search 429s. Now Spotify is asked too when Backdrop videos is on (`ForkDesktopCanvas`), through the Pathfinder search the phone uses. Seen: "Sad Girls" got a cover clip and a Spotify backdrop, shown behind the lyrics.
+- Animated covers: the decoder took the biggest HLS rendition and downloaded them all; now the smallest that reaches 540 px, the rest discarded, threaded decoding. Not measured; the owner to judge.
+- The crackle fix and lyrics wait don't apply: the PC blend already trims the sum, and the PC has no loop mix.
+- The phone has the same one-clip limit (Spotify only when first), so server songs get few backdrops there too: not changed yet.
+
+PC-Continued (agent rating, 2026-11-03): their app is unpacked in `out\pc-continued` (`Run-PC-Continued.bat`, its data in `out\pc-continued\home`; Java prefs in the registry are shared with ours). The branches split before upstream's `desktopUi`, so their UI edits land in our phone's `sharedUi` unless re-applied by hand. Worth taking: be257dad's engine side (the 0.9-1.25 tempo range our planner already plans for, mix-engaged upgrade hold, cue correction, skip when no mix), c310d0e3 minus yt-dlp (PoToken, `worthSwapping`, cache caps), aaaaee54's three fixes (skip wait 6 s to 1.2 s, Library key crash, Listen Together fallback), 5e9dbcbd's canvas decoder, SponsorBlock. The Apple Music redesign and website player are the owner's call.
+
 PC, to do after PC-Continued's commits (the owner's report):
 - Automix works, but when an addon's lossless copy replaces YouTube's the sound cuts, and during a mix it stops and resumes (`DesktopAudioEngine.swapStream`, `upgradeIncoming`).
 - Backdrop videos don't play, animated covers stutter, and the PC's look differs from the phone's.

@@ -84,16 +84,18 @@ internal class DesktopCanvasDecoder {
         check(avformat_open_input(opened, url, null, options) >= 0) { "could not open the clip" }
         format = opened
         check(avformat_find_stream_info(opened, null as AVDictionary?) >= 0) { "no stream info" }
-        streamIndex = av_find_best_stream(
+        streamIndex = forkSmallestFitting(opened) ?: av_find_best_stream( // fork: see forkSmallestFitting
             opened, AVMEDIA_TYPE_VIDEO, -1, -1, null as org.bytedeco.ffmpeg.avcodec.AVCodec?, 0,
         )
         check(streamIndex >= 0) { "no video stream" }
+        forkDiscardOthers(opened, streamIndex) // fork
 
         val stream = opened.streams(streamIndex)
         val parameters = stream.codecpar()
         val decoder = avcodec_find_decoder(parameters.codec_id()) ?: error("no decoder for this clip")
         val context = avcodec_alloc_context3(decoder)
         check(avcodec_parameters_to_context(context, parameters) >= 0) { "bad codec parameters" }
+        context.thread_count(0) // fork: as many decoding threads as FFmpeg sees fit, not one
         check(avcodec_open2(context, decoder, null as AVDictionary?) >= 0) { "decoder refused to open" }
         codec = context
 
@@ -125,6 +127,32 @@ internal class DesktopCanvasDecoder {
         packet = av_packet_alloc()
         frame = av_frame_alloc()
     }.onFailure { close() }
+
+    /**
+     * Fork: of a clip's video streams (an HLS master lists one per rendition), the smallest whose
+     * longer edge still reaches [MAX_EDGE], or the largest when none does; null with one stream.
+     *
+     * `av_find_best_stream` picked the biggest rendition, Apple's motion covers go up to 2160 px or
+     * more, and every frame was decoded at that size in software only to be scaled to [MAX_EDGE]:
+     * the animated covers that stuttered on the PC.
+     */
+    private fun forkSmallestFitting(context: AVFormatContext): Int? {
+        val videos = (0 until context.nb_streams()).filter {
+            context.streams(it).codecpar().codec_type() == AVMEDIA_TYPE_VIDEO
+        }
+        if (videos.size < 2) return null
+        fun edge(index: Int) = context.streams(index).codecpar().let { maxOf(it.width(), it.height()) }
+        val sized = videos.filter { edge(it) > 0 }
+        if (sized.isEmpty()) return null
+        return sized.filter { edge(it) >= MAX_EDGE }.minByOrNull(::edge) ?: sized.maxByOrNull(::edge)
+    }
+
+    /** Fork: every other stream is dropped, so the HLS demuxer stops downloading the renditions not shown. */
+    private fun forkDiscardOthers(context: AVFormatContext, keep: Int) {
+        for (i in 0 until context.nb_streams()) {
+            if (i != keep) context.streams(i).discard(org.bytedeco.ffmpeg.global.avcodec.AVDISCARD_ALL)
+        }
+    }
 
     /** The next frame as BGRA bytes, looping at the end. */
     fun nextFrame(into: ByteArray): Boolean {

@@ -21,7 +21,8 @@ Everything this fork adds lives in new files where possible. This file lists eve
 | `desktopApp/src/main/kotlin/com/music/bitchord/desktop/ForkPlayerMenu.kt` | The player menu's three switches (`ForkPlayerMenuRows`) and their wording, shared with Settings |
 | `desktopApp/src/main/kotlin/com/music/bitchord/desktop/ForkNavidromeSettings.kt` | "Report plays to Navidrome", "Navidrome on Home" and the clip cache's size, saved; Settings' "Navidrome" group |
 | `desktopApp/src/main/kotlin/com/music/bitchord/desktop/ForkClipCache.kt` | The clips' own size limit and the "Clear backdrop videos" / "Clear animated covers" rows, which also forget the old "no clip" notes; kept offline files are in another folder |
-| `desktopApp/src/main/kotlin/com/music/bitchord/desktop/ForkDebugBridge.kt` | Test door: off unless `-Dbitchord.debugBridge=<port>`, loopback only, input goes to the app's window |
+| `desktopApp/src/main/kotlin/com/music/bitchord/desktop/ForkDebugBridge.kt` | Test door: off unless `-Dbitchord.debugBridge=<port>`, loopback only, input goes to the app's window; `/reload` re-opens the playing song through the quality-upgrade swap |
+| `desktopApp/src/main/kotlin/com/music/bitchord/desktop/ForkDesktopCanvas.kt` | The player's clips: kept server clips, then the first source's clip, and with "Backdrop videos" on a Spotify Canvas too, as the backdrop with the first clip as its `sleeveUrl`; one log line per lookup |
 | `docker/pc-build.sh`, `docker/pc-run.sh`, `docker/pc-shot.ps1` | Cross-build the Windows zip, run it isolated in `out/pc-run`, screenshot only its window |
 | `docker/` | Docker build (`build.ps1`, `Dockerfile`); `docker/keys` holds the debug key (gitignored) |
 | `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/navidrome/NavidromeSettings.kt` | Server URL, username, password in their own encrypted prefs (`bitchord_navidrome`) |
@@ -148,6 +149,11 @@ Upstream removed `desktopApp` and `desktopUi` in `e4dd63d8`; `pc` restores them 
 
 | File | Hook |
 |---|---|
+| `DesktopAudioEngine.kt` (quality upgrade) | `replaceCurrent`: `forkQueueSwap` first; the better copy is seeked to the write point (`playhead.peek(framesWritten)`) and crossfaded in over 200 ms (`forkSwap`, `forkMixSwap`, `forkFinishSwap`, `FORK_SWAP_FRAMES_MS`): no sink flush, no reopen, the Automix plan kept; waits while a beatmatch stretch eases out; `forkSwapBeforeSeek` in `performSeek`, `forkDropSwap` in `startTrack` and `closeEverything`; `step()` mixes it after `readCurrent` |
+| `DesktopPlayerHost.kt` `canvasFor` | `ForkDesktopCanvas.canvasFor(song)` |
+| `DesktopSpotifyCanvas.kt` | `searchTrack` tries `forkSearchViaPathfinder` (the web player's search, as on the phone, with a name check) before the REST search, which 429s |
+| `DesktopCanvasDecoder.kt` | Opens the smallest rendition that still reaches `MAX_EDGE` (`forkSmallestFitting`), discards the others (`forkDiscardOthers`), and decodes with FFmpeg's own thread count |
+| `ForkPlayerMenu.kt` | The two video switches' subtitles no longer mention the server's clips |
 | `settings.gradle.kts` | `include(":desktopUi")`, `include(":desktopApp")`, only on JDK 21 or newer (the Android image and CI run on 17) |
 | `.gitignore` | `/desktopApp/bin/` |
 | `desktopUi/build.gradle.kts` | `CMP_DESKTOP`: the build's target decides, not its host, so a Windows zip cross-built from Linux gets Compose 1.10.3 |

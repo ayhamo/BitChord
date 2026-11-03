@@ -35,6 +35,10 @@ import javax.crypto.spec.SecretKeySpec
 internal object DesktopSpotifyCanvas {
 
     private const val SEARCH_URL = "https://api.spotify.com/v1/search"
+
+    /** Fork: the web player's search, and its persisted query id (the phone's `PATHFINDER_SEARCH_HASH`). */
+    private const val FORK_PATHFINDER_URL = "https://api-partner.spotify.com/pathfinder/v1/query"
+    private const val FORK_PATHFINDER_SEARCH_HASH = "bc1ca2fcd0ba1013a0fc88e6cc4f190af501851e3dafd3e1ef85840297694428"
     private const val ALBUM_TRACKS_URL = "https://api.spotify.com/v1/albums"
     private const val CANVAS_URL = "https://spclient.wg.spotify.com/canvaz-cache/v0/canvases"
 
@@ -95,7 +99,79 @@ internal object DesktopSpotifyCanvas {
         return null
     }
 
-    private fun searchTrack(title: String, artist: String, album: String?, token: String): TrackHit? {
+    private fun searchTrack(title: String, artist: String, album: String?, token: String): TrackHit? =
+        forkSearchViaPathfinder(title, artist, album, token) ?: searchViaRest(title, artist, album, token) // fork
+
+    // ── fork: Pathfinder search, as on the phone ─────────────────────────
+
+    /**
+     * Fork: the web player's own track search, tried before the REST one, as the phone does
+     * (`SpotifyCanvas.searchViaPathfinder`). The REST search turns this kind of token away with
+     * 429s in no pattern anyone has pinned down; on the PC it was the only search, so songs rarely
+     * found their Canvas, and once the server's backdrops were gone the PC had almost none.
+     *
+     * Unlike the phone, a hit's name and artists are checked when the answer carries them
+     * (`name`, `artists.items[].profile.name`), so a wrong song's Canvas isn't taken; an answer
+     * without them is trusted as the phone trusts it.
+     */
+    private fun forkSearchViaPathfinder(title: String, artist: String, album: String?, token: String): TrackHit? {
+        val clientToken = DesktopSpotifyToken.clientToken() ?: return null
+        val variables = buildJsonObject {
+            put("searchTerm", listOfNotNull(title, artist, album).joinToString(" "))
+            put("offset", 0)
+            put("limit", 10)
+            put("numberOfTopResults", 5)
+            put("includeAudiobooks", false)
+            put("includePreReleases", false)
+        }.toString()
+        val extensions = buildJsonObject {
+            putJsonObject("persistedQuery") {
+                put("version", 1)
+                put("sha256Hash", FORK_PATHFINDER_SEARCH_HASH)
+            }
+        }.toString()
+        val address = url(
+            FORK_PATHFINDER_URL,
+            listOf("operationName" to "searchTracks", "variables" to variables, "extensions" to extensions),
+        )
+        val response = runCatching {
+            http.send(
+                HttpRequest.newBuilder(URI.create(address))
+                    .timeout(Duration.ofSeconds(15))
+                    .header("Authorization", "Bearer $token")
+                    .header("Client-Token", clientToken)
+                    .header("App-platform", "WebPlayer")
+                    .header("Accept", "application/json")
+                    .header("User-Agent", CANVAS_UA)
+                    .GET().build(),
+                HttpResponse.BodyHandlers.ofString(),
+            )
+        }.getOrElse {
+            DesktopTrackLog.log("canvas: Spotify search threw: ${it.message}")
+            return null
+        }
+        if (response.statusCode() !in 200..299) {
+            DesktopTrackLog.log("canvas: Spotify search answered HTTP ${response.statusCode()}")
+            return null
+        }
+        val items = runCatching { json.parseToJsonElement(response.body()).jsonObject }.getOrNull()
+            ?.get("data")?.jsonObject?.get("searchV2")?.jsonObject?.get("tracksV2")?.jsonObject
+            ?.get("items")?.jsonArray ?: return null
+        for (entry in items) {
+            val data = (entry as? JsonObject)?.get("item")?.jsonObject?.get("data")?.jsonObject ?: continue
+            val uri = data.text("uri") ?: data.text("id")?.let { "spotify:track:$it" } ?: continue
+            val name = data.text("name")
+            val artists = (data["artists"] as? JsonObject)?.get("items")?.jsonArray
+                ?.mapNotNull { (it as? JsonObject)?.get("profile")?.jsonObject?.text("name") }
+                .orEmpty()
+            if (name != null && artists.isNotEmpty() && !canvasMatches(name, artists, title, artist)) continue
+            val albumName = (data["albumOfTrack"] as? JsonObject)?.text("name")
+            return TrackHit(uri, name ?: title, artists.joinToString(", ").ifBlank { artist }, albumName ?: album)
+        }
+        return null
+    }
+
+    private fun searchViaRest(title: String, artist: String, album: String?, token: String): TrackHit? {
         val query = listOfNotNull(title, artist, album).joinToString(" ")
         val items = get(url(SEARCH_URL, listOf("q" to query, "type" to "track", "limit" to "10")), token)
             ?.get("tracks")?.jsonObject?.get("items")?.jsonArray

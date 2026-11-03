@@ -55,9 +55,7 @@ internal object DesktopPlayerHost : PlayerHost {
 
     override fun cachedCanvas(song: Song): CanvasArtwork? = DesktopCanvasClient.cached(song)?.toShared()
 
-    override suspend fun canvasFor(song: Song): CanvasArtwork? =
-        com.music.bitchord.data.navidrome.NavidromeClips.canvasFor(song) ?: // fork: the server's clips first
-        withContext(Dispatchers.IO) { DesktopCanvasClient.lookup(song) }?.toShared()
+    override suspend fun canvasFor(song: Song): CanvasArtwork? = ForkDesktopCanvas.canvasFor(song) // fork: kept clips, then a cover clip and a Spotify backdrop
 
     @Composable
     override fun CanvasVideo(spec: CanvasVideoSpec, modifier: Modifier) = DesktopCanvasVideo(spec, modifier)

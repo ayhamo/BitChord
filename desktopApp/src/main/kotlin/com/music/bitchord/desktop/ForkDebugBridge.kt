@@ -53,6 +53,8 @@ internal object ForkDebugBridge {
         server.createContext("/type") { respond(it) { type(it) } }
         server.createContext("/key") { respond(it) { key(it.query("code").toInt()) } }
         server.createContext("/notice") { respond(it) { ForkNotice.show(it.query("text")); "ok" } }
+        // Re-opens the playing song on a fresh resolve, through the same swap a quality upgrade takes.
+        server.createContext("/reload") { respond(it) { engine?.reloadCurrent(); "ok" } }
         server.start()
         DesktopTrackLog.log("debug bridge on 127.0.0.1:$port")
     }
