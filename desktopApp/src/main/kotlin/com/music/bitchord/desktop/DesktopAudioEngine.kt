@@ -2110,7 +2110,7 @@ class DesktopPlaybackEngine(
         DesktopTrackLog.log(
             "transition into '${incoming.song.title}': ${"%.1f".format(seconds)}s" +
                 ", ${plan.transitionStyle}" +
-                (if (plan.transitionBeats > 0) ", ${plan.transitionBeats} beats" else "") +
+                ForkMixView.logLength(plan) + // fork: the popup's bars (was ", ${plan.transitionBeats} beats", the planner's first ask)
                 (if (plan.incomingCueTime > 0) ", cued at ${"%.1f".format(plan.incomingCueTime)}s" else ""),
         )
         fadeTotal = (seconds * sink.format.sampleRate * sink.format.channels).toInt()

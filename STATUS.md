@@ -2,8 +2,28 @@
 
 Snapshot for picking the work up again. Plan: `FORK_PLAN.md`. Every touched upstream line: `FORK.md`.
 
+## Later: one list (owner, 2026-11-04)
+
+The single list of what is left, ticked when done. Everything not here is either done or dropped.
+
+- [ ] Multi-select in Downloads / Local Music (PC; the phone's hold-to-select, Select all, Delete / Download / Remove from cache)
+- [ ] Local Music Playlists and Folders tabs, with the PC Local Music port (after upstream v1.9.1 is merged)
+- [ ] Vocals-only (bundled vocal model; `vocals-only` branch; phone speed first)
+- [ ] PoToken
+- [ ] Karaoke
+- [ ] Kawarp fluid background
+- [ ] Light theme / system theme on the PC
+- [ ] Picture-in-picture
+- [ ] Cover fade (cover-to-cover transition, from the Octave video)
+- [ ] Two or three Apple AutoMix presets on our own analysis
+- [ ] "My devices" and remote control (via Listen Together, ~1 day)
+- [ ] youtube.com playlists in the app (not only YouTube Music's)
+- [ ] Suggested songs under playlists: not shown on the PC (no second page fetched); check the phone with the same playlist, then fix the shared parser if needed
+- [ ] Sidebar ⟳ beside the playlists, F5 / Ctrl+R (offered; the Library page button and focus refresh are done)
+
 ## Where it stands (2026-11-04, end of day)
 
+- Last round (2026-11-04): PC Library refresh (start, window focus every 5 min, Refresh button); Windows' own caption glyphs gone (no WS_CAPTION, re-stripped on style changes; owner checked taskbar minimise and Win+Down); native libraries unpacked by CRC (a same-size rebuilt DLL stayed stale); small fixes: "1 song", one lit sidebar row, Automix log bars match the popup, Replay backdrop off under Settings, playlist ⋯ (Downloaded row, divider before Delete), wheel scrolls Settings from the margins; phone: Settings search shows each row once, lyrics hold pauses the follow only; audit fixes: handoff keeps downloaded YouTube rows and shrinks notes on refusal, Delete download cancels running downloads and reaches older files in one save, Keep playlists updated approves one playlist and keeps records with existing files, Last.fm temporary errors not filed. Tests: phone 1300/1300, shared/sharedUi pass, PC only the 16 FFmpeg-only failures. Upstream behaviour changes listed at the top of FORK.md.
 - Late night (2026-11-04): PC parity round from the audit: whole album/playlist Delete download (page ⋯ and Home card), Suggested under playlists, About the album, Recent release card on artist pages, Library/Downloads group menu; Prioritize Spotify Canvas, Sources status hints and footer, Cached songs (index next to the song cache, offline play of whole copies); "Playing from Navidrome" opens the Navidrome page; Wide player layout setting (Classic / Halves / Halves smaller cover; one hook line in sharedUi LandscapePlayer.kt). Combined audit, 4 fixes; tested in the app (Delete download confirm, Suggested and Downloads group delete untested: no downloads / no own playlists). Later list: multi-select in Downloads/Local, Local Music Playlists/Folders tabs; skipped: Played-by caption, WebDAV/SMB. Open: Windows' native caption buttons show for ~10 s after start (native frame, Mica).
 - Later still (2026-11-04): the PC album/playlist page has the phone's song sort (Default, Reverse, Title, Date added; per page; remaining pages load first; track numbers kept), tested in the app (Reverse on Youtube FLAC, row 2 plays song 629, the queue follows); the PC pipeline panel gained the phone's EQ preset, loudness gain / measured-from and PCM data rate rows (tested: FLAC 16-bit, 1411 kbps) and scrolls when the window is short. A phone-vs-PC audit found the remaining gaps: multi-select in Downloads/Local, Delete download for a whole album/playlist, Suggested songs under playlists, group long-press menus, About the album, Recent release card, Local Music Playlists/Folders tabs, artist card menu, "Played by" in a party, WebDAV/SMB, Prioritize Spotify Canvas.
 - Night round (2026-11-04): a canvas provider in its own backoff (Apple's 30 min token retry, Spotify's token backoffs) holds a clip-less song back until it can answer again instead of re-asking every provider each minute (`ForkCanvasLookup.coolingDown`; a new Spotify sign-in clears the notes); the Navidrome artist-picture pass reads every artist the songs credit (`search3` pages, OpenSubsonic `artists` ids), not only `getArtists`' ~13 album artists, and the PC's Navidrome Artists tab shows the kept pictures; the PC Audio Pipeline panel shows the decoder's measured format for plain-address songs (the engine's `pipeline()` gave the stream's blank copy; fixed there, `desktopApp` being ours since upstream dropped it) and names Navidrome as the source; the PC audio thread no longer trips on a null Automix reporter at startup; the PC's "Work out genres" is greyed with a note while there is no Last.fm key. Audited once, 4 fixes.

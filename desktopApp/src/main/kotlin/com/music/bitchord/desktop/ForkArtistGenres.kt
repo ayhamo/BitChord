@@ -171,12 +171,28 @@ internal object ForkArtistGenres {
         val response = http.send(request, HttpResponse.BodyHandlers.ofString())
         // An error page is not an answer: nothing is filed, so the next run asks again.
         if (response.statusCode() !in 200..299) return
+        // Nor is a 2xx carrying one of Last.fm's temporary errors (a rate limit, the service down):
+        // filed, it read as "no genre" for 14 days for every artist heard meanwhile.
+        if (isErrorAnswer(response.body())) return
         val genres = genresFrom(parseTopTags(response.body()))
         known[key(name)] = StoredArtist(key = key(name), genres = genres, genresAt = System.currentTimeMillis())
         dirty = true
     }
 
     private fun encode(value: String) = URLEncoder.encode(value, StandardCharsets.UTF_8)
+
+    /**
+     * Whether [body] is one of Last.fm's temporary errors (`{"error": 29, "message": "Rate limit
+     * exceeded"}`; 8 operation failed, 11 service offline, 16 temporary error, 29 rate limit),
+     * whatever the HTTP status. "Artist not found" (6) and the like are answers: filed as no genre,
+     * so the artist is not asked again on every run.
+     */
+    internal fun isErrorAnswer(body: String): Boolean =
+        runCatching {
+            Json.parseToJsonElement(body).jsonObject["error"]?.jsonPrimitive?.content?.toIntOrNull() in TRANSIENT_LASTFM_ERRORS
+        }.getOrDefault(false)
+
+    private val TRANSIENT_LASTFM_ERRORS = setOf(8, 11, 16, 29)
 
     /** The tag names in a `toptags` response, most-used first; empty for anything else. */
     internal fun parseTopTags(body: String): List<String> = runCatching {

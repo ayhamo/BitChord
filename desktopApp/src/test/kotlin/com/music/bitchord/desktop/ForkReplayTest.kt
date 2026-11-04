@@ -193,6 +193,17 @@ class ForkReplayTest {
     // ── Genres ──────────────────────────────────────────────────────────
 
     @Test
+    fun `a Last_fm error answer is not an answer, whatever its status`() {
+        assertTrue(ForkArtistGenres.isErrorAnswer("""{"error":29,"message":"Rate limit exceeded"}"""))
+        assertTrue(ForkArtistGenres.isErrorAnswer("""{"error":8,"message":"Operation failed - Most likely the backend service failed. Please try again."}"""))
+        assertFalse(ForkArtistGenres.isErrorAnswer("""{"toptags":{"tag":[],"@attr":{"artist":"Nobody"}}}"""))
+        assertFalse(ForkArtistGenres.isErrorAnswer("""{"toptags":{"tag":[{"count":100,"name":"rock"}]}}"""))
+        assertFalse(ForkArtistGenres.isErrorAnswer("not json"))
+        // "Artist not found" is an answer: filed as no genre, not asked again every run.
+        assertFalse(ForkArtistGenres.isErrorAnswer("""{"error":6,"message":"The artist you supplied could not be found"}"""))
+    }
+
+    @Test
     fun `tags become genres only from the vocabulary, in its spelling`() {
         assertEquals("Hip-Hop", ForkArtistGenres.canonical("hip-hop"))
         assertEquals("Hip-Hop", ForkArtistGenres.canonical("Hip Hop"))

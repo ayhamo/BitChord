@@ -67,6 +67,20 @@ class ForkAutomixReportTest {
     }
 
     @Test
+    fun `the engine's line counts the bars the popup shows, not the planner's first ask`() {
+        // The owner's case: 9.8 s at ~98 BPM logged "8 beats" while the popup said 4 Bars.
+        val plan = TransitionPlan(transitionStyle = TransitionStyle.DJ_BLEND, fadeSeconds = 9.8, beatSeconds = 60 / 98.0, transitionBeats = 8)
+        assertEquals(16, ForkMixView.beats(plan))
+        assertEquals(4, ForkMixView.bars(ForkMixView.beats(plan)))
+        assertEquals(", 4 bars / 16 beats (planner asked 8 beats)", ForkMixView.logLength(plan))
+        assertEquals(", 4 bars / 16 beats", ForkMixView.logLength(plan.copy(transitionBeats = 16)))
+        assertEquals(", no trusted grid (planner asked 8 beats)", ForkMixView.logLength(plan.copy(beatSeconds = 0.0)))
+        assertEquals("", ForkMixView.logLength(plan.copy(beatSeconds = 0.0, transitionBeats = 0)))
+        assertEquals(1, ForkMixView.bars(2))
+        assertEquals(0, ForkMixView.bars(0))
+    }
+
+    @Test
     fun `beat marks are phased on the downbeat before the blend`() {
         val marks = ForkMixView.beatMarks(listOf(95.0, 99.25, 101.0), outStart = 100.0, outEnd = 104.0, beatSeconds = 0.5)
         // Anchored at 99.25: beats at 100.25, 100.75, … 103.75.

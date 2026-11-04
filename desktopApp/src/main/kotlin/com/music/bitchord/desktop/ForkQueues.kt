@@ -359,7 +359,7 @@ internal fun ForkSavedQueuesDrawer(onClose: () -> Unit) {
 /** "12 songs · The song · 1:23", the phone's `fork_queues_entry`. */
 private fun entryLine(queue: ForkQueues.Saved): String {
     val count = queue.songs.size
-    val songs = if (count == 1) "1 song" else "$count songs"
+    val songs = forkSongCount(count)
     val at = String.format(Locale.ROOT, "%d:%02d", queue.positionMs / 60_000, queue.positionMs / 1_000 % 60)
     return "$songs · ${queue.current?.title.orEmpty()} · $at"
 }

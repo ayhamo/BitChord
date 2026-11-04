@@ -241,7 +241,7 @@ internal object ForkNavidrome {
                     val items = client.playlists().map { row ->
                         ShelfItem(
                             title = row.name,
-                            subtitle = row.songCount?.let { "$it songs" }.orEmpty(),
+                            subtitle = row.songCount?.let(::forkSongCount).orEmpty(),
                             thumbnailUrl = row.coverArt?.let { client.coverUrl(it) },
                             videoId = null,
                             browseId = NavidromePlaylists.pageId(row.id),

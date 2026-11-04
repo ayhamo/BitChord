@@ -305,18 +305,18 @@ internal fun ForkAnimatedCoversRow() = ForkSwitchRow(
 /** The "Navidrome" group, after "Account & integrations": what the Navidrome library adds. */
 @Composable
 internal fun SettingsGroupScope.forkNavidromeRows() {
-    row(stringResource(R.string.fork_navidrome_scrobble), "navidrome", "scrobbling", "now playing") { ForkNavidromeScrobbleRow() }
-    row(stringResource(R.string.fork_navidrome_home_shelves), "navidrome", "home", "shelves") { ForkNavidromeHomeShelvesRow() }
-    row(stringResource(R.string.fork_navidrome_yt_history), "navidrome", "youtube", "history") { ForkNavidromeYouTubeHistoryRow() }
-    row(stringResource(R.string.fork_offline_mode), "navidrome", "offline") { ForkOfflineModeRow() }
-    row(stringResource(R.string.fork_offline_storage), "navidrome", "offline", "storage", "downloads") { ForkOfflineStorageRow() }
-    row(stringResource(R.string.fork_download_mobile), "navidrome", "offline", "mobile", "metered", "download") { ForkDownloadOnMobileRow() }
-    row(stringResource(R.string.fork_preload), "navidrome", "preload", "cache", "next") { ForkPreloadRow() }
+    row(stringResource(R.string.fork_navidrome_scrobble), "fork", "navidrome", "scrobbling", "now playing") { ForkNavidromeScrobbleRow() }
+    row(stringResource(R.string.fork_navidrome_home_shelves), "fork", "navidrome", "home", "shelves") { ForkNavidromeHomeShelvesRow() }
+    row(stringResource(R.string.fork_navidrome_yt_history), "fork", "navidrome", "youtube", "history") { ForkNavidromeYouTubeHistoryRow() }
+    row(stringResource(R.string.fork_offline_mode), "fork", "navidrome", "offline") { ForkOfflineModeRow() }
+    row(stringResource(R.string.fork_offline_storage), "fork", "navidrome", "offline", "storage", "downloads") { ForkOfflineStorageRow() }
+    row(stringResource(R.string.fork_download_mobile), "fork", "navidrome", "offline", "mobile", "metered", "download") { ForkDownloadOnMobileRow() }
+    row(stringResource(R.string.fork_preload), "fork", "navidrome", "preload", "cache", "next") { ForkPreloadRow() }
     // Rides on the server, so greyed (never hidden) while none is set up: the owner's rule for dependent rows.
     val url by com.music.bitchord.data.navidrome.NavidromeSettings.url.collectAsStateWithLifecycle()
     val user by com.music.bitchord.data.navidrome.NavidromeSettings.username.collectAsStateWithLifecycle()
     forkDisabledWhen(url.isBlank() || user.isBlank()) {
-        row(stringResource(R.string.fork_handoff_setting), "navidrome", "continue", "handoff", "pc", "device") { ForkHandoffRow() }
+        row(stringResource(R.string.fork_handoff_setting), "fork", "navidrome", "continue", "handoff", "pc", "device") { ForkHandoffRow() }
     }
 }
 
@@ -337,7 +337,7 @@ internal fun ForkHandoffRow() = ForkSwitchRow(
  */
 @Composable
 internal fun SettingsGroupScope.forkCrossfadeOnSkipRow(enabled: Boolean) = forkDisabledWhen(!enabled) {
-    row(stringResource(R.string.fork_crossfade_on_skip), "fade", "skip", "next", "previous") { ForkCrossfadeOnSkipRow() }
+    row(stringResource(R.string.fork_crossfade_on_skip), "fork", "fade", "skip", "next", "previous") { ForkCrossfadeOnSkipRow() }
 }
 
 /**
@@ -346,20 +346,24 @@ internal fun SettingsGroupScope.forkCrossfadeOnSkipRow(enabled: Boolean) = forkD
  */
 @Composable
 internal fun SettingsGroupScope.forkCanvasRows(enabled: Boolean) = forkDisabledWhen(!enabled) {
-    row(stringResource(R.string.fork_animated_covers), "canvas", "apple", "animated", "cover", "video") { ForkAnimatedCoversRow() }
-    row(stringResource(R.string.fork_backdrop_clips), "canvas", "spotify", "backdrop", "video") { ForkBackdropClipsRow() }
+    row(stringResource(R.string.fork_animated_covers), "fork", "canvas", "apple", "animated", "cover", "video") { ForkAnimatedCoversRow() }
+    row(stringResource(R.string.fork_backdrop_clips), "fork", "canvas", "spotify", "backdrop", "video") { ForkBackdropClipsRow() }
 }
 
 /** After "Clear image cache": the video clip cache's size and the clear buttons. */
 @Composable
 internal fun SettingsGroupScope.forkCacheRows() {
-    row(stringResource(R.string.fork_clip_cache_size), "cache", "video", "clips", "canvas") { ForkClipCacheSizeRow() }
-    row(stringResource(R.string.fork_clear_backdrops), "cache", "backdrop", "video", "free space") { ForkClearBackdropsRow() }
-    row(stringResource(R.string.fork_clear_cover_clips), "cache", "cover", "video", "free space") { ForkClearCoverClipsRow() }
-    row(stringResource(R.string.fork_clear_lyrics), "cache", "lyrics", "free space") { ForkClearLyricsRow() }
+    row(stringResource(R.string.fork_clip_cache_size), "fork", "cache", "video", "clips", "canvas") { ForkClipCacheSizeRow() }
+    row(stringResource(R.string.fork_clear_backdrops), "fork", "cache", "backdrop", "video", "free space") { ForkClearBackdropsRow() }
+    row(stringResource(R.string.fork_clear_cover_clips), "fork", "cache", "cover", "video", "free space") { ForkClearCoverClipsRow() }
+    row(stringResource(R.string.fork_clear_lyrics), "fork", "cache", "lyrics", "free space") { ForkClearLyricsRow() }
 }
 
-/** Every fork switch again in one group (the same settings as their rows above, so they stay in sync). */
+/**
+ * Every fork switch again in one group (the same settings as their rows above, so they stay in sync).
+ * Shown when the Fork settings page is browsed, not in the main page's search: every row here also
+ * lives in its own section, so a search listed it twice. The rows above carry "fork" for that.
+ */
 @Composable
 internal fun SettingsGroupScope.forkSettingsRows() {
     run {

@@ -88,7 +88,7 @@ internal object ForkAutomixDetail {
     fun planned(plan: TransitionPlan, untilSeconds: Double, loopRefusal: String?): String {
         val inSeconds = untilSeconds.coerceAtLeast(0.0)
         val whenText = if (inSeconds > 0) "in ${ceil(inSeconds).toInt()} s" else "now"
-        val bars = if (plan.beatSeconds > 0) (plan.fadeSeconds / (4 * plan.beatSeconds)).roundToInt() else 0
+        val bars = ForkMixView.bars(ForkMixView.beats(plan))
         val length = if (bars > 0) "$bars bars" else "${"%.1f".format(Locale.ROOT, plan.fadeSeconds)} s"
         val why = plan.policyReasons.firstOrNull()?.let { " · $it" }.orEmpty()
         val noLoop = loopRefusal?.let { " · no loop: $it" }.orEmpty()
@@ -111,6 +111,30 @@ internal object ForkMixView {
 
     /** Fader samples over the blend (phone: `MIX_VIEW_FADER_POINTS`). */
     const val FADER_POINTS = 64
+
+    /**
+     * The overlap counted on the outgoing grid, what the popup's chip is made from; 0 when the grid
+     * is not trusted (the chip then shows seconds). Not [TransitionPlan.transitionBeats]: that is
+     * `adaptiveOverlap`'s first ask, which `mixPlan` then replaces for a same-beat blend (the
+     * overlap runs to the incoming intro's drop, clamped and rounded to whole bars), so a blend the
+     * engine logged as "9.8s, DJ_BLEND, 8 beats" ran about 16 beats and the popup said 4 Bars.
+     */
+    fun beats(plan: TransitionPlan): Int =
+        if (plan.beatSeconds > 0) (plan.fadeSeconds.coerceAtLeast(0.5) / plan.beatSeconds).roundToInt() else 0
+
+    /** [beats] as the popup's chip words it (MixViewPopup: `(beats / 4f).roundToInt().coerceAtLeast(1)`); 0 for none. */
+    fun bars(beats: Int): Int = if (beats <= 0) 0 else (beats / 4f).roundToInt().coerceAtLeast(1)
+
+    /** The engine's "transition into" line: the bars the popup shows, and the planner's first ask when it differs. */
+    fun logLength(plan: TransitionPlan): String {
+        val beats = beats(plan)
+        val asked = plan.transitionBeats.takeIf { it > 0 && it != beats }?.let { " (planner asked $it beats)" }.orEmpty()
+        return when {
+            beats > 0 -> ", ${bars(beats)} bars / $beats beats$asked"
+            plan.transitionBeats > 0 -> ", no trusted grid$asked"
+            else -> ""
+        }
+    }
 
     /**
      * [outStartSec] is where the blend opens on the outgoing song, [inStartSec] where the incoming
@@ -137,7 +161,7 @@ internal object ForkMixView {
         val inEnd = inStart + span * ratio
         val context = span * CONTEXT
         val beatSeconds = plan.beatSeconds
-        val beats = if (beatSeconds > 0) (span / beatSeconds).roundToInt() else 0
+        val beats = beats(plan)
         val gains = FloatArray(2)
         val fadeOut = FloatArray(FADER_POINTS)
         val fadeIn = FloatArray(FADER_POINTS)

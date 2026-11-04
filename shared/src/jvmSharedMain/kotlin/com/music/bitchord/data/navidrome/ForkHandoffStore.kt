@@ -25,7 +25,7 @@ object ForkHandoffStore {
     @Volatile private var playlistId: String? = null
     @Volatile private var forUser: String? = null
 
-    /** Whether the last write had to go in the address ([NavidromeClient.setPlaylistComment]'s "get"): later notes then keep to [ForkHandoff.GET_BUDGET]. */
+    /** Whether the server refused a note in a form body and took it in the address: later notes then keep to [ForkHandoff.GET_BUDGET]. Never set by a network failure. */
     @Volatile private var addressOnly = false
 
     fun forget() {
@@ -55,21 +55,62 @@ object ForkHandoffStore {
     suspend fun write(note: ForkHandoff.Note, log: (String) -> Unit = {}): Boolean = lock.withLock {
         if (!NavidromeSettings.isConfigured()) return@withLock false
         val client = NavidromeRepository.client()
-        val text = ForkHandoff.encode(note, if (addressOnly) ForkHandoff.GET_BUDGET else ForkHandoff.DEFAULT_BUDGET)
-            ?: return@withLock false.also { log("handoff: the note doesn't fit even with the playing song alone") }
         val id = playlistId(client) ?: return@withLock false.also { log("handoff: no mailbox playlist") }
-        val way = try {
-            client.setPlaylistComment(id, text)
+        val way = (try {
+            send(
+                encode = { budget -> ForkHandoff.encode(note, budget) },
+                addressOnly = addressOnly,
+                post = { text -> client.postPlaylistComment(id, text) },
+                get = { text -> client.getPlaylistComment(id, text) },
+            )
         } catch (e: IOException) {
             // A playlist deleted by hand since: found again (or made) on the next save, not now.
             playlistId = null
             throw e
-        }
-        if (way == "get" && !addressOnly) {
+        }) ?: return@withLock false.also { log("handoff: the note doesn't fit even with the playing song alone") }
+        if (way == Way.GET && !addressOnly) {
             addressOnly = true
             log("handoff: this server reads the comment from the address only; notes kept under ${ForkHandoff.GET_BUDGET / 1024} KB")
         }
         true
+    }
+
+    internal enum class Way { POST, GET }
+
+    /**
+     * One write's choice of transport. The note goes as a form body, encoded at the usual budget
+     * (or [ForkHandoff.GET_BUDGET] once [addressOnly]). Only when the server refuses that body
+     * ([NavidromeClient.Refused]) is it encoded again at [ForkHandoff.GET_BUDGET] and sent in the
+     * address, once, in this same write: a 48 KB note on a server that ignores the body used to
+     * never shrink (the address was only tried under [NavidromeClient.GET_LIMIT]), so every save
+     * failed and backed off for good. A POST that got no answer (a plain [java.io.IOException]) is
+     * thrown as it is: falling back to the address then marked the run as address-only, and every
+     * later note was cut to 4 KB over one dropped connection. [post] throws; [get] answers false
+     * when even the short note's address is too long (the refusal is then thrown). Null when the
+     * note doesn't fit its budget even with the playing song alone (nothing sent).
+     */
+    internal suspend fun send(
+        encode: (Int) -> String?,
+        addressOnly: Boolean,
+        post: suspend (String) -> Unit,
+        get: suspend (String) -> Boolean,
+    ): Way? {
+        val budget = if (addressOnly) ForkHandoff.GET_BUDGET else ForkHandoff.DEFAULT_BUDGET
+        val text = encode(budget) ?: return null
+        val refused = try {
+            post(text)
+            return Way.POST
+        } catch (e: NavidromeClient.Refused) {
+            e
+        }
+        // The address limit counts the percent-encoded note: quotes, commas and braces take three
+        // characters each, a non-Latin title six per letter, so 4 KB of JSON can still be too long.
+        // Smaller notes are tried before giving up (the playing song and its neighbours survive).
+        for (step in listOf(ForkHandoff.GET_BUDGET, ForkHandoff.GET_BUDGET / 2, ForkHandoff.GET_BUDGET / 4)) {
+            val short = (if (step == budget) text else encode(step)) ?: break
+            if (get(short)) return Way.GET
+        }
+        throw refused
     }
 
     private fun remember(id: String) {

@@ -274,7 +274,7 @@ private fun ForkOfflineList(onOpen: (String) -> Unit, onDismiss: () -> Unit) {
                                 Spacer(Modifier.height(2.dp))
                                 val note = if (page.gone) "Deleted on server · " else ""
                                 Text(
-                                    "$note${page.songs.size} songs · ${sizeText(sizes[page.id] ?: 0L)}",
+                                    "$note${forkSongCount(page.songs.size)} · ${sizeText(sizes[page.id] ?: 0L)}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )

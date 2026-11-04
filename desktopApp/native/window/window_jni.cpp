@@ -95,6 +95,15 @@ LRESULT CALLBACK frame_proc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
         return 0;
     }
 
+    if (message == WM_STYLECHANGING && wparam == static_cast<WPARAM>(GWL_STYLE) && lparam != 0 &&
+        !g_fullscreen_active) {
+        // fork: AWT puts WS_CAPTION back after install_frame took it off (seen: style 0x16CF0000
+        // on the running window), and with it DWM's own caption glyphs over the toolbar. Refused
+        // here, every time, rather than once at install.
+        auto* change = reinterpret_cast<STYLESTRUCT*>(lparam);
+        change->styleNew &= ~static_cast<DWORD>(WS_CAPTION);
+    }
+
     if (message == WM_WINDOWPOSCHANGING && g_fullscreen_active && lparam != 0) {
         // While fullscreen, every attempted move or resize — AWT reasserting its own bounds, the
         // taskbar raising itself, a focus change — is rewritten to the pinned, oversized monitor
@@ -175,7 +184,12 @@ bool install_frame(HWND window) {
 
     LONG_PTR style = GetWindowLongPtrW(window, GWL_STYLE);
     style &= ~static_cast<LONG_PTR>(WS_POPUP);
-    style |= WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME |
+    // fork: no WS_CAPTION. With it, DWM drew its own minimize/maximize/close glyphs into the
+    // extended (Mica) frame at the top right, over the app's toolbar, for the first seconds after
+    // start. WS_SYSMENU with WS_MINIMIZEBOX / WS_MAXIMIZEBOX keeps the taskbar click, Win+Down and
+    // the system menu; WS_THICKFRAME keeps the resize border and DWM's shadow.
+    style &= ~static_cast<LONG_PTR>(WS_CAPTION);
+    style |= WS_OVERLAPPED | WS_SYSMENU | WS_THICKFRAME |
         WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
     SetWindowLongPtrW(window, GWL_STYLE, style);
 

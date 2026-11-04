@@ -238,6 +238,7 @@ object ArtistFacts {
             if (!response.isSuccessful) return
             response.body?.string()
         } ?: return
+        if (runCatching { Json.parseToJsonElement(body).jsonObject["error"]?.jsonPrimitive?.content?.toIntOrNull() in setOf(8, 11, 16, 29) }.getOrDefault(false)) return // fork: Last.fm's temporary errors (8, 11, 16, 29: rate limit, service down) are a failed try, not "no genre" for 14 days; "artist not found" (6) stays an answer
 
         val tags = runCatching {
             Json.parseToJsonElement(body).jsonObject["toptags"]

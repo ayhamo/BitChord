@@ -157,7 +157,7 @@ internal fun DesktopPlaylistDialog(
                         DialogAction(
                             BitChordIcons.Queue,
                             playlist.title,
-                            subtitle = "${playlist.songs.size} songs",
+                            subtitle = forkSongCount(playlist.songs.size), // fork: "1 song"
                             enabled = !busy,
                         ) { onPickLocal(playlist) }
                     }

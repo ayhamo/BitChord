@@ -79,6 +79,7 @@ internal object DesktopAnalysisRuntime {
      * Size alone is not enough: a rebuilt library can come out byte-for-byte the same length as the
      * one it replaces, and the stale copy was then loaded forever — a native fix that never ran.
      */
+    @Synchronized // fork: the window and audio sides load the same library; two copies at once could move over a loaded DLL
     private fun unpack(resource: String, name: String): Path {
         Files.createDirectories(home)
         val target = home.resolve(name)
@@ -88,14 +89,25 @@ internal object DesktopAnalysisRuntime {
             val connection = javaClass.getResource(resource)?.openConnection()
             val expected = connection?.contentLengthLong ?: -1L
             val builtAt = connection?.lastModified ?: 0L
-            if (Files.exists(target) && expected > 0 && Files.size(target) == expected &&
-                Files.getLastModifiedTime(target).toMillis() >= builtAt
-            ) {
-                return target
+            // fork: the jar entry's CRC, kept beside the copy, decides; size and date could not. A
+            // native fix that kept the library's size, built in a container whose zip entries carry
+            // UTC times read back as local ones, looked "same size, not older" and the old library
+            // was loaded on (seen 2026-11-04: the window frame change never ran). Outside a jar
+            // (a run from build output) there is no CRC, and the old rule stays.
+            val crc = (connection as? java.net.JarURLConnection)?.jarEntry?.crc?.takeIf { it >= 0 }
+            val stamp = home.resolve("$name.crc")
+            val same = if (crc != null) {
+                Files.exists(target) && Files.size(target) == expected &&
+                    runCatching { Files.readString(stamp).trim() }.getOrNull() == crc.toString()
+            } else {
+                Files.exists(target) && expected > 0 && Files.size(target) == expected &&
+                    Files.getLastModifiedTime(target).toMillis() >= builtAt
             }
+            if (same) return target
             val partial = home.resolve("$name.partial")
             Files.copy(input, partial, StandardCopyOption.REPLACE_EXISTING)
             Files.move(partial, target, StandardCopyOption.REPLACE_EXISTING)
+            if (crc != null) runCatching { Files.writeString(stamp, crc.toString()) } // fork
         }
         return target
     }

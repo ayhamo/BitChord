@@ -217,8 +217,8 @@ object ForkHandoff {
 
     /**
      * The usual classification of a queue row, for both apps: a Navidrome song, else a source's
-     * own row when [sourceRow] can describe it (addon / module / JioSaavn), else a local file is
-     * dropped, else a YouTube video id. [hint] and [pinned] are the platform's knowledge about the
+     * own row when [sourceRow] can describe it (addon / module / JioSaavn), else a YouTube video id
+     * (downloaded or cached ones too), else dropped (a local file, a station). [hint] and [pinned] are the platform's knowledge about the
      * playing copy of a YouTube song.
      */
     fun itemFor(
@@ -255,8 +255,13 @@ object ForkHandoff {
                 sourceQuality = song.sourceQuality,
             )
         }
-        if (isLocalAddress(song.localUri) || isLocalAddress(song.localPath)) return null
-        if (!isYouTubeId(id)) return null // a station, a WebDAV/SMB file, anything else this side alone can reach
+        // A YouTube id travels whatever local address the row has: a download (the PC's file: URI and
+        // C:\ path, the phone's content:// localUri) or the PC's cached copy is still that YouTube
+        // song, which the other side streams. Dropping those left a queue of downloads out of the
+        // note entirely, and a downloaded playing song made the note jump to another song at 0:00.
+        // Only a row that isn't a YouTube song is dropped: a local file (content://, file:, a path,
+        // whatever its id), a station, a WebDAV/SMB file, anything else this side alone can reach.
+        if (!isYouTubeId(id)) return null
         return Item(
             kind = Item.Kind.YOUTUBE,
             id = id,

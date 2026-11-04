@@ -1848,6 +1848,7 @@ internal fun LyricsPanel(
     var browsingByDrag by remember { mutableStateOf(false) }
     // While picking lines, the panel must not auto-scroll — the reader needs
     // the list to stay put so they can tap the lines they want.
+    val forkHold = remember { ForkLyricsHold() } // fork: a line under a finger holds the panel too
     val browsing = browsingByDrag || picking
     val onBottomHalfTap: () -> Unit = {
         // A pick has the whole panel to itself: the controls that a tap down
@@ -1957,8 +1958,8 @@ internal fun LyricsPanel(
     // browse on their own terms.
     // A newer line replaces an unfinished automatic scroll. Only a user's
     // browsing gesture should suspend following, not our own animation.
-    LaunchedEffect(focusLine, browsing, controlsOpen, active) {
-        if (active && isSynced && !browsing &&
+    LaunchedEffect(focusLine, browsing, forkHold.held, controlsOpen, active) { // fork: + forkHold.held
+        if (active && isSynced && !browsing && !forkHold.held && // fork: `!forkHold.held &&`, only the follow pauses (not the blur, dimming or sweep `browsing` also drives)
             focusLine >= 0 && focusLine in lines.indices
         ) {
             // Centred, the top padding is half the viewport, and it only exists
@@ -2255,6 +2256,7 @@ internal fun LyricsPanel(
                 val staggerDelay = behind.coerceIn(0, STAGGER_STEPS) *
                     STAGGER_FRACTION * run.durationMs
                 val interaction = remember { MutableInteractionSource() }
+                forkHold.Track(interaction) // fork
                 val pressed by interaction.collectIsPressedAsState()
                 val scale by animateFloatAsState(
                     targetValue = when {

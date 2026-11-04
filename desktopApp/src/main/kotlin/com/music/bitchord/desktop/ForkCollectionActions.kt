@@ -4,6 +4,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.DropdownMenu
@@ -37,6 +38,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.nio.file.Files
+import java.nio.file.Paths
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -70,6 +73,11 @@ internal object ForkCollectionActions {
         val downloads: () -> List<Song>,
         /** The window's per-song "Remove download": deletes the file and drops the record. */
         val removeDownload: (Song) -> Unit,
+        /**
+         * [removeDownload] for many: the files deleted and the downloads list saved once, off the
+         * UI thread (one save per song was ~100 preference writes on the UI thread for an album).
+         */
+        val removeDownloads: (List<Song>) -> Unit = { songs -> songs.forEach(removeDownload) },
     )
 
     @Volatile
@@ -200,20 +208,40 @@ internal object ForkCollectionActions {
      * is no longer followed by "Keep playlists updated" (the phone's `forgetCollection`), which
      * would otherwise fetch its next new track straight back.
      */
-    suspend fun deleteDownloads(browseId: String, trackIds: Set<String>) {
+    suspend fun deleteDownloads(browseId: String, trackIds: Set<String>, label: String = browseId) {
         val window = window ?: return
         val (keptIds, keptFiles) = withContext(Dispatchers.IO) { ForkPlaylistSync.keptByOthers(browseId) }
         // A page holds only the rows loaded so far: the followed playlist's record and this session's
         // "Download all" name the rest, which would otherwise stay on disk with nothing tracking them.
         val all = if (browseId.isEmpty()) trackIds
         else trackIds + withContext(Dispatchers.IO) { ForkPlaylistSync.tracksOf(browseId) } + requestedOf(browseId)
-        val doomed = forkDownloadsToDelete(all, window.downloads(), keptIds, keptFiles)
-        doomed.forEach(window.removeDownload)
+        // What is still queued or running for it first: left alone, a "Download all" half-way through
+        // kept going after the delete, and its tracks came back with nothing following them. A track
+        // another kept playlist names keeps its download.
+        val active = DesktopDownloadQueue.active.value
+        val cancelled = all.filter { id ->
+            id !in keptIds && active[id]?.state.let { it is DesktopDownloadState.Queued || it is DesktopDownloadState.Running }
+        }
+        cancelled.forEach(DesktopDownloadQueue::cancel)
+        val downloads = window.downloads()
+        val doomed = forkDownloadsToDelete(all, downloads, keptIds, keptFiles)
+        window.removeDownloads(doomed)
+        // The window's list holds the newest 200 downloads only, so a long followed playlist's older
+        // files have no record there: its own record names them, and they go before it is forgotten.
+        val listed = downloads.mapTo(HashSet()) { it.videoId }
+        val orphans = if (browseId.isEmpty()) emptyList() else withContext(Dispatchers.IO) {
+            forkOrphanFilesToDelete(ForkPlaylistSync.filesOf(browseId), all, listed, keptIds, keptFiles + downloads.mapNotNull { it.localPath })
+                .filter { path -> runCatching { Files.deleteIfExists(Paths.get(path)) }.getOrDefault(false) }
+        }
         if (browseId.isNotEmpty()) {
             ForkPlaylistSync.forget(browseId)
             requested.remove(browseId)
         }
-        DesktopTrackLog.log("delete download: ${doomed.size} of ${trackIds.size} tracks of $browseId removed")
+        DesktopTrackLog.log(
+            "delete download: ${doomed.size} of ${trackIds.size} tracks of $label removed" +
+                (if (orphans.isNotEmpty()) ", ${orphans.size} older files of its record" else "") +
+                (if (cancelled.isNotEmpty()) ", ${cancelled.size} downloads called off" else ""),
+        )
     }
 
     /**
@@ -261,6 +289,46 @@ internal fun forkDownloadsToDelete(
 }
 
 /**
+ * The window's "Remove download" for many songs ([ForkCollectionActions.Window.removeDownloads]):
+ * the files deleted and the list saved once, both on IO; the window's list ([read]/[write]) changes
+ * on the caller's (UI) scope as one step. A save made meanwhile by the window (a download landing)
+ * would be overwritten by this older copy, so the newest list is saved again when it moved on.
+ */
+internal fun forkRemoveDownloadsBatch(
+    scope: CoroutineScope,
+    songs: List<Song>,
+    read: () -> List<Song>,
+    write: (List<Song>) -> Unit,
+    save: (List<Song>) -> Unit,
+) {
+    if (songs.isEmpty()) return
+    val ids = songs.mapTo(HashSet()) { it.videoId }
+    scope.launch {
+        withContext(Dispatchers.IO) { songs.forEach { DesktopDownloadManager.delete(it) } }
+        val kept = read().filterNot { it.videoId in ids }
+        write(kept)
+        withContext(Dispatchers.IO) { save(kept) }
+        val now = read()
+        if (now !== kept) withContext(Dispatchers.IO) { save(now) }
+    }
+}
+
+/**
+ * The files a followed playlist's record names ([files], track to path) that "Delete download" has
+ * to remove itself: tracks of the release ([trackIds]) with no record in the window's downloads list
+ * ([listed], which keeps only the newest 200), not named by another kept playlist by id or by file.
+ */
+internal fun forkOrphanFilesToDelete(
+    files: Map<String, String>,
+    trackIds: Set<String>,
+    listed: Set<String>,
+    keptIds: Set<String>,
+    keptFiles: Set<String>,
+): List<String> = files.filter { (id, path) ->
+    id in trackIds && id !in listed && id !in keptIds && path !in keptFiles
+}.values.distinct()
+
+/**
  * Queues [more] by hand in one go: the insertion point is found once and the whole list goes in
  * there, as the phone's `addMediaItems(at, …)` does. One [DesktopQueue.enqueue] per track would
  * reverse a release under "Play next", each one landing at the head ahead of the one before.
@@ -299,17 +367,34 @@ internal fun ForkCollectionQueueItems(collection: DesktopCollection, songs: List
 }
 
 /**
- * "Delete download" in an album or playlist page's "More" menu, after "Download all", shown only
- * while some of the page's loaded rows are downloaded ([downloadedIds], the window's).
+ * Every loaded row of the page is downloaded: the page's "More" menu then hides "Download all" and
+ * [ForkDeleteDownloadItem] shows "Downloaded" in its place, the phone's `BrowseActionsMenu` reading
+ * (`ids.isNotEmpty() && ids.all { it in saved }`).
+ */
+internal fun forkAllDownloaded(collection: DesktopCollection, downloadedIds: Set<String>): Boolean =
+    collection.songs.isNotEmpty() && collection.songs.all { it.videoId in downloadedIds }
+
+/**
+ * "Delete download" in an album or playlist page's "More" menu, after "Download all" (or the
+ * "Downloaded" row standing in for it, [forkAllDownloaded]), shown only while some of the page's
+ * loaded rows are downloaded ([downloadedIds], the window's).
  */
 @Composable
 internal fun ForkDeleteDownloadItem(collection: DesktopCollection, downloadedIds: Set<String>, onDone: () -> Unit) {
     val ids = remember(collection.songs) { collection.songs.mapTo(HashSet()) { it.videoId } }
     if (ids.none { it in downloadedIds }) return
+    if (forkAllDownloaded(collection, downloadedIds)) {
+        DropdownMenuItem(
+            text = { Text(DesktopStrings["downloaded", "Downloaded"]) },
+            leadingIcon = { Icon(Icons.Rounded.DownloadDone, null) },
+            onClick = {},
+            enabled = false,
+        )
+    }
     ForkDeleteDownloadRow(collection.title) {
         onDone()
         val window = ForkCollectionActions.window ?: return@ForkDeleteDownloadRow
-        window.scope.launch { ForkCollectionActions.deleteDownloads(collection.browseId, ids) }
+        window.scope.launch { ForkCollectionActions.deleteDownloads(collection.browseId, ids, "'${collection.title}' (${collection.browseId})") }
     }
 }
 

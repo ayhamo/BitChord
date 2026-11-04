@@ -40,6 +40,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -93,6 +94,13 @@ internal object ForkPlaylistSync {
 
     /** How often the loop looks at the clock; the checks themselves are [PERIOD_MILLIS] apart. */
     private const val TICK_MILLIS = 15L * 60 * 1000
+
+    /**
+     * The longest a check waits on one playlist's downloads. It holds [running] meanwhile, so a
+     * download that never settles would otherwise block every later check for the rest of the run;
+     * the tracks still unsettled then count as not handled and stay new for the next check.
+     */
+    private const val DOWNLOAD_WAIT_MILLIS = 2L * 60 * 60 * 1000
 
     /** After launch, before the first look: the window's startup check of the downloads goes first. */
     private const val FIRST_LOOK_MILLIS = 90_000L
@@ -172,7 +180,7 @@ internal object ForkPlaylistSync {
         }
         // Switched on: a check now, as the phone queues one.
         scope.launch {
-            enabled.drop(1).collect { on -> if (on) launch { runCheck(approved = false) } }
+            enabled.drop(1).collect { on -> if (on) launch { runCheck() } }
         }
         scope.launch {
             delay(FIRST_LOOK_MILLIS)
@@ -184,7 +192,7 @@ internal object ForkPlaylistSync {
                     // A check that failed partway is due again after a period, not on every tick:
                     // the next launch's catch-up is the phone's early retry.
                     val due = if (first) sinceComplete >= CATCH_UP_MILLIS else sinceComplete >= PERIOD_MILLIS && now - lastAttempt >= PERIOD_MILLIS
-                    if (due) runCheck(approved = false)
+                    if (due) runCheck()
                 }
                 first = false
                 delay(TICK_MILLIS)
@@ -197,6 +205,12 @@ internal object ForkPlaylistSync {
      * what was asked for, merged with what was asked before (a playlist fetched in pages can be
      * downloaded twice from two depths of it), the new order leading. Anything but a YouTube
      * playlist is left alone.
+     *
+     * The record's files also take in the tracks already downloaded before this "Download all"
+     * (the window's downloads list, files still on disk): [DesktopDownloadQueue.finished] only
+     * notes the ones finishing from now on, so deleting the few new files used to leave none noted,
+     * the playlist was unfollowed as "every file is gone", and [keptByOthers] stopped guarding the
+     * rest.
      */
     fun remember(browseId: String, type: BrowseType, title: String, subtitle: String, thumbnailUrl: String?, songs: List<Song>) {
         if (type != BrowseType.PLAYLIST) return
@@ -205,6 +219,8 @@ internal object ForkPlaylistSync {
         if (ids.isEmpty()) return
         scope.launch {
             ensureLoaded()
+            val idSet = ids.toHashSet()
+            val onDisk = downloadedFiles().filterKeys { it in idSet }
             records.update { current ->
                 val existing = current[id]
                 current + (
@@ -214,7 +230,7 @@ internal object ForkPlaylistSync {
                         subtitle = subtitle,
                         thumbnailUrl = thumbnailUrl ?: existing?.thumbnailUrl,
                         videoIds = (ids + existing?.videoIds.orEmpty()).distinct(),
-                        files = existing?.files.orEmpty(),
+                        files = onDisk + existing?.files.orEmpty(),
                     )
                 )
             }
@@ -227,6 +243,13 @@ internal object ForkPlaylistSync {
         val id = syncableBrowseId(browseId) ?: return emptySet()
         ensureLoaded()
         return records.value[id]?.videoIds?.toSet().orEmpty()
+    }
+
+    /** Fork: the files the record for [browseId] names, by track; empty when it is not a followed playlist. */
+    suspend fun filesOf(browseId: String): Map<String, String> {
+        val id = syncableBrowseId(browseId) ?: return emptyMap()
+        ensureLoaded()
+        return records.value[id]?.files.orEmpty()
     }
 
     /**
@@ -268,20 +291,22 @@ internal object ForkPlaylistSync {
 
     /**
      * Goes through every recorded playlist in turn. Only a check that read every playlist to its
-     * end is stamped as complete. [approved] also fetches the batches over [ASK_ABOVE], and waits
-     * for a check already running rather than being dropped behind it.
+     * end is stamped as complete. [approved] (the ask card's "Download") checks that one playlist
+     * only, fetches its batch over [ASK_ABOVE], and waits for a check already running rather than
+     * being dropped behind it. It used to approve every record: one "Download" fetched every
+     * playlist's big batch, asks never shown and ones answered "Not now" included.
      */
-    private suspend fun runCheck(approved: Boolean) {
-        if (approved) running.lock() else if (!running.tryLock()) return
+    private suspend fun runCheck(approved: String? = null) {
+        if (approved != null) running.lock() else if (!running.tryLock()) return
         try {
-            lastAttempt = System.currentTimeMillis()
+            if (approved == null) lastAttempt = System.currentTimeMillis() // one approved playlist doesn't push back everyone's 12 h check
             ensureLoaded()
             if (ForkOffline.switched.value) {
                 DesktopTrackLog.log("playlist sync: offline mode, not checked")
                 return
             }
             var whole = true
-            for (id in records.value.keys.toList()) {
+            for (id in approved?.let { listOf(it) } ?: records.value.keys.toList()) {
                 if (!enabled.value) return
                 val record = records.value[id] ?: continue
                 if (filesAllGone(record)) {
@@ -295,10 +320,10 @@ internal object ForkPlaylistSync {
                     whole = false
                     DesktopTrackLog.log("playlist sync: '${record.title}' was not read to its end; the rest waits for the next check")
                 }
-                update(record, listing, approved)
+                update(record, listing, approved = id == approved)
                 delay(PAUSE_MILLIS)
             }
-            if (whole) persistence.saveString(KEY_LAST_CHECK, System.currentTimeMillis().toString())
+            if (whole && approved == null) persistence.saveString(KEY_LAST_CHECK, System.currentTimeMillis().toString())
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -384,24 +409,44 @@ internal object ForkPlaylistSync {
         }
         try {
             DesktopDownloadQueue.enqueueAll(ours)
-            DesktopDownloadQueue.active.first { active ->
-                ours.all { song ->
-                    val state = active[song.videoId]?.state
-                    state == null || state is DesktopDownloadState.Failed
+            val settled = withTimeoutOrNull(DOWNLOAD_WAIT_MILLIS) {
+                DesktopDownloadQueue.active.first { active ->
+                    ours.all { song ->
+                        val state = active[song.videoId]?.state
+                        state == null || state is DesktopDownloadState.Failed
+                    }
                 }
             }
+            if (settled == null) DesktopTrackLog.log("playlist sync: downloads still unsettled after ${DOWNLOAD_WAIT_MILLIS / 3_600_000} h; those wait for the next check")
             // The last finished emission can land a moment after its row leaves [active].
             delay(500)
         } finally {
             watcher.cancel()
         }
         val active = DesktopDownloadQueue.active.value
-        val handled = alreadyGoing + ours.filter { active[it.videoId]?.state !is DesktopDownloadState.Failed }.map { it.videoId }
+        // Settled and not failed only: a track still queued or running (the wait ran out) stays new.
+        val handled = alreadyGoing + ours.filter { active[it.videoId] == null }.map { it.videoId }
         return Batch(handled, savedIds.size)
     }
 
-    private fun filesAllGone(record: Record): Boolean =
-        record.files.isNotEmpty() && record.files.values.none { File(it).isFile }
+    /**
+     * Every file noted for [record] is gone, and none of its tracks has a download on disk in the
+     * window's list either (a record made before [remember] took those in, or a track saved for
+     * another reason, still holds the playlist). Without the window's list, its ids stand in.
+     */
+    private fun filesAllGone(record: Record): Boolean {
+        if (record.files.isEmpty() || record.files.values.any { File(it).isFile }) return false
+        val ids = record.videoIds.toHashSet()
+        val window = ForkCollectionActions.window ?: return DesktopAppUiHost.downloaded.value.none { it in ids }
+        // A download with no path is taken as still there: nothing is unfollowed on a guess.
+        return window.downloads().none { it.videoId in ids && it.localPath?.let { path -> File(path).isFile } != false }
+    }
+
+    /** The window's downloads with a file on disk, by track (empty before the window has lent its list). */
+    private fun downloadedFiles(): Map<String, String> =
+        ForkCollectionActions.window?.downloads().orEmpty()
+            .mapNotNull { song -> song.localPath?.takeIf { File(it).isFile }?.let { song.videoId to it } }
+            .toMap()
 
     // ---- Reading a playlist -------------------------------------------------
 
@@ -440,7 +485,7 @@ internal object ForkPlaylistSync {
 
     /**
      * The phone's "New songs in X: N · Tap to download" notification, as a card over the window
-     * until it is answered. "Download" runs a whole check with the yes, as the phone's tap does.
+     * until it is answered. "Download" checks that playlist with the yes (only its own ask goes).
      */
     @Composable
     fun AskHost() {
@@ -461,8 +506,8 @@ internal object ForkPlaylistSync {
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 TextButton(onClick = {
-                    _asks.value = emptyMap()
-                    scope.launch { runCheck(approved = true) }
+                    _asks.update { it - id }
+                    scope.launch { runCheck(approved = id) }
                 }) { Text(DesktopStrings["download", "Download"], color = DesktopAccent) }
                 TextButton(onClick = { _asks.update { it - id } }) {
                     Text(DesktopStrings["not_now", "Not now"], color = DesktopSecondary)

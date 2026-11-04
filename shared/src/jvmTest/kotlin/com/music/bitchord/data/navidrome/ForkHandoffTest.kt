@@ -100,6 +100,71 @@ class ForkHandoffTest {
     }
 
     @Test
+    fun `downloaded and cached YouTube songs travel as YouTube songs`() {
+        val songs = listOf(
+            Song("abcdefghij0", "PC download", "A", null, localUri = "file:///C:/Users/me/Music/BitChord/a.m4a", localPath = "C:\\Users\\me\\Music\\BitChord\\a.m4a"),
+            Song("abcdefghij1", "Phone download", "A", null, localUri = "content://media/external/audio/media/42"),
+            Song("abcdefghij2", "PC cached", "A", null, localPath = "C:\\Users\\me\\AppData\\cache\\abcdefghij2.webm"),
+        )
+        songs.forEach { song ->
+            val item = ForkHandoff.itemFor(song, { null })
+            assertNotNull(item, song.title)
+            assertEquals(ForkHandoff.Item.Kind.YOUTUBE, item.kind)
+            assertEquals(song.videoId, item.id)
+        }
+        // A queue of downloads only is a note, and a downloaded playing song stays the playing one, where it was.
+        val (items, index, position) = ForkHandoff.snapshot(songs, 1, 90_000L) { ForkHandoff.itemFor(it, { null }) }!!
+        assertEquals(listOf("abcdefghij0", "abcdefghij1", "abcdefghij2"), items.map { it.id })
+        assertEquals(1, index)
+        assertEquals(90_000L, position)
+        // A local file that isn't a YouTube song is still left out.
+        assertNull(ForkHandoff.itemFor(Song("content://media/external/audio/media/7", "Phone file", "A", null, localUri = "content://media/external/audio/media/7"), { null }))
+    }
+
+    @Test
+    fun `a note goes in the address only after the server refused the body`() = runBlocking {
+        val big = "x".repeat(20_000)
+        val small = "y".repeat(3_000)
+        val encode = { budget: Int -> if (budget >= ForkHandoff.DEFAULT_BUDGET) big else small }
+        val sent = mutableListOf<String>()
+
+        // The body taken: one POST, no address.
+        assertEquals(ForkHandoffStore.Way.POST, ForkHandoffStore.send(encode, false, { sent += "post:${it.length}" }, { sent += "get"; true }))
+        assertEquals(listOf("post:20000"), sent)
+
+        // Refused by the server: the note is encoded again at the address budget and sent once, in the same write.
+        sent.clear()
+        assertEquals(
+            ForkHandoffStore.Way.GET,
+            ForkHandoffStore.send(encode, false, { sent += "post:${it.length}"; throw NavidromeClient.Refused("required parameter 'playlistId' is missing") }, { sent += "get:${it.length}"; true }),
+        )
+        assertEquals(listOf("post:20000", "get:3000"), sent)
+
+        // No answer at all: thrown as it is, the address never tried (so nothing is marked address-only).
+        sent.clear()
+        val dropped = runCatching {
+            ForkHandoffStore.send(encode, false, { sent += "post"; throw java.io.IOException("connection reset") }, { sent += "get"; true })
+        }.exceptionOrNull()
+        assertTrue(dropped is java.io.IOException && dropped !is NavidromeClient.Refused)
+        assertEquals(listOf("post"), sent)
+
+        // Refused, and the address too long even for the short note: the refusal is thrown.
+        val refusedTwice = runCatching {
+            ForkHandoffStore.send(encode, false, { throw NavidromeClient.Refused("no") }, { false })
+        }.exceptionOrNull()
+        assertTrue(refusedTwice is NavidromeClient.Refused)
+
+        // Already address-only: encoded at the small budget from the start, never re-encoded.
+        sent.clear()
+        assertEquals(ForkHandoffStore.Way.POST, ForkHandoffStore.send(encode, true, { sent += "post:${it.length}" }, { true }))
+        assertEquals(listOf("post:3000"), sent)
+
+        // Doesn't fit at all: nothing sent.
+        assertNull(ForkHandoffStore.send({ null }, false, { sent += "never" }, { sent += "never"; true }))
+        assertFalse("never" in sent)
+    }
+
+    @Test
     fun `the window keeps fifty songs each side`() {
         val songs = (0 until 300).map { Song("abcdefg" + it.toString().padStart(4, '0'), "S$it", "A", null) }
         val (items, index, _) = ForkHandoff.snapshot(songs, 200, 0L) { ForkHandoff.itemFor(it, { null }) }!!
@@ -230,6 +295,28 @@ class ForkHandoffTest {
         } finally {
             server.shutdown()
         }
+    }
+
+    @Test
+    fun `a body refused by HTTP status is a refusal, a dropped connection is not`() = runBlocking {
+        val server = MockWebServer()
+        var address = ""
+        try {
+            server.start()
+            address = server.url("/").toString()
+            server.enqueue(MockResponse().setResponseCode(405))
+            server.enqueue(MockResponse().setResponseCode(503))
+            val client = NavidromeClient(server.url("/").toString(), "me", "not-a-real-password", "abc")
+            assertTrue(runCatching { client.postPlaylistComment("pl1", "{}") }.exceptionOrNull() is NavidromeClient.Refused)
+            val unavailable = runCatching { client.postPlaylistComment("pl1", "{}") }.exceptionOrNull()
+            assertTrue(unavailable is java.io.IOException && unavailable !is NavidromeClient.Refused, unavailable.toString())
+        } finally {
+            server.shutdown()
+        }
+        // Nothing listening any more: the request gets no answer at all.
+        val gone = NavidromeClient(address, "me", "not-a-real-password", "abc")
+        val dropped = runCatching { gone.postPlaylistComment("pl1", "{}") }.exceptionOrNull()
+        assertTrue(dropped is java.io.IOException && dropped !is NavidromeClient.Refused, dropped.toString())
     }
 
     @Test

@@ -1541,7 +1541,7 @@ fun SettingsScreen(
             }
         }
 
-        if (shows(SettingsCategory.FORK)) SearchableSettingsGroup(search, header = stringResource(R.string.fork_settings)) { forkSettingsRows() } // fork
+        if (shows(SettingsCategory.FORK) && !searching) SearchableSettingsGroup(search, header = stringResource(R.string.fork_settings)) { forkSettingsRows() } // fork: browsed only, its rows are searched where they live
 
         if (shows(SettingsCategory.ADVANCED)) SearchableSettingsGroup(search, header = stringResource(R.string.advanced_options)) {
             val smartAlignmentTitle = stringResource(R.string.smart_version_alignment)

@@ -193,7 +193,7 @@ internal object ForkHandoffDesktop {
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(end = 8.dp),
                 )
-                TextButton(onClick = { if (!restoreOffered()) ForkNotice.show("Could not continue that queue here") }) { Text("Continue") }
+                TextButton(onClick = { restoreOffered() }) { Text("Continue") }
                 TextButton(onClick = ::dismiss) { Text("Not now", color = DesktopSecondary) }
             }
         }
@@ -334,20 +334,25 @@ internal object ForkHandoffDesktop {
         _offer.value = null
     }
 
-    private fun restoreOffered(): Boolean {
-        val note = _offer.value ?: return false
+    /** The banner's Continue: the restore runs off the UI thread ([restore] reads the source list on IO). */
+    private fun restoreOffered() {
+        val note = _offer.value ?: return
         _offer.value = null
-        return restore(note)
+        scope.launch {
+            if (!restore(note)) withContext(Dispatchers.Main) { ForkNotice.show("Could not continue that queue here") }
+        }
     }
 
     /** The menu row: the server's note from another device, whatever its age. */
     fun restoreLatest() {
         scope.launch {
             val note = runCatching { ForkHandoffStore.read() }.getOrNull()?.takeIf { it.device.id != deviceId && it.items.isNotEmpty() }
-            withContext(Dispatchers.Main) {
-                if (note == null) ForkNotice.show("Nothing to continue from another device")
-                else if (!restore(note)) ForkNotice.show("Could not continue that queue here")
+            val message = when {
+                note == null -> "Nothing to continue from another device"
+                !restore(note) -> "Could not continue that queue here"
+                else -> null
             }
+            message?.let { withContext(Dispatchers.Main) { ForkNotice.show(it) } }
         }
     }
 
@@ -355,9 +360,16 @@ internal object ForkHandoffDesktop {
      * [note]'s queue through the saved-queue restore ([ForkQueues.restore]): the songs (addon rows
      * this PC has no addon for dropped), the playing one and its second, each row carrying the
      * note's origin. The phone's pins and playing copy are taken up first.
+     *
+     * The source list is read on IO (a DPAPI unprotect and a JSON parse, as for the saver's
+     * snapshot), once, not per row; only the rest runs on the UI thread.
      */
-    fun restore(note: ForkHandoff.Note): Boolean {
-        val all = configs() // once, not per row
+    private suspend fun restore(note: ForkHandoff.Note): Boolean {
+        val all = withContext(Dispatchers.IO) { configs() }
+        return withContext(Dispatchers.Main) { restoreWith(note, all) }
+    }
+
+    private fun restoreWith(note: ForkHandoff.Note, all: List<DesktopSourceConfig>): Boolean {
         val restored = ForkHandoff.songsFor(note) { item -> item.hint?.let { localKey(it.source, item.id, all)?.second } } ?: return false
         note.items.forEach { item ->
             if (item.kind != ForkHandoff.Item.Kind.YOUTUBE) return@forEach

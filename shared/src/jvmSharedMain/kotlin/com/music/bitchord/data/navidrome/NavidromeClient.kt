@@ -230,17 +230,37 @@ class NavidromeClient(
      * it goes as a form body ([post]: OpenSubsonic's `formPost`, the login staying in the address);
      * a server that doesn't read the body answers with an error, and then the comment is sent in
      * the address once, when that is short enough ([GET_LIMIT]). Says which way worked.
+     *
+     * Only the server's refusal ([Refused]) leads to the address: a network failure of the POST is
+     * thrown as it is, so one dropped connection doesn't make a caller think the server reads the
+     * address only.
      */
     suspend fun setPlaylistComment(id: String, comment: String, allowGet: Boolean = true): String {
-        val params = arrayOf("playlistId" to id, "comment" to comment, "public" to "false")
-        val posted = runCatching { post("updatePlaylist", *params) }
-        if (posted.isSuccess) return "post"
-        posted.exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it }
-        val url = endpoint("updatePlaylist", *params).toString()
-        if (!allowGet || url.length > GET_LIMIT) throw posted.exceptionOrNull() ?: IOException("update refused")
-        call("updatePlaylist", *params)
+        val refused = try {
+            postPlaylistComment(id, comment)
+            return "post"
+        } catch (e: Refused) {
+            e
+        }
+        if (!allowGet || !getPlaylistComment(id, comment)) throw refused
         return "get"
     }
+
+    /** `updatePlaylist` with the comment in a form body. Throws [Refused] when the server answered no, a plain [IOException] when it couldn't be reached. */
+    suspend fun postPlaylistComment(id: String, comment: String) {
+        post("updatePlaylist", "playlistId" to id, "comment" to comment, "public" to "false")
+    }
+
+    /** `updatePlaylist` with the comment in the address; false (nothing sent) when the address would pass [GET_LIMIT]. */
+    suspend fun getPlaylistComment(id: String, comment: String): Boolean {
+        val params = arrayOf("playlistId" to id, "comment" to comment, "public" to "false")
+        if (endpoint("updatePlaylist", *params).toString().length > GET_LIMIT) return false
+        call("updatePlaylist", *params)
+        return true
+    }
+
+    /** The server answered and said no (a 4xx, a Subsonic error, not a Subsonic answer), as opposed to a request that never got an answer or a 5xx. */
+    class Refused(message: String) : IOException(message)
 
     suspend fun deletePlaylist(id: String) {
         call("deletePlaylist", "id" to id)
@@ -252,10 +272,13 @@ class NavidromeClient(
             val form = okhttp3.FormBody.Builder().apply { params.forEach { (k, v) -> add(k, v) } }.build()
             val request = Request.Builder().url(endpoint(method)).post(form).build()
             Http.client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
-                val root = json.parseToJsonElement(response.body.string()).jsonObject["subsonic-response"]?.jsonObject
-                    ?: throw IOException("Not a Subsonic server")
-                if (root.string("status") != "ok") throw IOException(root["error"]?.jsonObject?.string("message") ?: "Server refused the request")
+                // A 5xx (a proxy whose server is restarting, an overloaded server) says nothing about
+                // the body, so it is a plain failure; a 4xx (405, 413 Payload Too Large) is a refusal.
+                if (!response.isSuccessful) throw if (response.code >= 500) IOException("HTTP ${response.code}") else Refused("HTTP ${response.code}")
+                val body = response.body.string() // a read failure here stays a plain IOException
+                val root = runCatching { json.parseToJsonElement(body).jsonObject["subsonic-response"]?.jsonObject }.getOrNull()
+                    ?: throw Refused("Not a Subsonic server")
+                if (root.string("status") != "ok") throw Refused(root["error"]?.jsonObject?.string("message") ?: "Server refused the request")
                 root
             }
         }

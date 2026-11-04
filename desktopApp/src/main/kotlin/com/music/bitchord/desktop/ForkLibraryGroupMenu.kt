@@ -116,8 +116,7 @@ private fun ForkGroupMenuRows(menu: ForkGroupMenu, group: Pair<String, List<Song
             ForkDeleteDownloadRow(title) {
                 onDismiss()
                 // As a page's delete: files a followed playlist also names stay (the phone's tracksOnlyIn).
-                forkGroupScope.launch { ForkCollectionActions.deleteDownloads("", songs.map { it.videoId }.toSet()) }
-                DesktopTrackLog.log("delete download: the group '$title' (${songs.size} rows)")
+                forkGroupScope.launch { ForkCollectionActions.deleteDownloads("", songs.map { it.videoId }.toSet(), "${if (menu.type == BrowseType.ARTIST) "the artist" else "the album"} '$title' (${songs.size} rows)") }
             }
         }
     }

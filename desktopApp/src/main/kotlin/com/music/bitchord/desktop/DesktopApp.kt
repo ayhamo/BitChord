@@ -1233,6 +1233,8 @@ fun BitChordDesktopApp() {
         }
     }
 
+    fun forkRemoveDownloads(songs: List<Song>) = forkRemoveDownloadsBatch(scope, songs, { downloads }, { downloads = it }, persistence::saveDownloads) // fork: "Delete download", one save off the UI thread
+
     /** Everything on a page, in the order it is listed. */
     fun downloadAll(songs: List<Song>) {
         val have = downloads.map(Song::videoId).toSet()
@@ -1529,7 +1531,7 @@ fun BitChordDesktopApp() {
             DesktopCollection(
                 browseId = playlist.id,
                 title = playlist.title,
-                subtitle = "Playlist • ${playlist.songs.size} songs",
+                subtitle = "Playlist • ${forkSongCount(playlist.songs.size)}", // fork: "1 song"
                 thumbnailUrl = playlist.songs.firstOrNull()?.thumbnailUrl,
                 type = BrowseType.PLAYLIST,
                 songs = playlist.songs,
@@ -1550,7 +1552,7 @@ fun BitChordDesktopApp() {
                 editPlaylistShelf { items ->
                     val card = ShelfItem(
                         title = title,
-                        subtitle = "${songs.size} songs",
+                        subtitle = forkSongCount(songs.size), // fork: "1 song"
                         thumbnailUrl = songs.firstOrNull()?.thumbnailUrl,
                         videoId = null,
                         browseId = "VL$playlistId",
@@ -2251,6 +2253,7 @@ fun BitChordDesktopApp() {
         scope = scope,
         downloads = { downloads }, // fork: for "Delete download"
         removeDownload = ::removeDownload, // fork
+        removeDownloads = ::forkRemoveDownloads, // fork
     )
 
     /** What the phone records for a search hit: the thing picked, not the words typed to find it. */
@@ -2468,7 +2471,7 @@ fun BitChordDesktopApp() {
         playlists.map { playlist ->
             ShelfItem(
                 title = playlist.title,
-                subtitle = "Playlist • ${playlist.songs.size} songs",
+                subtitle = "Playlist • ${forkSongCount(playlist.songs.size)}", // fork: "1 song"
                 thumbnailUrl = playlist.songs.firstOrNull()?.thumbnailUrl,
                 videoId = null,
                 browseId = LOCAL_PLAYLIST_PREFIX + playlist.id,
@@ -2911,13 +2914,15 @@ fun BitChordDesktopApp() {
      * The account's library, re-read whenever the session behind it changes — signing in, switching
      * channel, signing out.
      */
+    ForkLibraryFocusRefresh(youtubeSignedIn) { sessionRevision++ } // fork: refresh when the window is back in focus (ForkLibraryRefresh)
     LaunchedEffect(activeAccountId, activeProfileId, sessionRevision) {
         youtubeSignedIn = DesktopYouTubeAuth.isSignedIn
         if (!DesktopYouTubeAuth.isSignedIn) {
             libraryState = UiState.Success(LibraryPage(emptyList(), emptyList(), emptyList()))
             return@LaunchedEffect
         }
-        libraryState = UiState.Loading
+        val forkQuiet = ForkLibraryRefresh.started() // fork: the focus refresh counts from here (ForkLibraryRefresh)
+        if (!forkQuiet || libraryState !is UiState.Success) libraryState = UiState.Loading // fork: a background refresh keeps the page's rows; was unconditional
         DesktopSearchClient.library().fold(
             onSuccess = { page ->
                 // The continuation is a job to run, not page state — it is consumed below.
@@ -2952,7 +2957,7 @@ fun BitChordDesktopApp() {
                     }
                 }
             },
-            onFailure = { libraryState = UiState.Error(it.message ?: "Could not load your library") },
+            onFailure = { if (!forkQuiet) libraryState = UiState.Error(it.message ?: "Could not load your library") }, // fork: a failed background refresh keeps what is shown
         )
         // A session refused mid-flight is dropped by the request itself, so the answer to "are we
         // signed in" is only settled once the call is over.
@@ -3223,7 +3228,7 @@ fun BitChordDesktopApp() {
                 // Only Replay dresses itself unless ambient backdrop is on; everywhere else the chrome sits on the plain surface.
                 backdrop = { transparentBase ->
                     val ambientArtworkUrl = replaySummary.songs.firstOrNull()?.song?.thumbnailUrl
-                        .takeIf { overlays.replay }
+                        .takeIf { overlays.replay && overlays.settingsPage == null } // fork: Settings over Replay keeps its own background
                         ?: selectedSong?.thumbnailUrl.takeIf { ambientBackdrop }
                     DesktopPageBackdrop(
                         artworkUrl = ambientArtworkUrl,
@@ -3355,7 +3360,7 @@ fun BitChordDesktopApp() {
                         settingsOpen = overlays.settingsPage != null,
                         accountPlaylists = sidebarAccountPlaylists,
                         localPlaylists = playlists,
-                        openedCollectionId = openedCollection?.browseId,
+                        openedCollectionId = openedCollection?.browseId.takeIf { overlays.settingsPage == null && !overlays.replay && openedArtist == null }, // fork: only while the playlist is the page shown
                         query = query,
                         onQueryChange = { text ->
                             editQuery(text)
@@ -3801,7 +3806,7 @@ fun BitChordDesktopApp() {
                             onDismiss = { overlays.pipeline = false },
                         )
                     }
-                    ForkReplayOverlay(replaySummary, replayHolder, visible = overlays.replay) // fork: the Replay's stories and share sheet, over the window
+                    ForkReplayOverlay(replaySummary, replayHolder, visible = overlays.replay && overlays.settingsPage == null) // fork: the Replay's stories and share sheet, over the window (not over Settings)
                 },
             ) { contentPadding ->
                 // Desktop pages start at the same top edge as Library. Only preserve space for the
@@ -3842,7 +3847,8 @@ fun BitChordDesktopApp() {
                         // Settings and its pages stand in for the page, held to the width the
                         // Settings card had. Its prompts are still cards, over the page.
                         overlays.settingsPage != null -> Box(
-                            Modifier.fillMaxSize().padding(bottom = contentPadding.calculateBottomPadding()),
+                            Modifier.fillMaxSize().padding(bottom = contentPadding.calculateBottomPadding())
+                                .forkWheelAnywhere(), // fork: the wheel over the margins scrolls the page too
                         ) {
                             CompositionLocalProvider(LocalDesktopPanelIsPage provides true) {
                             when (overlays.settingsPage!!) {
@@ -4365,6 +4371,7 @@ fun BitChordDesktopApp() {
                             onImportSpotifyPlaylist = { spotifyImportOpen = true },
                             onShowAll = { shelf -> libraryShowAll = shelf },
                             replay = {
+                                if (youtubeSignedIn) ForkLibraryRefreshRow { sessionRevision++ } // fork: the Library's Refresh button
                                 // The phone's wallet of Replay cards, or nothing until there is
                                 // listening to deal them from.
                                 val cards = remember(replaySummary) { replaySummary.heroCards() }
@@ -4823,6 +4830,7 @@ private fun DesktopSidebar(
     val inlineCaption = DesktopPlatform.drawsOwnWindowFrame && !titleBarEnabled
     // Rows the listener has tucked away; keyed the same way the sidebar lists them.
     val hiddenSidebar by DesktopSidebarVisibility.hidden.collectAsState()
+    val destination = forkSidebarDestination(destination, settingsOpen, openedCollectionId, accountPlaylists, localPlaylists, hiddenSidebar) // fork: one row lit, the page shown
     Box(
         Modifier
             .width(220.dp)
@@ -5949,7 +5957,7 @@ private fun DesktopLibraryGroupingContent(
                     DesktopArtwork(forkPicture?.invoke(group.key) ?: group.value.firstOrNull()?.thumbnailUrl, Modifier.fillMaxWidth().height(150.dp).clip(CircleShape)) // fork: + forkPicture
                     Spacer(Modifier.height(7.dp))
                     Text(group.key, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
-                    Text("${group.value.size} songs", color = DesktopSecondary, style = MaterialTheme.typography.bodySmall)
+                    Text(forkSongCount(group.value.size), color = DesktopSecondary, style = MaterialTheme.typography.bodySmall) // fork: "1 song"
                 }
             }
         } } // fork
@@ -5970,7 +5978,7 @@ private fun DesktopLibraryGroupingContent(
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(group.key, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
-                        Text("${group.value.size} songs", color = DesktopSecondary, style = MaterialTheme.typography.bodySmall)
+                        Text(forkSongCount(group.value.size), color = DesktopSecondary, style = MaterialTheme.typography.bodySmall) // fork: "1 song"
                     }
                     forkOpenMenu?.let { open -> ForkGroupMoreButton { open(group.key to group.value) } } // fork: the group menu's ⋯
                     Icon(BitChordIcons.Play, DesktopStrings["open", "Open"], tint = DesktopSecondary)
@@ -7181,7 +7189,7 @@ private fun DesktopCollectionPage(
     val metadata = buildList {
         add(typeLabel.uppercase())
         subtitleParts.firstOrNull { it.matches(Regex("\\d{4}")) }?.let(::add)
-        if (songs.isNotEmpty()) add("${songs.size} songs")
+        if (songs.isNotEmpty()) add(forkSongCount(songs.size)) // fork: "1 song"
         val seconds = songs.sumOf { it.durationText.durationMillis() / 1_000L }
         if (seconds > 0) add(formatCollectionDuration(seconds))
     }.joinToString(" • ").uppercase()
@@ -7291,7 +7299,7 @@ private fun DesktopCollectionPage(
                                 DesktopCircleButton(Icons.Rounded.MoreHoriz, DesktopStrings["more", "More"], onClick = { moreOpen = true })
                                 DropdownMenu(expanded = moreOpen, onDismissRequest = { moreOpen = false }) {
                                     ForkCollectionQueueItems(collection, songs) { moreOpen = false } // fork: the phone's "Play next" / "Add to queue" for the whole release
-                                    DropdownMenuItem(
+                                    if (!forkAllDownloaded(collection, downloadedIds)) DropdownMenuItem( // fork: all downloaded, ForkDeleteDownloadItem shows "Downloaded" instead
                                         text = { Text(DesktopStrings["download_all", "Download all"]) },
                                         leadingIcon = { Icon(BitChordIcons.Download, null) },
                                         onClick = {
@@ -7331,6 +7339,7 @@ private fun DesktopCollectionPage(
                                             },
                                         )
                                     }
+                                    if (onDelete != null) DesktopMenuDivider() // fork: the playlist's Delete kept apart from the rows above it (Delete download)
                                     onDelete?.let { delete ->
                                         DropdownMenuItem(
                                             text = { Text(DesktopStrings["delete", "Delete"]) },

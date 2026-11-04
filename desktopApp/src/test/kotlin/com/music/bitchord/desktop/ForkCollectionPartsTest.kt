@@ -95,4 +95,39 @@ class ForkCollectionPartsTest {
         assertEquals("/m/a.flac", doomed.single().localPath)
         assertEquals(emptyList(), forkDownloadsToDelete(setOf("x"), downloads, emptySet(), emptySet()))
     }
+
+    @Test
+    fun deleteDownloadTakesARecordsFilesTheDownloadsListNoLongerHolds() {
+        val files = mapOf("a" to "/m/a.flac", "b" to "/m/b.flac", "c" to "/m/c.flac", "d" to "/m/d.flac", "e" to "/m/e.flac")
+        val orphans = forkOrphanFilesToDelete(
+            files,
+            trackIds = setOf("a", "b", "c", "d"),
+            listed = setOf("a"), // has a download record: removeDownloads deletes it
+            keptIds = setOf("b"),
+            keptFiles = setOf("/m/c.flac"),
+        )
+        assertEquals(listOf("/m/d.flac"), orphans) // "e" is not among the release's tracks
+    }
+
+    @Test
+    fun aOneSongCountIsSingular() {
+        assertEquals("1 song", forkSongCount(1))
+        assertEquals("0 songs", forkSongCount(0))
+        assertEquals("12 songs", forkSongCount(12))
+    }
+
+    @Test
+    fun oneSidebarRowIsLit() {
+        val local = listOf(DesktopPlaylist(id = "p1", title = "Mine"))
+        val account = listOf(ShelfItem(title = "Theirs", subtitle = "", thumbnailUrl = null, videoId = null, browseId = "VLx"))
+        // Settings over a page: only Settings.
+        assertNull(forkSidebarDestination("NAVIDROME", settingsOpen = true, openedCollectionId = null, account, local, emptyMap()))
+        // A sidebar playlist opened from Downloads: only the playlist.
+        assertNull(forkSidebarDestination("DOWNLOADS", false, "p1", account, local, emptyMap()))
+        assertNull(forkSidebarDestination("DOWNLOADS", false, "VLx", account, local, emptyMap()))
+        // An album (no row of its own), or a hidden playlist row: the page it was opened from.
+        assertEquals("DOWNLOADS", forkSidebarDestination("DOWNLOADS", false, "MPREb_1", account, local, emptyMap()))
+        assertEquals("DOWNLOADS", forkSidebarDestination("DOWNLOADS", false, "p1", account, local, mapOf("local:p1" to "Mine")))
+        assertEquals("LIBRARY", forkSidebarDestination("LIBRARY", false, null, account, local, emptyMap()))
+    }
 }
