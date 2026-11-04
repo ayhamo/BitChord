@@ -45,7 +45,9 @@ jobs:
           set -euo pipefail
           listing=$(unzip -l "out/BitChord Portable.zip")
           for entry in "BitChord.exe" "BitChord.args" "BitChord (log).bat" "runtime/bin/javaw.exe" "lib/bitchord-app.jar"; do
-            echo "$listing" | grep -qF "BitChord Portable/$entry" || { echo "missing: BitChord Portable/$entry"; exit 1; }
+            # A here-string, not echo | grep -q: grep stops at the first match, and under pipefail
+            # echo's broken pipe failed the step (2026-11-04).
+            grep -qF "BitChord Portable/$entry" <<< "$listing" || { echo "missing: BitChord Portable/$entry"; exit 1; }
           done
 
       - name: attest build provenance
