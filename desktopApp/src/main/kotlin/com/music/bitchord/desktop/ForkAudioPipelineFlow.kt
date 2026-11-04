@@ -7,6 +7,8 @@ import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -147,7 +149,8 @@ internal fun ForkAudioPipelineDialog(
                 style = MaterialTheme.typography.bodySmall,
             )
         }
-        Box(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+        // Scrolls under the fixed title when the window is shorter than the five stages (it was cut off).
+        Box(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).fillMaxWidth().padding(bottom = 8.dp)) {
             // On its own layer, each frame re-records just the bus and nodes, not the rows.
             Spacer(
                 Modifier
@@ -158,9 +161,10 @@ internal fun ForkAudioPipelineDialog(
             Column(Modifier.fillMaxWidth().onGloballyPositioned { columnCoordinates = it }) {
                 // The engine's own copy, so Source and Decoder cannot disagree while an upgrade lands.
                 val source = pipeline.sourceFormat ?: format
+                val playingSong = ForkDebugBridge.engine?.state?.value?.song
                 ForkPipelineSection(0, Icons.AutoMirrored.Rounded.InsertDriveFile, DesktopStrings["pipeline_track_info", "Track info"], columnCoordinates, stageActivation, onStageIconPositioned) {
                     // A source addon's name; a Navidrome song has none, so the server is named instead.
-                    val songId = ForkDebugBridge.engine?.state?.value?.song?.videoId
+                    val songId = playingSong?.videoId
                     ForkPipelineRow(
                         DesktopStrings["pipeline_source", "Source"],
                         sourceName ?: "Navidrome".takeIf { songId != null && com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(songId) },
@@ -173,6 +177,9 @@ internal fun ForkAudioPipelineDialog(
                     )
                     ForkPipelineRow(DesktopStrings["pipeline_sample_rate", "Sample rate"], source?.sampleRateHz?.let(::forkRateText))
                     ForkPipelineRow(DesktopStrings["pipeline_bitrate", "Bitrate"], source?.kbps?.let { "$it kbps" })
+                    // The phone's "PCM data rate": what the lossless file decodes to (rate x depth x channels).
+                    val pcmRate = source?.takeIf { it.isLossless }?.let { f -> listOf(f.sampleRateHz, f.bitDepth, f.channels).takeIf { l -> l.all { (it ?: 0) > 0 } }?.let { (r, b, c) -> r!!.toLong() * b!! * c!! / 1000 } }
+                    if (pcmRate != null) ForkPipelineRow(DesktopStrings["pipeline_pcm_data_rate", "PCM data rate"], "$pcmRate kbps")
                     ForkPipelineRow(DesktopStrings["pipeline_channels", "Channels"], forkChannelLabel(source?.channels))
                 }
 
@@ -209,7 +216,17 @@ internal fun ForkAudioPipelineDialog(
                     // The order the samples meet them in: the level correction runs after the equaliser
                     // on the PC (DesktopAudioEngine, ForkLoudnessStage), unlike the phone's DspChain.
                     ForkPipelineRow(DesktopStrings["equalizer", "Equalizer"], if (pipeline.equalizerEnabled) on else off)
+                    if (pipeline.equalizerEnabled) {
+                        val preset by DesktopEqualizerSettings.preset.collectAsState()
+                        ForkPipelineRow(DesktopStrings["pipeline_eq_preset", "EQ preset"], preset.name.lowercase().split('_').joinToString(" ") { it.replaceFirstChar(Char::uppercase) })
+                    }
                     ForkPipelineRow(DesktopStrings[ForkLoudness.TITLE_KEY, ForkLoudness.TITLE], if (loudnessOn) on else off)
+                    // The phone's two loudness rows: what is applied to this song, and from which figure.
+                    val loudness = remember(loudnessOn, playingSong?.videoId) { playingSong?.let(ForkLoudness::describe) }
+                    if (loudness != null) {
+                        ForkPipelineRow(DesktopStrings["pipeline_loudness_gain", "Loudness gain"], loudness.first?.let { String.format(java.util.Locale.ROOT, "%+.1f dB", it) } ?: "0 dB")
+                        ForkPipelineRow(DesktopStrings["pipeline_loudness_measured", "Measured from"], loudness.second)
+                    }
                     ForkPipelineRow(DesktopStrings["skip_silence", "Skip silence"], if (pipeline.skipSilence) on else off)
                 }
 

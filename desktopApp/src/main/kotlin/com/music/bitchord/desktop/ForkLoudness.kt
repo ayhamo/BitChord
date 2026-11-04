@@ -68,6 +68,25 @@ internal object ForkLoudness {
     }
 
     /**
+     * For the pipeline panel (the phone's "Loudness gain" / "measured" rows): the gain applied to
+     * [song] in dB and which figure it came from, or null when off. A file's own ReplayGain tag is
+     * read from the stream, which the panel doesn't have, so a song levelled only by its tag reads
+     * "no figure" here though it is levelled.
+     */
+    fun describe(song: Song): Pair<Double?, String>? {
+        if (!_enabled.value) return null
+        val server = NavidromeReplayGain.forVideoId(song.videoId)?.takeIf { it.isFinite() }
+        val youtube = runCatching { StreamResolver.loudnessDbFor(song.videoId) }.getOrNull()?.takeIf { it.isFinite() }
+        val db = ForkLoudnessMath.gainDb(server, youtube, null)
+        val from = when {
+            server != null -> "Server ReplayGain"
+            youtube != null -> "YouTube loudness"
+            else -> "No figure"
+        }
+        return db to from
+    }
+
+    /**
      * The incoming deck's level against the outgoing one's, for the loop mix: its decks go out through the
      * outgoing song's stage, so the incoming side carries the difference (the phone's `inLevel`,
      * `CrossfadeController.armLoopMix`).

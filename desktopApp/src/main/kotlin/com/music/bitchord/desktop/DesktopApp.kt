@@ -7112,7 +7112,8 @@ private fun DesktopCollectionPage(
     contentPadding: PaddingValues,
     forkOpenArtist: (String, String) -> Unit = { _, _ -> }, // fork: a Navidrome artist's "Similar artists"
 ) {
-    val songs = collection.songs
+    val songs = rememberForkSortedSongs(collection.browseId, collection.songs, collection.continuation == null, loadingMore, onLoadMore) // fork: the phone's song sort (ForkCollectionSort); was collection.songs
+    val forkNumbers = rememberForkRowNumbers(collection.songs) // fork: track numbers stay the page's own under a sort
     val forkSimilar = rememberForkSimilarArtists(collection.browseId) // fork
     // The phone's "search this list": a filter over the rows already loaded.
     var searching by remember(collection.browseId) { mutableStateOf(false) }
@@ -7247,6 +7248,7 @@ private fun DesktopCollectionPage(
                                     if (!searching) listQuery = ""
                                 },
                             )
+                            ForkCollectionSortButton(collection.browseId) // fork: the phone's sort menu
                             ForkOfflineButton(collection.browseId, collection.title, collection.subtitle.orEmpty(), collection.thumbnailUrl, collection.songs) // fork
                             ForkArtistRadioButton(collection.browseId) { station -> onPlaySongs(station, 0) } // fork: a Navidrome artist's "Start radio"
                             Box {
@@ -7334,7 +7336,7 @@ private fun DesktopCollectionPage(
                     onAddToPlaylist = onAddToPlaylist,
                     downloaded = song.videoId in downloadedIds,
                     downloadInProgress = song.videoId in downloadInProgress,
-                    number = index + 1,
+                    number = forkNumbers[song] ?: (index + 1), // fork: was index + 1 (ForkCollectionSort)
                     onRemove = onRemoveFromPlaylist?.takeIf { song.setVideoId != null },
                 )
             }
