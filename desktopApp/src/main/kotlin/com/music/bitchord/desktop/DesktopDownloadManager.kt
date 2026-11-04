@@ -27,7 +27,7 @@ object DesktopDownloadManager {
         return try {
             require(song.localPath == null) { "This track is already local" }
             val stream = DesktopMusicSources.resolve(song, quality, forDownload = true).getOrThrow()
-            val directory = Path.of(System.getProperty("user.home"), "Music", "BitChord")
+            val directory = Path.of(ForkPortable.userHome, "Music", "BitChord") // fork: was user.home; downloads stay the listener's files
             Files.createDirectories(directory)
             val safeName = buildString {
                 append(song.artist)

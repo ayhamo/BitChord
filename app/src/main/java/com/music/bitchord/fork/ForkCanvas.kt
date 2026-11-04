@@ -2,13 +2,13 @@ package com.music.bitchord.fork
 
 import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.canvas.CanvasRepository
-import com.music.bitchord.data.canvas.CanvasSource
 import com.music.bitchord.data.canvas.SpotifyCanvas
 import com.music.bitchord.data.canvas.SpotifyToken
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.navidrome.NavidromeSettings
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.player.ForkCanvasSwitch
+import com.music.bitchord.ui.player.forkWithBackdrop
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -26,6 +26,13 @@ import kotlinx.coroutines.sync.withLock
  * square wherever the backdrop can't fill the screen). Spotify is not asked again when the
  * repository already did: when nothing was found (it is the last source), or with "Prioritise
  * Spotify Canvas" on (it was the first). The player's switches still decide what shows.
+ *
+ * In two stages, so the cover clip doesn't wait for Spotify: [canvasFor] answers with the first
+ * clip (and the backdrop only when Spotify's answer for the song is already known), and
+ * [withBackdrop], the player's second stage ([ForkCanvasSwitch.backdropFor]), asks Spotify and adds
+ * the backdrop to the clip already showing. Waiting for both made an Apple Music cover clip, found
+ * in a moment, appear only once Spotify answered: about a second, several when its token had to be
+ * fetched again.
  *
  * A server song is searched without a repeated "Artist - " in front of its title: files tagged that
  * way ("TheFatRat - Monody (…)", artist "TheFatRat") were matched against no catalogue title at all.
@@ -47,18 +54,45 @@ object ForkCanvas {
      */
     private val lock = Mutex()
 
+    /** When Spotify's token last failed to mint with a cookie set; see [spotifyFor]. */
+    @Volatile
+    private var tokenMissedAt = 0L
+
+    init {
+        // The player's second stage. Set when this object first loads, which the player's
+        // `cachedCanvas` (this object's [cached]) does before it gets to the second stage.
+        ForkCanvasSwitch.backdropFor = { song, shown -> withBackdrop(song, shown) }
+    }
+
     fun cached(song: Song): CanvasArtwork? {
         val query = searchable(song)
         val first = CanvasRepository.cached(query)
         if (!asksSpotify(first)) return first.answering(song, query)
-        return combine(first, synchronized(spotify) { spotify[song.videoId] }?.artwork).answering(song, query)
+        return forkWithBackdrop(first, known(song)).answering(song, query)
     }
 
+    /**
+     * The first stage: the repository's clip, at once. The backdrop comes with it only when
+     * Spotify's answer for the song is already here (a song coming round again, a reopened player),
+     * so the clip isn't shown alone first and then again with it.
+     */
     suspend fun canvasFor(song: Song): CanvasArtwork? {
         val query = searchable(song)
         val first = CanvasRepository.canvasFor(query)
         if (!asksSpotify(first)) return first.answering(song, query)
-        return combine(first, spotifyFor(song, query)).answering(song, query)
+        return forkWithBackdrop(first, known(song)).answering(song, query)
+    }
+
+    /**
+     * The second stage: [shown], the clip on screen for [song], with a Spotify backdrop when one is
+     * worth asking for and Spotify has one; [shown] itself otherwise. Runs in the player's own
+     * lookup, so a song change or the album landing cancels the search as it always did.
+     */
+    suspend fun withBackdrop(song: Song, shown: CanvasArtwork?): CanvasArtwork? {
+        if (!asksSpotify(shown)) return shown
+        val query = searchable(song)
+        val backdrop = spotifyFor(song, query) ?: return shown
+        return forkWithBackdrop(shown, backdrop).answering(song, query)
     }
 
     /**
@@ -77,10 +111,8 @@ object ForkCanvas {
         ForkCanvasSwitch.backdrops.value && first != null && !first.source.fillsPhone &&
             !AppSettings.prioritizeSpotifyCanvas.value
 
-    private fun combine(first: CanvasArtwork?, backdrop: CanvasArtwork?): CanvasArtwork? = when {
-        backdrop == null || first == null -> first
-        else -> backdrop.copy(source = CanvasSource.SPOTIFY, sleeveUrl = first.url)
-    }
+    /** Spotify's backdrop for [song] when already found, without asking (null: none, or not asked yet). */
+    private fun known(song: Song): CanvasArtwork? = synchronized(spotify) { spotify[song.videoId] }?.artwork
 
     private suspend fun spotifyFor(song: Song, query: Song): CanvasArtwork? = lock.withLock {
         synchronized(spotify) { spotify[song.videoId] }?.let { known ->
@@ -88,7 +120,17 @@ object ForkCanvas {
         }
         if (query.title.isBlank() || query.artist.isBlank()) return@withLock null
         // Without a sign-in nothing is asked and nothing remembered, so a cookie added later counts.
-        if (SpotifyToken.accessToken() == null) return@withLock null
+        if (AppSettings.spotifySpdcToken.value.isBlank()) return@withLock null
+        // A sign-in whose token can't be minted (no network, offline mode, a harvest timing out)
+        // is left alone for MISS_MS. Every song with a cover clip comes through here, and the
+        // WebView harvest waits up to 20 s under this lock (SpotifyToken.HARVEST_TIMEOUT_MS):
+        // asked for each song in turn, a dead sign-in held a harvest open for every song of a
+        // session. The song itself is not remembered as a miss; with a token it is asked.
+        if (System.currentTimeMillis() - tokenMissedAt < MISS_MS) return@withLock null
+        if (SpotifyToken.accessToken() == null) {
+            tokenMissedAt = System.currentTimeMillis()
+            return@withLock null
+        }
         val album = query.albumName.takeUnless { NavidromeSettings.isNavidromeId(song.videoId) }
         // Off the main thread, as the repository's own lookups are: the player asks from there, and a
         // request on it is refused before it leaves (NetworkOnMainThreadException, read as "http -1").

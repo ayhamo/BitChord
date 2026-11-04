@@ -15,23 +15,37 @@ object ForkSpotifyMatch {
 
     data class Hit(val uri: String, val name: String, val artists: String, val album: String?)
 
-    /** The first item whose title and every requested artist match, or null. */
+    /**
+     * The first item whose title and every requested artist match, or null.
+     *
+     * A hit named exactly as asked is taken over one that only matches by [core], wherever each
+     * sits in the answer: Spotify ranks "Monody (Remix)" above "Monody" for some queries, and
+     * [core] strips the brackets off both, so the first pass alone played the remix's Canvas
+     * for the original. Only when no hit is named exactly does a [core] match count.
+     */
     fun pick(items: JsonArray?, title: String, artist: String): Hit? {
         items ?: return null
         val wantTitle = normal(title)
+        val wantCore = core(title)
         val wantArtists = split(artist)
+        if (wantArtists.isEmpty()) return null
+        var byCore: Hit? = null
         for (entry in items) {
             val data = data(entry) ?: continue
             val uri = text(data, "uri") ?: text(data, "id")?.let { "spotify:track:$it" } ?: continue
             val name = text(data, "name") ?: continue
             val artists = artistsOf(data)
-            if (artists.isEmpty() || (normal(name) != wantTitle && core(name) != core(title))) continue
+            if (artists.isEmpty()) continue
+            val exact = normal(name) == wantTitle
+            if (!exact && (byCore != null || core(name) != wantCore)) continue
             val got = artists.flatMap(::split).toSet()
-            if (wantArtists.isEmpty() || !wantArtists.all { it in got }) continue
+            if (!wantArtists.all { it in got }) continue
             val album = (data["albumOfTrack"] as? JsonObject)?.let { text(it, "name") }
-            return Hit(uri, name, artists.joinToString(", "), album)
+            val hit = Hit(uri, name, artists.joinToString(", "), album)
+            if (exact) return hit
+            byCore = hit
         }
-        return null
+        return byCore
     }
 
     /** The song Pathfinder just answered with named hits, none of them it; see [takeNamedMiss]. */

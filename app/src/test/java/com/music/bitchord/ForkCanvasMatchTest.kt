@@ -45,6 +45,34 @@ class ForkCanvasMatchTest {
     }
 
     @Test
+    fun anExactlyNamedHitBeatsOneMatchingOnlyWithoutItsTail() {
+        // Spotify ranked the remix first; its name only matches once the brackets are off.
+        val answer = items(
+            Triple("spotify:track:remix", "Monody (Remix)", listOf("TheFatRat")),
+            Triple("spotify:track:original", "Monody", listOf("TheFatRat")),
+        )
+        assertEquals("spotify:track:original", ForkSpotifyMatch.pick(answer, "Monody", "TheFatRat")?.uri)
+        assertEquals("spotify:track:remix", ForkSpotifyMatch.pick(answer, "Monody (Remix)", "TheFatRat")?.uri)
+        // With no exact name anywhere, the first tail-less match still counts.
+        val only = items(Triple("spotify:track:b", "Song - Remastered 2011", listOf("Band")))
+        assertEquals("spotify:track:b", ForkSpotifyMatch.pick(only, "Song", "Band")?.uri)
+        // A wrong artist's exact name is not an exact hit.
+        val cover = items(
+            Triple("spotify:track:cover", "Monody", listOf("Some Cover Band")),
+            Triple("spotify:track:real", "Monody (feat. Laura Brehm)", listOf("TheFatRat", "Laura Brehm")),
+        )
+        assertEquals("spotify:track:real", ForkSpotifyMatch.pick(cover, "Monody", "TheFatRat")?.uri)
+    }
+
+    @Test
+    fun aServerTitleFrontIsSplitLikeTheArtistTag() {
+        assertEquals("Monody", ForkCanvas.withoutArtistPrefix("TheFatRat feat. Laura Brehm - Monody", "TheFatRat, Laura Brehm"))
+        assertEquals("Monody", ForkCanvas.withoutArtistPrefix("TheFatRat x Laura Brehm - Monody", "TheFatRat & Laura Brehm"))
+        // A front naming someone the tag doesn't stays a title.
+        assertEquals("TheFatRat & Someone - Monody", ForkCanvas.withoutArtistPrefix("TheFatRat & Someone - Monody", "TheFatRat"))
+    }
+
+    @Test
     fun anAnswerWithoutNamesIsLeftToTheOldPath() {
         val bare = Json.parseToJsonElement("""[{"item":{"data":{"uri":"spotify:track:z"}}}]""").jsonArray
         assertNull(ForkSpotifyMatch.pick(bare, "Levels", "Avicii"))

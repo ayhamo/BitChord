@@ -120,12 +120,15 @@ dependencies {
         }
     )
 
-    implementation("io.ktor:ktor-client-core:3.0.3")
-    implementation("io.ktor:ktor-client-cio:3.0.3")
-    implementation("io.ktor:ktor-client-content-negotiation:3.0.3")
+    // fork: 3.5.2 (was 3.0.3), the version :shared's `api` brings: Gradle took 3.5.2 for every Ktor
+    // module :shared names and left the CIO engine and its ktor-network at 3.0.3, an engine running
+    // on another release's ktor-io and ktor-utils. Ktor's modules are released and tested together.
+    implementation("io.ktor:ktor-client-core:3.5.2")
+    implementation("io.ktor:ktor-client-cio:3.5.2")
+    implementation("io.ktor:ktor-client-content-negotiation:3.5.2")
     // Listen Together speaks over a WebSocket; the Discord gateway already uses the same engine.
-    implementation("io.ktor:ktor-client-websockets:3.0.3")
-    implementation("io.ktor:ktor-serialization-kotlinx-json:3.0.3")
+    implementation("io.ktor:ktor-client-websockets:3.5.2")
+    implementation("io.ktor:ktor-serialization-kotlinx-json:3.5.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.9.0")
     implementation("org.slf4j:slf4j-nop:2.0.16")
@@ -406,7 +409,8 @@ val windowsPortableAssemble by tasks.registering {
     group = "distribution"
     description = "Lays out a Windows-runnable folder: application jars, Windows natives, launcher."
     dependsOn(tasks.named("jar"))
-    val stage = windowsPortableDir.map { it.dir("BitChord") }
+    // fork: one folder, "BitChord Portable", started by BitChord.exe; the app makes its data\ (ForkPortable)
+    val stage = windowsPortableDir.map { it.dir("BitChord Portable") }
     val appJar = tasks.named<Jar>("jar").flatMap { it.archiveFile }
     val runtime = configurations.named("runtimeClasspath")
     val version = appVersion
@@ -417,6 +421,8 @@ val windowsPortableAssemble by tasks.registering {
     val togetherServer = listenTogetherServer
     // The Windows Java the zip carries (docker/pc-jre.sh).
     val javaRuntime = providers.gradleProperty("bitchord.windowsRuntime").orNull
+    // fork: BitChord.exe (docker/pc-launcher.sh), which reads BitChord.args written below.
+    val launcherExe = providers.gradleProperty("bitchord.windowsLauncher").orNull
     // Declared, not implied.
     inputs.file(appJar)
     inputs.files(runtime)
@@ -426,6 +432,7 @@ val windowsPortableAssemble by tasks.registering {
     inputs.property("mainClass", mainClass)
     inputs.property("listenTogether", togetherServer)
     inputs.property("javaRuntime", javaRuntime.orEmpty())
+    inputs.property("launcher", launcherExe.orEmpty())
     outputs.dir(stage)
     doLast {
         val target = stage.get().asFile
@@ -449,25 +456,39 @@ val windowsPortableAssemble by tasks.registering {
         // `lib\*` rather than a spelled-out classpath: the wildcard is what keeps this working when
         // a dependency is added, and the JVM is what expands it.
         // The same flags as the installers below: these are what the app's memory was measured with.
-        val launch = buildString {
-            append("-Xmx512m -XX:+UseG1GC -XX:G1PeriodicGCInterval=20000 -XX:G1PeriodicGCSystemLoadThreshold=0")
-            append(" -Dbitchord.version=$version")
-            if (moduleIndex.isNotBlank()) append(" -Dbitchord.module.index=$moduleIndex")
+        // fork: one argument per line for BitChord.exe (desktopApp/native/launcher), `{app}` being
+        // its folder. The first five keep everything the app writes in data\ (ForkPortable): the
+        // settings file instead of the registry, the package opened so the old registry settings can
+        // be read once, the folders under user.home, temp files, and no hsperfdata in %TEMP%.
+        val launch = buildList {
+            add("-Dbitchord.portableData={app}\\data")
+            add("-Duser.home={app}\\data")
+            add("-Djava.io.tmpdir={app}\\data\\tmp")
+            add("-XX:-UsePerfData")
+            addAll(listOf("-Xmx512m", "-XX:+UseG1GC", "-XX:G1PeriodicGCInterval=20000", "-XX:G1PeriodicGCSystemLoadThreshold=0"))
+            add("-Dbitchord.version=$version")
+            if (moduleIndex.isNotBlank()) add("-Dbitchord.module.index=$moduleIndex")
             if (lastfmKey.isNotBlank() && lastfmSharedSecret.isNotBlank()) {
-                append(" -Dbitchord.lastfm.key=$lastfmKey -Dbitchord.lastfm.secret=$lastfmSharedSecret")
+                add("-Dbitchord.lastfm.key=$lastfmKey")
+                add("-Dbitchord.lastfm.secret=$lastfmSharedSecret")
             }
-            if (togetherServer.isNotBlank()) append(" -Dbitchord.listentogether.server=$togetherServer")
-            append(" -cp \"%HERE%lib\\*\" $mainClass %*")
+            if (togetherServer.isNotBlank()) add("-Dbitchord.listentogether.server=$togetherServer")
+            addAll(listOf("-cp", "{app}\\lib\\*", mainClass))
         }
-        fun launcher(name: String, comment: String, command: String) = File(target, name).writeText(
-            listOf("@echo off", "setlocal", "rem $comment", "set \"HERE=%~dp0\"", command, "endlocal", "")
+        File(target, "BitChord.args").writeText(
+            (listOf("# BitChord.exe starts runtime\\bin\\javaw.exe with these, one per line; {app} is this folder.") + launch + "")
                 .joinToString("\r\n"),
         )
-        launcher("BitChord.bat", "BitChord, portable. Its Java is in runtime\\.", "start \"\" \"%HERE%runtime\\bin\\javaw.exe\" $launch")
-        launcher(
-            "BitChord-log.bat",
-            "The same app, writing what it logs to bitchord.log beside this file. For reporting a problem.",
-            "\"%HERE%runtime\\bin\\java.exe\" $launch > \"%HERE%bitchord.log\" 2>&1",
+        File(target, "BitChord.exe").delete()
+        launcherExe?.let { File(it).copyTo(File(target, "BitChord.exe"), overwrite = true) }
+        // What the old BitChord-log.bat did: the same app, its output in data\bitchord.log.
+        File(target, "BitChord (log).bat").writeText(
+            listOf(
+                "@echo off",
+                "rem The same app, writing what it logs to data\\bitchord.log. For reporting a problem.",
+                "start \"\" \"%~dp0BitChord.exe\" --log %*",
+                "",
+            ).joinToString("\r\n"),
         )
 
         // What "it builds" is not the same as "it runs", and the difference is exactly what shipped
@@ -497,6 +518,9 @@ val windowsPortableAssemble by tasks.registering {
             if (!File(bundledJava, "bin/javaw.exe").isFile) {
                 add("its Java is missing: pass -Pbitchord.windowsRuntime=<folder> (docker/pc-jre.sh)")
             }
+            if (!File(target, "BitChord.exe").isFile) {
+                add("its launcher is missing: pass -Pbitchord.windowsLauncher=<BitChord.exe> (docker/pc-launcher.sh)")
+            }
         }
         check(problems.isEmpty()) { "windowsPortable: " + problems.joinToString("; ") }
 
@@ -516,8 +540,10 @@ val windowsPortable by tasks.registering(Zip::class) {
     group = "distribution"
     description = "Zips the portable Windows folder for copying to a Windows machine."
     dependsOn(windowsPortableAssemble)
-    from(windowsPortableDir)
-    archiveFileName.set("BitChord-$appVersion-windows-portable.zip")
+    // fork: only the current folder (an older build's "BitChord" folder may still be beside it),
+    // and no version in the name, so the release's file is always called the same.
+    from(windowsPortableDir.map { it.dir("BitChord Portable") }) { into("BitChord Portable") }
+    archiveFileName.set("BitChord Portable.zip")
     destinationDirectory.set(layout.buildDirectory.dir("distributions"))
     doLast { logger.lifecycle("windowsPortable: ${archiveFile.get().asFile.absolutePath}") }
 }

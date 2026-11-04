@@ -57,6 +57,8 @@ class NavidromeClient(
         val starred: Boolean = false,
         /** The file's size in bytes, for "Available offline" to say what a page will take. */
         val sizeBytes: Long? = null,
+        /** The `comment` tag (OpenSubsonic): yt-dlp's files end it with their YouTube address, see [NavidromeYouTubeCover]. */
+        val comment: String? = null,
     )
 
     suspend fun ping() {
@@ -362,6 +364,7 @@ class NavidromeClient(
             samplingRate = o.int("samplingRate"),
             starred = o.string("starred") != null,
             sizeBytes = (o["size"] as? JsonPrimitive)?.longOrNull,
+            comment = o.string("comment"),
         )
     }
 

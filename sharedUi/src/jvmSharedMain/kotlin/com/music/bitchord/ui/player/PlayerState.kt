@@ -82,6 +82,7 @@ internal fun rememberCanvasArtwork(song: Song): CanvasArtwork? {
         // Keep what an earlier pass found if this one comes back empty, rather
         // than pulling a playing clip out from under itself.
         canvas = PlayerPlatform.host.canvasFor(song) ?: canvas
+        canvas = ForkCanvasSwitch.backdropFor(song, canvas) // fork: the Spotify backdrop joins the clip already showing
     }
 
     return canvas

@@ -148,7 +148,10 @@ internal object ForkQueues {
     /** A row as it is kept: for a Navidrome song no address, and its cover by id. */
     private fun Song.atRest(): Song = if (!ForkNavidrome.owns(this)) copy(thumbnailUrl = NavidromeRepository.atRest(thumbnailUrl)) else copy(
         localUri = null,
-        thumbnailUrl = thumbnailUrl?.toHttpUrlOrNull()?.takeIf { "getCoverArt" in it.encodedPath }?.queryParameter("id"),
+        // A server cover by its id; a YouTube thumbnail (NavidromeYouTubeCover) is public and kept as it is.
+        thumbnailUrl = thumbnailUrl?.toHttpUrlOrNull()?.let { url ->
+            if ("getCoverArt" in url.encodedPath) url.queryParameter("id") else thumbnailUrl.takeIf { url.host == "i.ytimg.com" }
+        },
     )
 
     /**
@@ -164,7 +167,7 @@ internal object ForkQueues {
                 val id = song.videoId.removePrefix(NavidromeSettings.ID_PREFIX)
                 song.copy(
                     localUri = NavidromePlatform.kept.localUri(id) ?: client?.streamUrl(id),
-                    thumbnailUrl = song.thumbnailUrl?.let { cover -> client?.coverUrl(cover) },
+                    thumbnailUrl = song.thumbnailUrl?.let { cover -> if (cover.startsWith("https://i.ytimg.com/")) cover else client?.coverUrl(cover) },
                 )
             }
             addressed

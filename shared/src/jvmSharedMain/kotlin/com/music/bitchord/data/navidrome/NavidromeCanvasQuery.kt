@@ -22,11 +22,20 @@ object NavidromeCanvasQuery {
     }
 
     fun withoutArtistPrefix(title: String, artist: String): String {
-        val dash = Regex("""^\s*(.+?)\s+[-–—]\s+(.+)$""").matchEntire(title) ?: return title
+        val dash = DASH.matchEntire(title) ?: return title
         val (front, rest) = dash.destructured
-        val artists = artist.split(Regex("""\s*(?:,|&|\bx\b|\bfeat\b\.?|\bft\b\.?)\s*""", RegexOption.IGNORE_CASE)) // feat/ft whole words: "Feather" stays one name
-            .map { it.trim().lowercase() }.filter { it.isNotEmpty() }
-        val frontNames = front.split(Regex("""\s*(?:,|&)\s*""")).map { it.trim().lowercase() }
+        val artists = names(artist)
+        // The front is split like the tag: "TheFatRat feat. Laura Brehm - Monody" names the same two
+        // artists as the tag "TheFatRat, Laura Brehm", and split on commas alone it never matched.
+        val frontNames = names(front)
         return if (frontNames.isNotEmpty() && frontNames.all { it in artists } || front.trim().lowercase() == artist.trim().lowercase()) rest else title
     }
+
+    private fun names(credit: String): List<String> =
+        credit.split(SEPARATORS).map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+
+    private val DASH = Regex("""^\s*(.+?)\s+[-–—]\s+(.+)$""")
+
+    /** feat/ft whole words: "Feather" stays one name. */
+    private val SEPARATORS = Regex("""\s*(?:,|&|\bx\b|\bfeat\b\.?|\bft\b\.?)\s*""", RegexOption.IGNORE_CASE)
 }

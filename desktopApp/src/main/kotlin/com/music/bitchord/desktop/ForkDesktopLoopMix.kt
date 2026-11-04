@@ -557,7 +557,15 @@ internal class ForkDesktopLoopMix(private val scope: CoroutineScope) {
      * the newest. Checking [buildFor] instead let a cancelled build (a seek, then the same pair planned
      * again from the new playhead) finish under the new one's name and hand over decks of the old plan:
      * `cancel()` doesn't stop a decode that never suspends.
+     *
+     * The generation check and the hand-over are one step under [buildLock]: checked and then
+     * written as two, a [cancelBuild] between them (a seek on the audio thread as the worker
+     * finished) left [built] standing with [buildFor] null, which [consider] never starts another
+     * build over nor lets the deadline fall back from, so the pair held its blend to the end of the
+     * song and cut; and after a seek on the same pair [takeBuilt] handed those decks of the old plan
+     * over. The lock is held for a field write only, never while decoding.
      */
+    private val buildLock = Any()
     @Volatile private var buildGeneration = 0
     @Volatile private var built: ForkLoopMixSession? = null
     @Volatile private var buildFailed: String? = null
@@ -638,9 +646,11 @@ internal class ForkDesktopLoopMix(private val scope: CoroutineScope) {
     private fun startBuild(plan: LoopMix.Plan, p: ForkLoopPair) {
         val pair = p.pairKey
         buildFor = pair
-        built = null
-        buildFailed = null
-        val generation = ++buildGeneration
+        val generation = synchronized(buildLock) {
+            built = null
+            buildFailed = null
+            ++buildGeneration
+        }
         val sampleRate = p.sampleRate
         val outStream = p.outStream
         val inStream = p.inStream
@@ -661,13 +671,12 @@ internal class ForkDesktopLoopMix(private val scope: CoroutineScope) {
                 val inRegion = decodeRegion(inStream, inFrom, inTo, sampleRate, alive) ?: return@runCatching null
                 ForkLoopMixSession.build(plan, sampleRate, outRegion, inRegion, outId, inId, outStream.url, inStream.url)
             }.onFailure { DesktopTrackLog.log("loop mix: building the decks failed: ${it.message}") }.getOrNull()
-            if (buildGeneration != generation) return@launch
-            if (session == null) {
-                buildFailed = "the decks would not build"
-                return@launch
+            val handedOver = synchronized(buildLock) {
+                if (buildGeneration != generation) return@launch
+                if (session == null) buildFailed = "the decks would not build" else built = session
+                session != null
             }
-            DesktopTrackLog.log("loop mix: decks built in ${(System.nanoTime() - began) / 1_000_000}ms")
-            built = session
+            if (handedOver) DesktopTrackLog.log("loop mix: decks built in ${(System.nanoTime() - began) / 1_000_000}ms")
         }
     }
 
@@ -696,20 +705,27 @@ internal class ForkDesktopLoopMix(private val scope: CoroutineScope) {
     fun plannedFor(outId: String, inId: String): LoopMix.Plan? =
         planned?.takeIf { planKey?.startsWith("$outId->$inId|") == true }
 
-    /** A seek or a new song: whatever was planned is planned again from the new playhead. */
+    /**
+     * A seek or a new song: whatever was planned is planned again from the new playhead. The refusal
+     * goes too: it is the old pair's, and the stats line read it as the new song's until that pair's
+     * first [consider] (which is never, for a song with nothing after it).
+     */
     fun forget() {
         cancelBuild()
         planKey = null
         planned = null
+        refusal = null
     }
 
     private fun cancelBuild() {
-        buildGeneration++
+        synchronized(buildLock) {
+            buildGeneration++
+            built = null
+            buildFailed = null
+        }
         buildJob?.cancel()
         buildJob = null
         buildFor = null
-        built = null
-        buildFailed = null
     }
 
     private fun note(pair: String, plan: LoopMix.Plan?, why: String?) {
@@ -774,17 +790,29 @@ internal class ForkDesktopLoopMix(private val scope: CoroutineScope) {
                 if (fromUs > 0 && !decoder.seek(fromUs)) return null
                 val sourceRate = decoder.outputFormat.sampleRate
                 val converter = if (sourceRate != sampleRate) DesktopRateConverter(sourceRate, sampleRate, 2) else null
-                val wanted = ((to - from) * sampleRate).roundToInt().coerceAtLeast(1)
-                val left = FloatArray(wanted)
-                val right = FloatArray(wanted)
+                // Sized from where the stream landed, not from [from]: a seek the decoder could not trim
+                // (no timestamps, or an index point further back than its MAX_SEEK_TRIM_US) lands
+                // seconds early, and a region of [to] - [from] frames from there ended before [to],
+                // so `build` refused it and the pair got its blend. A landing further back than that
+                // trim allows would be a region of most of the song: given up instead.
+                var wanted = ((to - from) * sampleRate).roundToInt().coerceAtLeast(1)
+                var left = FloatArray(0)
+                var right = FloatArray(0)
                 var frames = 0
                 var start: Double? = null
-                while (frames < wanted) {
+                while (frames < wanted || start == null) {
                     if (!alive()) return null
                     val block = decoder.readSamples() ?: break
                     var count = decoder.sampleCount
                     if (count <= 0) continue
-                    if (start == null) start = (decoder.forkLandedUs ?: fromUs) / 1e6
+                    if (start == null) {
+                        val landed = (decoder.forkLandedUs ?: fromUs) / 1e6
+                        if (from - landed > DesktopAudioDecoder.MAX_SEEK_TRIM_US / 1e6) return null
+                        start = landed
+                        wanted = ((to - landed) * sampleRate).roundToInt().coerceAtLeast(1)
+                        left = FloatArray(wanted)
+                        right = FloatArray(wanted)
+                    }
                     val data = if (converter != null) {
                         converter.process(block, count).also { count = converter.outputCount }
                     } else {

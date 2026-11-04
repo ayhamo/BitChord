@@ -126,6 +126,7 @@ class DesktopPoTokenWebView private constructor(
     private fun loadHtmlAndObtainBotguard() {
         TrackLog.d(TAG, "loadHtmlAndObtainBotguard() called")
         engine = WebEngine()
+        ForkPortable.webViewDirectory()?.let { engine.userDataDirectory = it } // fork: not %APPDATA%\java\webview in the portable app
         engine.userAgent = USER_AGENT
         engine.setOnError { event -> onUncaught(event.message ?: "WebEngine error") }
         engine.loadWorker.stateProperty().addListener { _, _, state ->

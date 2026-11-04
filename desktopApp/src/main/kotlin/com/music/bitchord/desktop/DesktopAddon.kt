@@ -4,7 +4,7 @@ import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
 import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
+import io.ktor.client.engine.okhttp.OkHttp // fork: was cio.CIO, see below
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -469,8 +469,16 @@ internal class DesktopAddonClient(rawBaseUrl: String) {
             coerceInputValues = true
         }
 
-        /** A ceiling on the whole call: the spec asks addons to answer in seconds, not minutes. */
-        private val http = HttpClient(CIO) {
+        /**
+         * A ceiling on the whole call: the spec asks addons to answer in seconds, not minutes.
+         *
+         * Fork: OkHttp, the engine the phone's addon client uses, was CIO. CIO reused a kept-alive
+         * connection after the server had already written to it (an idle-timeout page) and read that
+         * page as the next response: "Unsupported HTTP version: <html>" when adding two working addons
+         * (eljohnzc, aurix; owner, 2026-11-03), which then worked on a retry. OkHttp checks a pooled
+         * connection before reusing it.
+         */
+        private val http = HttpClient(OkHttp) {
             install(HttpTimeout) { requestTimeoutMillis = CALL_TIMEOUT_MS }
         }
 
@@ -918,7 +926,7 @@ internal object DesktopSourceFormats {
         }
     }
 
-    private val http = HttpClient(CIO) {
+    private val http = HttpClient(OkHttp) { // fork: was CIO, see DesktopAddonClient.http
         install(HttpTimeout) { requestTimeoutMillis = DesktopAddonClient.CALL_TIMEOUT_MS }
     }
 }

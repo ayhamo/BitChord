@@ -176,7 +176,8 @@ object NavidromeRepository {
             artist = artistName,
             artistId = NavidromeSettings.artistPageId(artistName),
             albumId = album?.let { NavidromeSettings.albumPageId(it) },
-            thumbnailUrl = coverArt?.let { client.coverUrl(it) },
+            // Its own cover (`mf-…`); a file with none gets its YouTube thumbnail before the album's (NavidromeYouTubeCover).
+            thumbnailUrl = NavidromeYouTubeCover.artFor(coverArt, comment) ?: coverArt?.let { client.coverUrl(it) },
             durationText = durationSec?.takeIf { it > 0 }?.let { String.format(java.util.Locale.ROOT, "%d:%02d", it / 60, it % 60) },
             albumName = album,
             // A song kept offline plays from its file (NavidromeOffline).

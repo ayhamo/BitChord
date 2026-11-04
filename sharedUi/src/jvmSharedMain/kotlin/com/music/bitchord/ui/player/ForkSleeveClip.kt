@@ -2,6 +2,7 @@ package com.music.bitchord.ui.player
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -10,6 +11,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.canvas.CanvasSource
+import com.music.bitchord.data.model.Song
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 
@@ -36,7 +38,69 @@ object ForkCanvasSwitch {
      * quietly does nothing in a wide window.
      */
     val bigArtFits = MutableStateFlow(true)
+
+    /**
+     * The second stage of the player's clip lookup (`rememberCanvasArtwork`): the
+     * clip already shown for the song, with a Spotify Canvas added as its
+     * backdrop when "Backdrop videos" asks for one ([forkWithBackdrop]), or the
+     * same clip back when there is none.
+     *
+     * Its own stage because Spotify is the slow one. The lookup used to wait for
+     * it before answering at all, so an Apple Music motion cover found in a
+     * moment stayed off the screen until Spotify answered: about a second, and
+     * several when Spotify's token had to be fetched again first. Now the cover
+     * clip shows as soon as it is found, and the backdrop joins it when it lands.
+     *
+     * A hook rather than a second `PlayerHost` method, so upstream's interface
+     * and every host stay as they are: each platform's clip lookup
+     * (`ForkCanvas`, `ForkDesktopCanvas`) puts itself here when it first loads,
+     * which the player's `cachedCanvas` call does before it gets this far.
+     * Anywhere nothing is put (the TV app), the shown clip comes straight back.
+     *
+     * Called from the lookup's own `LaunchedEffect`, so a song change, the album
+     * landing or a flipped switch cancels the Spotify search exactly as it
+     * cancelled the single-stage lookup.
+     */
+    @Volatile
+    var backdropFor: suspend (song: Song, shown: CanvasArtwork?) -> CanvasArtwork? = { _, shown -> shown }
 }
+
+/**
+ * Fork: [first] (the cover clip some service had) with a Spotify Canvas as its
+ * backdrop: the Canvas plays where it can fill the screen, [first] in the cover
+ * square everywhere else ([CanvasArtwork.sleeveUrl]). Either missing, [first]
+ * stays as it is. The one shape both platforms build ([ForkCanvasSwitch.backdropFor]).
+ */
+fun forkWithBackdrop(first: CanvasArtwork?, backdrop: CanvasArtwork?): CanvasArtwork? = when {
+    first == null || backdrop == null -> first
+    else -> backdrop.copy(source = CanvasSource.SPOTIFY, sleeveUrl = first.url)
+}
+
+/** Fork: the clip [forkCanvases] last handed the sleeve, held across compositions (see [forkSteadyClip]). */
+private class ForkLastClip {
+    var clip: CanvasArtwork? = null
+}
+
+/**
+ * Fork: the sleeve's clip, kept as the very object it already plays when the
+ * backdrop joining it changes nothing the eye can see.
+ *
+ * The cover clip shows first and the Spotify backdrop arrives a moment later
+ * ([ForkCanvasSwitch.backdropFor]). Where the backdrop can't fill the screen
+ * (the PC's wide window, a phone on its side) the sleeve goes on playing the
+ * same clip, but as [forkInSleeve]'s copy of the combined answer: the same
+ * [CanvasArtwork.url], with the backdrop's names and no fallback or 3:4
+ * rendition. Both platforms' video players key their state on the whole
+ * [CanvasArtwork] (`remember(canvas)`, `LaunchedEffect(canvas)`), so that copy
+ * reloaded the clip and it started over from its first frame behind a fresh
+ * fade, for a picture that had not changed. [folded] says [next] is such a
+ * copy; with the same url as [last], [last] goes on playing.
+ *
+ * Only then: an ordinary new answer with the same url (a 3:4 rendition found
+ * later, say) is taken as it comes, as upstream does.
+ */
+internal fun forkSteadyClip(last: CanvasArtwork?, next: CanvasArtwork?, folded: Boolean): CanvasArtwork? =
+    if (folded && last != null && next != null && last.url == next.url) last else next
 
 /**
  * Fork: the clip the player shows for [raw], and the clip behind the landscape
@@ -63,7 +127,11 @@ internal fun forkCanvases(raw: CanvasArtwork?, phoneWidth: Boolean, windowWidth:
     val covers by ForkCanvasSwitch.covers.collectAsStateWithLifecycle()
     val fills = forkFillsScreen(raw, phoneWidth, windowWidth, windowHeight)
     val shown = raw.forkInSleeve(backdrops && fills)?.takeIf { if (it.source.fillsPhone && fills) backdrops else covers }
-    return shown to raw?.takeIf { backdrops && it.source.fillsPhone }
+    val last = remember { ForkLastClip() }
+    val folded = raw != null && shown != null && raw.source.fillsPhone && shown.url == raw.sleeveUrl
+    val sleeve = forkSteadyClip(last.clip, shown, folded)
+    SideEffect { last.clip = sleeve } // after a commit: an abandoned composition leaves it alone
+    return sleeve to raw?.takeIf { backdrops && it.source.fillsPhone }
 }
 
 private fun CanvasArtwork?.forkInSleeve(backdropShown: Boolean): CanvasArtwork? = when {

@@ -27,6 +27,7 @@ import kotlin.math.roundToInt
 import org.jetbrains.compose.resources.painterResource
 
 fun main() {
+    ForkPortable.install() // fork: the portable folder's own settings store, before anything reads one
     // Before any WebView exists, so the sign-in window can start over with an empty jar.
     DesktopWebCookies.install()
     DesktopWindowVisibility.install()

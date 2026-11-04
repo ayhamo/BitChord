@@ -35,21 +35,23 @@ jobs:
           mkdir out
           docker run --rm -v "$PWD:/work" -v "$PWD/out:/out" eclipse-temurin:21-jdk bash /work/docker/pc-build.sh
           sudo chown -R "$(id -u):$(id -g)" out
-          (cd out && sha256sum *.zip > SHA256SUMS.txt)
+          # GitHub stores an uploaded file's space as a dot: the zip is listed, and downloads, as
+          # BitChord.Portable.zip, so that is the name the sums give (`sha256sum -c` beside the download).
+          (cd out && sha256sum "BitChord Portable.zip" | sed 's/BitChord Portable\.zip$/BitChord.Portable.zip/' > SHA256SUMS.txt)
           cat out/SHA256SUMS.txt
 
       - name: check what the zip holds
         run: |
           set -euo pipefail
-          listing=$(unzip -l out/*.zip)
-          for entry in BitChord/BitChord.bat BitChord/BitChord-log.bat BitChord/runtime/bin/javaw.exe BitChord/lib/bitchord-app.jar; do
-            echo "$listing" | grep -q "$entry" || { echo "missing: $entry"; exit 1; }
+          listing=$(unzip -l "out/BitChord Portable.zip")
+          for entry in "BitChord.exe" "BitChord.args" "BitChord (log).bat" "runtime/bin/javaw.exe" "lib/bitchord-app.jar"; do
+            echo "$listing" | grep -qF "BitChord Portable/$entry" || { echo "missing: BitChord Portable/$entry"; exit 1; }
           done
 
       - name: attest build provenance
         uses: actions/attest-build-provenance@v4
         with:
-          subject-path: out/*.zip
+          subject-path: out/BitChord Portable.zip
 
       - name: publish the pre-release
         env:
@@ -64,8 +66,10 @@ jobs:
           {
             echo "BitChord $VERSION for Windows, a test build of this fork's desktop app. Not the Android release."
             echo
-            echo "Unzip it anywhere and run \`BitChord\\BitChord.bat\`. Java is inside; nothing else to install."
-            echo "\`BitChord-log.bat\` runs the same app and writes \`bitchord.log\` beside it, for reporting a problem."
+            echo "Unzip it anywhere and run \`BitChord Portable\\BitChord.exe\`. Java is inside; nothing else to install."
+            echo "Everything the app keeps (settings, logins, caches, offline songs) is in \`BitChord Portable\\data\`, so the folder can be moved or copied whole."
+            echo "Its first start takes over the settings and data of the earlier \`BitChord.bat\` zip, which are left where they were."
+            echo "\`BitChord (log).bat\` runs the same app and writes \`data\\bitchord.log\`, for reporting a problem."
             echo
             echo "Commit: $GITHUB_SHA"
             echo "Verify: \`gh attestation verify <zip> -R $GITHUB_REPOSITORY\`, or compare with SHA256SUMS.txt."

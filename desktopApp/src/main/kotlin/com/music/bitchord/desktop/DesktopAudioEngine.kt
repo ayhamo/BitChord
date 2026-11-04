@@ -1336,6 +1336,7 @@ class DesktopPlaybackEngine(
                 }
                 Command.Flush -> {
                     forkLoopBail("a new song", settle = false) // fork
+                    forkLoop.forget() // fork: the bail only stops an armed run; a build still decoding, and the old pair's plan and refusal, go too
                     forkDropSwap() // fork
                     forkDropHeldUpgrade() // fork
                     current?.decoder?.close()
@@ -2298,7 +2299,7 @@ class DesktopPlaybackEngine(
         val frames = run.blockFrames(mf, ForkLoopMixSession.BLOCK_FRAMES)
         val block = run.render(mf, frames)
         if (mf >= run.handoverFrame) {
-            if (!run.inAligned) forkLoopLineUp(run, incoming)
+            if (!run.inAligned && !forkLoopLineUp(run, incoming)) return true
             val other = readIncoming(incoming, frames * 2)
             if (other != null) {
                 val got = incomingReadCount
@@ -2327,13 +2328,22 @@ class DesktopPlaybackEngine(
      * frames between where its stream really landed and the sample the deck is at on the handover, so
      * the two cross on the same audio. The deck's own position is used, not the plan's: its grains may
      * sit a few milliseconds off their knots, and that is where its audio actually is.
+     *
+     * False when the mix was stopped instead: a landing further back than [FORK_LOOP_LINE_UP_MAX_US]
+     * (a seek the decoder could not trim, see DesktopAudioDecoder.MAX_SEEK_TRIM_US) would be read off
+     * here on the audio thread, past the eight seconds the decode-ahead holds and on into waiting for
+     * the decoder, a dropout at the handover itself; the better copy's swap gives up the same way.
      */
-    private fun forkLoopLineUp(run: ForkLoopMixSession, incoming: Track) {
+    private fun forkLoopLineUp(run: ForkLoopMixSession, incoming: Track): Boolean {
         val landed = incoming.decoder.forkLandedUs ?: incoming.startUs
         var drop = run.dropFramesFor(landed)
         if (drop < 0) {
             DesktopTrackLog.log("loop mix: the incoming deck landed ${-drop} frames past its handover; crossing in unaligned")
             drop = 0
+        }
+        if (run.handoverTrackUs - landed > FORK_LOOP_LINE_UP_MAX_US) {
+            forkLoopBail("the incoming deck landed ${(run.handoverTrackUs - landed) / 1000} ms before its handover", settle = true)
+            return false
         }
         val channels = sink.format.channels.coerceAtLeast(1)
         var left = drop * channels
@@ -2345,6 +2355,7 @@ class DesktopPlaybackEngine(
             "loop mix: '${incoming.song.title}' lined up on its deck at ${"%.3f".format(run.handoverTrackUs / 1e6)}s " +
                 "(landed ${"%.3f".format(landed / 1e6)}s, $drop frames dropped)",
         )
+        return true
     }
 
     /** Position, the scrubber's beat and the mid-ramp move to the incoming song, from what is heard. */
@@ -2778,6 +2789,9 @@ class DesktopPlaybackEngine(
         /** Fork: past its point by this with nothing decoded, the better copy is armed again further on. */
         private const val FORK_SWAP_LATE_US = 2_000_000L
         private const val FORK_SWAP_TRIES = 3
+
+        /** Fork: the most a loop mix reads off the incoming deck to line it up, well inside the decode-ahead; see `forkLoopLineUp`. */
+        private const val FORK_LOOP_LINE_UP_MAX_US = 4_000_000L
 
         /** Enough of a measurement on the incoming track to cue into it. */
         val MEASURED_ENOUGH_TO_ENTER_ON = setOf(

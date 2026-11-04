@@ -403,7 +403,9 @@ object NavidromeOffline {
 
     private suspend fun keepCover(client: NavidromeClient, url: String) {
         val coverId = coverIdOf(url)?.takeIf(::safeName) ?: return
-        download(client.coverUrl(coverId, COVER_PX), coverFile(coverId))
+        // A YouTube thumbnail (NavidromeYouTubeCover) is kept as it is; it has no sizes to ask for.
+        val source = if (NavidromeYouTubeCover.keptName(url) != null) url else client.coverUrl(coverId, COVER_PX)
+        download(source, coverFile(coverId))
     }
 
     /**
@@ -618,10 +620,19 @@ object NavidromeOffline {
      * Covers by the `id` of any `getCoverArt` request (whatever size is asked,
      * the kept one is the player's); clips by their exact address. Wired into
      * [Http.client] and the image loader's client (see `NavidromeClips.init`).
+     *
+     * A server song without its own cover shows its video's YouTube thumbnail
+     * ([NavidromeYouTubeCover]), which is not the server's: without this branch a
+     * kept song showed no cover at all offline (before, the album's, kept by id).
+     * Any row asking for the same thumbnail gets the same picture from here.
      */
     fun serve(request: Request): Response? {
         if (!::dir.isInitialized) return null
         val url = request.url
+        if (url.host == NavidromeYouTubeCover.HOST) {
+            val file = NavidromeYouTubeCover.keptName(url.toString())?.let(::coverFile) ?: return null
+            return if (file.isFile) keptResponse(request, file, "image/jpeg") else null
+        }
         val base = NavidromeSettings.url.value.toHttpUrlOrNull() ?: return null
         if (url.host != base.host || url.port != base.port) return null
         val (file, type) = when {
@@ -631,7 +642,11 @@ object NavidromeOffline {
             else -> return null
         }
         if (!file.isFile) return null
-        return Response.Builder()
+        return keptResponse(request, file, type)
+    }
+
+    private fun keptResponse(request: Request, file: File, type: String): Response =
+        Response.Builder()
             .request(request)
             .protocol(Protocol.HTTP_1_1)
             .code(200)
@@ -639,10 +654,11 @@ object NavidromeOffline {
             .header("Content-Length", file.length().toString())
             .body(file.source().buffer().asResponseBody(type.toMediaType(), file.length()))
             .build()
-    }
 
+    /** The name a cover is kept under: the server's cover id, or `yt-<video id>` for a YouTube thumbnail. */
     private fun coverIdOf(url: String): String? =
-        url.toHttpUrlOrNull()?.takeIf { "getCoverArt" in it.encodedPath }?.queryParameter("id")
+        NavidromeYouTubeCover.keptName(url)
+            ?: url.toHttpUrlOrNull()?.takeIf { "getCoverArt" in it.encodedPath }?.queryParameter("id")
 
     /** Ids come from the server and name files here: none of them may climb out of this folder. */
     private fun safeName(id: String) = '/' !in id && '\\' !in id && ".." !in id

@@ -8,6 +8,7 @@ import io.ktor.client.request.header
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.isSuccess
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
@@ -47,37 +48,69 @@ internal object DesktopUpdateChecker {
     }
 
     suspend fun check(): UpdateInfo? = runCatching {
-        val response = http.get(LATEST_RELEASE_URL) {
+        val release = fetch(LATEST_RELEASE_URL)?.let { json.parseToJsonElement(it) as? JsonObject }
+        release?.let { updateFrom(it, currentVersion, platformSuffixes()) }?.let { return@runCatching it }
+        // fork: the PC's own builds are the pre-releases `fork-pc-v<version>`
+        // (.github/workflows/fork-pc-release.yml), which GitHub's "latest" skips: asked by "latest"
+        // alone, the PC only ever saw the fork's phone release, with no file for it, and said nothing.
+        // The list is newest first; the first PC build that is newer and has the zip is the one.
+        val releases = fetch(RELEASES_URL)?.let { json.parseToJsonElement(it) as? JsonArray } ?: return@runCatching null
+        forkPcUpdate(releases.mapNotNull { it as? JsonObject }, currentVersion, platformSuffixes())
+    }.getOrNull()
+
+    private suspend fun fetch(url: String): String? {
+        val response = http.get(url) {
             header("Accept", "application/vnd.github+json")
         }
-        if (!response.status.isSuccess()) return@runCatching null
-        val release = json.parseToJsonElement(response.bodyAsText()) as? JsonObject
-            ?: return@runCatching null
-        val tag = release["tag_name"]?.jsonPrimitive?.contentOrNull ?: return@runCatching null
-        val url = release["html_url"]?.jsonPrimitive?.contentOrNull ?: return@runCatching null
-        val latest = tag.removePrefix("fork-").removePrefix("v") // fork: fork-v<version>
-        if (!isNewer(latest, currentVersion)) return@runCatching null
+        return if (response.status.isSuccess()) response.bodyAsText() else null
+    }
+
+    /** fork: the PC build's pre-releases, see [check]. */
+    private const val RELEASES_URL = "https://api.github.com/repos/ayhamo/BitChord/releases?per_page=20"
+    internal const val FORK_PC_TAG_PREFIX = "fork-pc-v"
+
+    /** fork: the newest PC build among [releases] (GitHub's order, newest first) that is newer than [current]; drafts and the phone's releases skipped. */
+    internal fun forkPcUpdate(releases: List<JsonObject>, current: String, suffixes: List<String>): UpdateInfo? =
+        releases.firstNotNullOfOrNull { release ->
+            val tag = release["tag_name"]?.jsonPrimitive?.contentOrNull ?: return@firstNotNullOfOrNull null
+            if (!tag.startsWith(FORK_PC_TAG_PREFIX) || release["draft"]?.jsonPrimitive?.contentOrNull == "true") return@firstNotNullOfOrNull null
+            updateFrom(release, current, suffixes)
+        }
+
+    /** The update [release] is over [current], with a file for this platform ([suffixes]); null when it is none. */
+    internal fun updateFrom(release: JsonObject, current: String, suffixes: List<String>): UpdateInfo? {
+        val tag = release["tag_name"]?.jsonPrimitive?.contentOrNull ?: return null
+        val url = release["html_url"]?.jsonPrimitive?.contentOrNull ?: return null
+        // fork: fork-pc-v<version> (the PC build) and fork-v<version>. `fork-` alone left "pc-v1.9",
+        // whose "pc" read as 0, so a PC build was never newer than anything.
+        val latest = tag.removePrefix(FORK_PC_TAG_PREFIX).removePrefix("fork-").removePrefix("v")
+        if (!isNewer(latest, current)) return null
         // fork: a phone-only release says nothing to the PC
-        val installer = installerUrl(release) ?: return@runCatching null
-        UpdateInfo(
+        val installer = assetUrl(release, suffixes) ?: return null
+        return UpdateInfo(
             version = latest,
             releaseUrl = url,
             downloadUrl = installer,
             notes = release["body"]?.jsonPrimitive?.contentOrNull,
         )
-    }.getOrNull()
+    }
 
     /**
      * The release names its files `BitChord-<version>-windows-x64-setup.exe` and
      * `BitChord-<version>-linux-x86_64.AppImage` (see .github/workflows/release.yml); match on the
      * platform part so a version change does not matter.
      */
-    private fun installerUrl(release: JsonObject): String? {
-        val suffixes = when {
-            DesktopPlatform.isWindows -> listOf("-windows-x64-setup.exe", "-windows-portable.zip") // fork: the portable zip
-            DesktopPlatform.isLinux -> listOf(".AppImage", "-linux-amd64.deb")
-            else -> return null
-        }
+    private fun platformSuffixes(): List<String> = when { // fork: was installerUrl(release); the suffixes alone, for updateFrom
+        DesktopPlatform.isWindows -> WINDOWS_SUFFIXES // fork: was inline, named for DesktopUpdateAssetTest
+        DesktopPlatform.isLinux -> listOf(".AppImage", "-linux-amd64.deb")
+        else -> emptyList()
+    }
+
+    /** fork: the portable zip (GitHub uploads its space as a dot), then the older zip's name. */
+    internal val WINDOWS_SUFFIXES = listOf("-windows-x64-setup.exe", "BitChord Portable.zip", "BitChord.Portable.zip", "-windows-portable.zip")
+
+    /** fork: split out of [installerUrl], so the matching is testable on any platform. */
+    internal fun assetUrl(release: JsonObject, suffixes: List<String>): String? {
         val assets = release["assets"]?.jsonArray?.mapNotNull { it as? JsonObject }.orEmpty()
         for (suffix in suffixes) {
             val hit = assets.firstOrNull { asset ->
