@@ -151,6 +151,20 @@ object ForkSettings {
         KEY_PRELOAD_SONGS,
     )
 
+    /**
+     * Parts of an imported backup's fork section this phone doesn't use (the PC's own settings),
+     * as JSON, so the next export writes them back and a PC -> phone -> PC trip keeps them (the PC
+     * carries the phone's settings the same way). Not in [BACKED_UP], so never exported as a setting.
+     */
+    internal var carriedSections: String?
+        get() = if (!this::prefs.isInitialized) null else prefs.getString(KEY_CARRIED_SECTIONS, null)
+        set(value) {
+            if (!this::prefs.isInitialized) return
+            prefs.edit().apply { if (value == null) remove(KEY_CARRIED_SECTIONS) else putString(KEY_CARRIED_SECTIONS, value) }.apply()
+        }
+
+    private const val KEY_CARRIED_SECTIONS = "backup_carried_sections"
+
     /** The stored values of [BACKED_UP], typed as the preference file holds them. */
     internal fun exportForBackup(): Map<String, Any?> =
         if (!this::prefs.isInitialized) emptyMap() else prefs.all.filterKeys { it in BACKED_UP }

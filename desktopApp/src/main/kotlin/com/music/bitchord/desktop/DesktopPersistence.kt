@@ -31,8 +31,7 @@ class DesktopPersistence {
     fun lyricsSourceOrder(): List<String> =
         // The phone's rule for a saved order meeting a newer build: hidden sources drop out, a new
         // one slots in beside its declared neighbour.
-        LyricsSource.ordered(readNames(DesktopLyricsClient.KEY_LYRICS_ORDER).mapNotNull(::lyricsSourceNamed))
-            .map { it.label }
+        ForkNetEaseLyrics.ordered(readNames(DesktopLyricsClient.KEY_LYRICS_ORDER)) // fork: was LyricsSource.ordered(….mapNotNull(::lyricsSourceNamed)).map { it.label }, which dropped NetEase
 
     fun saveLyricsSourceOrder(names: List<String>) =
         saveString(DesktopLyricsClient.KEY_LYRICS_ORDER, names.joinToString(","))

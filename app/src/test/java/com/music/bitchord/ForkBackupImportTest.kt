@@ -137,4 +137,25 @@ class ForkBackupImportTest {
         assertTrue(text, "id=al-1" in text)
         assertTrue(text, "/rest/ in a title" in text)
     }
+
+    @Test
+    fun `the PC's part is carried back out and never stands in for the phone's own`() {
+        val login = "https://music.example.com/rest/getCoverArt?id=al-1&u=me&t=abc"
+        val imported = Json.parseToJsonElement(
+            """{"settings":{"crossfade_on_skip":{"type":"bool","value":"false"}},"savedQueues":[],
+                "pc":{"settings":{"tray":"on","cover":"$login"}}}""",
+        ).jsonObject
+        val carried = ForkBackup.carriedPart(imported)!!
+        assertEquals(setOf("pc"), carried.keys)
+        assertFalse(carried.toString(), "u=me" in carried.toString()) // scrubbed as it is stored
+        assertNull(ForkBackup.carriedPart(JsonObject(mapOf("settings" to JsonObject(emptyMap())))))
+
+        // A carried part named like the phone's own (an edited file) can't replace them on export.
+        val mine = JsonObject(mapOf("preload_songs" to JsonPrimitive(1)))
+        val stale = JsonObject(carried + ("settings" to JsonPrimitive("x")) + ("savedQueues" to JsonPrimitive("y")))
+        val out = ForkBackup.section(stale, mine, JsonArray(emptyList()))
+        assertEquals(mine, out["settings"])
+        assertEquals(JsonArray(emptyList()), out["savedQueues"])
+        assertEquals(carried["pc"], out["pc"])
+    }
 }

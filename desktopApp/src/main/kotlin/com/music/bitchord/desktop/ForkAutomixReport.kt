@@ -38,12 +38,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
  *  - The progress is the blend's fraction 0..1 as *heard*: what the sink still holds is taken off
  *    what the blend has written, as the phone reads its player's position rather than its decoder's.
  *
- * Not ported: the popup's waveforms. The phone decodes both regions 30 s ahead with `MixWaveform`
- * (app module, built on Android's `MediaDataSource`); the decks go out here without them, and the
- * popup draws the cards, the overlap, the beat grid and the faders, leaving the wave lanes empty
- * (it checks for empty bands). `MixWaveform`'s band reduction and `describeAutomix`'s string
- * building are pure Kotlin that could move to `shared` for both platforms; the phone code is left
- * where it is.
+ * The popup's waveforms: the phone decodes both regions 30 s ahead with `MixWaveform`; the PC
+ * measures the same three bands during its analysis decode and keeps them (`ForkMixWaves`). The view
+ * goes out without them, built on the audio thread, and [ForkAutomixReporter.showBlend] has them read
+ * and sliced on a thread of their own, swapped in a few milliseconds later while the view is still
+ * the one shown. A song with no kept bands (analysed before they were) keeps empty lanes, which the
+ * popup already draws as nothing.
  */
 
 /** The stats-for-nerds line's wording, the phone's `describeAutomix` as pure functions. */
@@ -213,22 +213,32 @@ internal object ForkMixView {
  * engine runs it from), the progress when it has moved visibly, the line at most every
  * [DETAIL_EVERY_MS] (the engine asks on every audio step; the phone's line moves with its ticker).
  * The flows are parameters so the tests do not touch [DesktopPlayerSettings], whose first use reads
- * the saved settings.
+ * the saved settings; [waves] likewise, the waveform filler ([ForkMixWaves.fillLater]).
  */
 internal class ForkAutomixReporter(
     private val detail: MutableStateFlow<String?> = DesktopPlayerSettings.automixDetail,
     private val view: MutableStateFlow<MixTransitionView?> = DesktopPlayerSettings.smartMixView,
     private val progress: MutableStateFlow<Float> = DesktopPlayerSettings.smartMixProgress,
+    private val waves: (MutableStateFlow<MixTransitionView?>, MixTransitionView, String, String) -> Unit =
+        { flow, shown, outId, inId -> ForkMixWaves.fillLater(flow, shown, outId, inId) },
 ) {
     private var viewKey: Any? = null
     private var nextDetailNs = Long.MIN_VALUE
 
     /** A real mix is playing on [key]: its view, built once, and progress back to 0 for it. */
-    fun showBlend(key: Any, build: () -> MixTransitionView) {
+    fun showBlend(key: Any, build: () -> MixTransitionView) = showBlend(key, null, null, build)
+
+    /**
+     * As above, and the waveforms of [outId] and [inId] (the songs' analysis ids) filled in off this
+     * thread once read. Only the hand-off is made here: the engine calls this on the audio thread.
+     */
+    fun showBlend(key: Any, outId: String?, inId: String?, build: () -> MixTransitionView) {
         if (viewKey === key) return
         viewKey = key
         progress.value = 0f
-        view.value = build()
+        val built = build()
+        view.value = built
+        if (outId != null && inId != null) waves(view, built, outId, inId)
     }
 
     /** Progress through the blend shown; ignored with none shown. */

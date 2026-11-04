@@ -26,8 +26,8 @@ class DesktopLyricsSourceOrderTest {
     fun theDesktopOffersThePhonesProvidersInThePhonesOrder() {
         // One provider list for both apps: the lookup is the phone's LyricsRepository.
         val names = DesktopLyricsClient.sources.map { it.name }
-        assertEquals(LyricsSource.offered.map { it.label }, names)
-        assertTrue(names.all { lyricsSourceNamed(it) != null })
+        assertEquals(LyricsSource.offered.map { it.label }, names - ForkNetEaseLyrics.LABEL) // fork: + NetEase, PC only
+        assertTrue((names - ForkNetEaseLyrics.LABEL).all { lyricsSourceNamed(it) != null }) // fork
         // The unsynced fallback is last by definition.
         assertEquals("Genius", names.last())
     }

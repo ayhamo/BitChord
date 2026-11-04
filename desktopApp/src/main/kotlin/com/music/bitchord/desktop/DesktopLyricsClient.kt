@@ -43,7 +43,7 @@ object DesktopLyricsClient {
     internal data class Source(val name: String, val detail: String, val wordSynced: Boolean)
 
     /** Every provider the phone has, in the order it asks them out of the box. */
-    internal val sources: List<Source> = LyricsSource.offered.map { Source(it.label, it.detail, it.wordSynced) }
+    internal val sources: List<Source> = ForkNetEaseLyrics.withNetEase(LyricsSource.offered.map { Source(it.label, it.detail, it.wordSynced) }) // fork: + NetEase, PC only (ForkNetEaseLyrics)
 
     /** The sources that will actually be asked, in the order they are asked. */
     internal fun enabledSources(order: List<String>, enabled: Set<String>): List<String> =
@@ -74,12 +74,13 @@ object DesktopLyricsClient {
         if (!persistence.boolean(KEY_SYNCED_LYRICS, true)) {
             return Result.failure(IllegalStateException("Synced lyrics are switched off"))
         }
-        val configured = enabledSources(persistence.lyricsSourceOrder(), persistence.lyricsEnabledSources())
-            .mapNotNull(::lyricsSourceNamed)
-        val asked = only?.let(::lyricsSourceNamed)?.let(::listOf) ?: configured
+        val configuredNames = enabledSources(persistence.lyricsSourceOrder(), persistence.lyricsEnabledSources()) // fork: by name, so NetEase stays
+        val configured = configuredNames.mapNotNull(::lyricsSourceNamed) // fork: was the line above's tail
+        val asked = if (only == ForkNetEaseLyrics.LABEL) emptyList<LyricsSource>() else only?.let(::lyricsSourceNamed)?.let(::listOf) ?: configured // fork: NetEase alone asks no shared source
+        val forkNames = ForkNetEaseLyrics.asked(only, configuredNames) // fork
         // Every source unticked is a state the listener can reach, and it means the same thing as
         // the feature being off.
-        if (asked.isEmpty()) return Result.failure(IllegalStateException("No lyrics sources are enabled"))
+        if (asked.isEmpty() && ForkNetEaseLyrics.LABEL !in forkNames) return Result.failure(IllegalStateException("No lyrics sources are enabled")) // fork: && NetEase not asked
 
         // The title and artist are part of the key, not just the video id: the
         // player's manual search asks the same track's providers under a typed
@@ -95,7 +96,8 @@ object DesktopLyricsClient {
         val result = if (embedded != null) {
             Result.success(DesktopLyrics("Downloaded", embedded))
         } else {
-            val found = LyricsRepository.lyrics(
+            val prioritize = persistence.boolean(KEY_PRIORITIZE_SYLLABLES, false) // fork: read once for NetEase too
+            val found = if (asked.isEmpty()) null else LyricsRepository.lyrics( // fork: none when only NetEase is asked
                 videoId = song.videoId,
                 title = song.title,
                 artist = song.artist,
@@ -103,14 +105,17 @@ object DesktopLyricsClient {
                 album = song.albumName,
                 sources = asked.toSet(),
                 order = asked,
-                prioritizeSyllableSync = persistence.boolean(KEY_PRIORITIZE_SYLLABLES, false),
+                prioritizeSyllableSync = prioritize, // fork: was persistence.boolean(KEY_PRIORITIZE_SYLLABLES, false)
                 onSourceStarted = onSourceStarted,
                 onSourceResult = { source, result -> onSourceResult?.invoke(source, result != null) },
             )
-            if (found == null) {
+            val winner = found?.let { ForkNetEaseLyrics.LyricsWinner(it.source.label, it.lines.any(LyricLine::isWordSynced)) } // fork
+            val answer = ForkNetEaseLyrics.ahead(forkNames, winner, prioritize, song, durationMs) // fork: NetEase where it sits ahead
+                ?: found?.let { DesktopLyrics(it.source.label, it.lines) } // fork
+            if (answer == null) { // fork: was found == null
                 Result.failure(IllegalStateException("Lyrics unavailable"))
             } else {
-                Result.success(DesktopLyrics(found.source.label, found.lines))
+                Result.success(answer) // fork: was DesktopLyrics(found.source.label, found.lines)
             }
         }
         cache[cacheKey] = Cached(System.currentTimeMillis(), result)

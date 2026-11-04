@@ -31,6 +31,8 @@ import kotlinx.serialization.json.putJsonArray
  * - `POST /click?x=&y=`, `POST /scroll?x=&y=&notches=`
  * - `POST /type?text=`, `POST /key?code=` (a `KeyEvent` VK_ code)
  * - `POST /notice?text=`: shows a [ForkNotice]
+ * - `POST /pick?path=`: the next file dialog (Export / Import data) returns that path without
+ *   opening, since the native dialog can't be driven from here
  */
 internal object ForkDebugBridge {
 
@@ -39,6 +41,10 @@ internal object ForkDebugBridge {
     @Volatile var engine: DesktopPlaybackEngine? = null
     @Volatile var queue: () -> DesktopQueue = { DesktopQueue() }
     @Volatile private var window: Window? = null
+    @Volatile private var pick: java.nio.file.Path? = null
+
+    /** The path handed over by `/pick`, once; null when none (the real dialog opens). */
+    fun takePick(): java.nio.file.Path? = pick?.also { pick = null }
 
     fun attach(window: Window) {
         this.window = window
@@ -53,6 +59,8 @@ internal object ForkDebugBridge {
         server.createContext("/type") { respond(it) { type(it) } }
         server.createContext("/key") { respond(it) { key(it.query("code").toInt()) } }
         server.createContext("/notice") { respond(it) { ForkNotice.show(it.query("text")); "ok" } }
+        // query() has already URL-decoded the value; decoding it again would turn a '+' into a space.
+        server.createContext("/pick") { respond(it) { pick = java.nio.file.Path.of(it.query("path")); "next dialog: $pick" } }
         // Re-opens the playing song on a fresh resolve, through the same swap a quality upgrade takes.
         server.createContext("/reload") { respond(it) { engine?.reloadCurrent(); "ok" } }
         server.start()

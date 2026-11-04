@@ -233,6 +233,7 @@ internal class DesktopTrackAnalyzer(
         runCatching { store.save(trackId, analysis) }
             .onFailure { DesktopTrackLog.log("automix: could not keep the analysis of '${song.title}': ${it.message}") }
         results[trackId] = analysis
+        ForkMixWaves.keep(trackId) // fork: the waveform measured by this pass's decode, kept beside the analysis
         DesktopTrackLog.log(
             "analysed '${song.title}': ${"%.1f".format(analysis.bpm)} bpm" +
                 ", ${analysis.downbeats.size} downbeats" +
@@ -440,6 +441,7 @@ internal class DesktopTrackAnalyzer(
                 block.copyInto(samples, at)
                 at += block.size
             }
+            ForkMixWaves.measured(samples, sourceRate) // fork: the mix popup's waveform from this same decode (ForkMixWaves)
             if (kotlin.math.abs(sourceRate - rate) < 1.0) samples else MelSpectrogram.resample(samples, sourceRate, rate)
         } finally {
             decoder.close()

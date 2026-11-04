@@ -228,4 +228,36 @@ class ForkBackupTest {
         assertEquals(0, back[0].jsonObject["index"]!!.jsonPrimitive.content.toInt())
         assertEquals(0L, back[0].jsonObject["positionMs"]!!.jsonPrimitive.content.toLong())
     }
+
+    @Test
+    fun `track length tolerance and font travel under the phone's keys, inside what Settings offers`() {
+        val of = ForkBackupFormat.PrefValue.Companion::of
+        ForkBackup.apply(
+            ForkBackupFormat.BackupFile(settings = mapOf("upgrade_length_slack_seconds" to of(8)!!, "app_font" to of("LEGACY")!!)),
+        )
+        assertEquals(8, main.getInt(ForkUpgradeLength.KEY, -1))
+        assertEquals("LEGACY", main.get(ForkAppFont.KEY, null))
+        val settings = exported()["settings"]!!.jsonObject
+        assertEquals(ForkBackupFormat.json.encodeToJsonElement(ForkBackupFormat.PrefValue.serializer(), of(8)!!), settings["upgrade_length_slack_seconds"])
+        assertEquals(ForkBackupFormat.json.encodeToJsonElement(ForkBackupFormat.PrefValue.serializer(), of("LEGACY")!!), settings["app_font"])
+
+        // Past the slider's 10 s, or a font the phone doesn't have: the PC's default, as an unread key.
+        ForkBackup.apply(
+            ForkBackupFormat.BackupFile(settings = mapOf("upgrade_length_slack_seconds" to of(11)!!, "app_font" to of("COMIC")!!)),
+        )
+        assertNull(main.get(ForkUpgradeLength.KEY, null))
+        assertNull(main.get(ForkAppFont.KEY, null))
+    }
+
+    @Test
+    fun `an import counts as having seen the welcome, and the flag never travels`() {
+        main.put(ForkWelcome.KEY, "true")
+        assertFalse(ForkBackup.pcOnly(ForkWelcome.KEY))
+        val pc = exported()["fork"]!!.jsonObject["pc"]!!.jsonObject["settings"]!!.jsonObject
+        assertNull(pc[ForkWelcome.KEY])
+
+        main.remove(ForkWelcome.KEY)
+        importPhone()
+        assertEquals("true", main.get(ForkWelcome.KEY, null))
+    }
 }

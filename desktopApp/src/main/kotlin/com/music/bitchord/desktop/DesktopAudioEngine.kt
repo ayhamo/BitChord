@@ -425,6 +425,7 @@ class DesktopPlaybackEngine(
             )
             return false
         }
+        if (!ForkUpgradeLength.catalogueAgrees(song, better, current.durationMs)) return false // fork: the phone's Track length tolerance
         // fork (PC-Continued be257dad): asked again rather than trusting the caller's wait, a skip
         // arms a seam at any moment, and opening the better copy is a network read and a demuxer.
         forkAwaitMixEnd()
@@ -433,6 +434,7 @@ class DesktopPlaybackEngine(
             "upgrading '${song.title}' to ${better.format.summary.ifBlank { "another rendition" }}" +
                 " from ${DesktopMusicSources.sourceNameFor(better)}",
         )
+        ForkUpgradeLength.expect(better) // fork: swapStream checks this copy's decoded length
         swapStream(song, better, current.positionMs)
         return true
     }
@@ -447,6 +449,7 @@ class DesktopPlaybackEngine(
                         track.decoder.close()
                         return@fold
                     }
+                    if (ForkUpgradeLength.refuses(song, stream, track.decoder.durationUs, latest.durationMs)) { track.decoder.close(); return@fold } // fork: the phone's audition length check
                     // Resolving and opening the better rendition can take a few seconds. Hand it
                     // over at the live playhead rather than jumping back to the position at which
                     // the upgrade was first offered.
@@ -3125,7 +3128,7 @@ class DesktopPlaybackEngine(
         val incoming = upcoming
         val plan = activePlan
         if (track != null && incoming != null && plan != null && isSmartMixInProgress()) {
-            forkReport.showBlend(plan) {
+            forkReport.showBlend(plan, track.song.videoId, incoming.song.videoId) { // fork: ids for the popup's waveforms (ForkMixWaves)
                 ForkMixView.build(
                     plan = plan,
                     outSong = track.song,

@@ -121,6 +121,7 @@ internal object ForkPlayerSettings {
         DesktopPlayerSettings.audioQualityWifi.value = shared
         DesktopPlayerSettings.audioQualityCellular.value = shared
         ForkQualityUpgrade.upgraded(playback)
+        ForkCopyLog.noteTrack(playback.song?.videoId) // where the playing song's Copy log starts (ForkCopyLog.kt)
     }
 
     internal fun audioQualityOf(quality: DesktopAudioQuality): AudioQuality =

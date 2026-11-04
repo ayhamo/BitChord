@@ -168,6 +168,8 @@ internal object ForkBackup {
         bool("dont_repeat_suggestions"), bool("filter_non_music_audio"), bool("full_bleed_artwork"),
         bool("hide_song_status"), bool("hide_volume_bar"), bool("legacy_mesh_gradient"),
         bool("loudness_normalization"), bool("lyrics_blur"), int("lyrics_offset_ms"), float("playback_speed", range = 0.25f..4f),
+        bool(ForkArtistGenres.KEY_ENABLED), // "Work out genres" (ForkArtistGenres)
+        bool("sync_downloaded_playlists"), // "Keep playlists updated" (ForkPlaylistSync), the phone's own key
         bool("reduce_animation"), bool("reduce_dynamic_blur"), bool("show_listen_together_button"),
         bool("show_nerd_stats"), bool("show_queue_history"), bool("skip_silence"), bool("spatial_audio"),
         bool("spotify_canvas_auto_hide"), bool("synced_lyrics"), text("translation_language"),
@@ -188,6 +190,9 @@ internal object ForkBackup {
         text("discord_button_2_text"), bool("discord_button_2_visible"),
         // Lyrics sources, by name on the phone and by label here.
         lyricsSources("lyrics_source_order"), lyricsSources("lyrics_sources"), lyricsSources("lyrics_sources_seen"),
+        // "Track length tolerance" and "Font" (ForkSourceMatching, ForkAppFont): the phone's keys, range and names.
+        int(ForkUpgradeLength.KEY, allowed = ForkUpgradeLength.MIN_SECONDS..ForkUpgradeLength.MAX_SECONDS),
+        named(ForkAppFont.KEY, ForkAppFont.KEY, ForkFont.entries.map { it.name }),
         // Renamed on the PC.
         named("audio_quality_wifi", "audio_quality", qualities),
         named("audio_quality_download", "download_quality", listOf("STANDARD", "HIGH", "LOSSLESS")),
@@ -232,6 +237,9 @@ internal object ForkBackup {
         "discord_token", "discord_username", "lastfm_api_key", "lastfm_api_secret", "lastfm_session_key",
         "lastfm_username", "listenbrainz_token", "spotify_spdc_token", "paxsenix_api_key", "paxsenix_api_key_protected",
         "audio_quality_rungs",
+        // The welcome pages' flag is this machine's, as the phone's is (its DEVICE_LOCAL); see ForkWelcome.
+        ForkWelcome.KEY,
+        "playlist_sync_last_complete_check", // ForkPlaylistSync: this machine's last full check
     )
 
     /** [ForkWindowState]'s place on this machine's screens. */
@@ -337,7 +345,16 @@ internal object ForkBackup {
     data class Summary(val months: Int, val settings: Int, val from: String, val at: String)
 
     fun importFrom(source: Path): Summary {
-        val text = Files.readString(source)
+        // A file-system failure's message is only the path; say what happened instead.
+        val text = try {
+            Files.readString(source)
+        } catch (e: java.nio.file.NoSuchFileException) {
+            error("That file isn't there any more")
+        } catch (e: java.nio.file.AccessDeniedException) {
+            error("BitChord isn't allowed to read that file")
+        } catch (e: java.nio.charset.CharacterCodingException) {
+            error("That doesn't look like a BitChord backup")
+        }
         val file = runCatching { ForkBackupFormat.json.decodeFromString(BackupFile.serializer(), text) }
             .getOrElse { error("That doesn't look like a BitChord backup") }
         require(file.app == ForkBackupFormat.APP_TAG) { "That backup is from another app" }
@@ -402,6 +419,9 @@ internal object ForkBackup {
                 listening = file.listening,
             ),
         )
+        // Restoring a backup is coming back to a BitChord already set up: no welcome pages after it
+        // (the phone's file never carries its own flag, which is that phone's).
+        ForkWelcome.markDone()
         runCatching { main().flush() }
         runCatching { navidromeFork().flush() }
     }
@@ -425,8 +445,16 @@ internal object ForkBackup {
     internal fun toPc(bucket: StoredBucket, month: String? = null): DesktopListeningStats.Bucket? {
         val key = month ?: runCatching { YearMonth.parse(bucket.month).toString() }.getOrNull() ?: return null
         val tracks = LinkedHashMap<String, DesktopReplayEntry>()
+        // Each song's days, which "This week" is counted from (ForkReplayWeek); kept the way the PC's
+        // store reads them back, so a month the PC never added to still compares equal on export.
+        val trackDays = LinkedHashMap<String, MutableMap<String, ForkDayStats>>()
         bucket.tracks.forEach { track ->
             if (track.id.isBlank()) return@forEach
+            val days = track.days.toSortedMap()
+                .filterKeys { runCatching { LocalDate.parse(it) }.isSuccess }
+                .mapValues { (_, stats) -> ForkDayStats(stats.ms.coerceAtLeast(0L), stats.plays.coerceAtLeast(0)) }
+                .filterValues { it.ms > 0L || it.plays > 0 }
+            if (days.isNotEmpty()) trackDays[track.id] = LinkedHashMap(days) else trackDays.remove(track.id)
             tracks[track.id] = DesktopReplayEntry(
                 song = Song(
                     videoId = track.id,
@@ -453,6 +481,7 @@ internal object ForkBackup {
             tracks = tracks,
             hours = LongArray(24) { bucket.hours.getOrElse(it) { 0L }.coerceAtLeast(0L) },
             days = days,
+            forkTrackDays = trackDays,
         )
     }
 
@@ -482,7 +511,11 @@ internal object ForkBackup {
                 ms = entry.listenedMs,
                 plays = entry.plays,
                 last = known?.last ?: 0L,
-                days = known?.days.orEmpty(),
+                // The PC's own days for the song (which include what came in on import), else the
+                // carried copy's.
+                days = bucket.forkTrackDays[song.videoId]?.takeIf { it.isNotEmpty() }
+                    ?.toSortedMap()?.mapValues { (_, stats) -> DayStats(stats.ms, stats.plays) }
+                    ?: known?.days.orEmpty(),
             )
         }
         val knownArtists = carried?.artists?.associateBy { it.name.lowercase(Locale.ROOT) }.orEmpty()
@@ -521,9 +554,11 @@ internal object ForkBackup {
             val date = runCatching { LocalDate.parse(day) }.getOrNull() ?: return@mapNotNull null
             if (ym == null || YearMonth.from(date) != ym) null else date.dayOfMonth to ms
         }.toMap()
-        // The whole month's per-day figures: the PC keeps their time; their play counts only as far
-        // as the carried copy knew them.
-        val perDay = bucket.days.toSortedMap().mapValues { (day, ms) -> DayStats(ms, carried?.trackDays?.get(day)?.plays ?: 0) }
+        // The whole month's per-day figures: the PC keeps their time; their play counts are the songs'
+        // own days added up, else as far as the carried copy knew them.
+        val playsByDay = HashMap<String, Int>()
+        bucket.forkTrackDays.values.forEach { days -> days.forEach { (day, stats) -> playsByDay[day] = (playsByDay[day] ?: 0) + stats.plays } }
+        val perDay = bucket.days.toSortedMap().mapValues { (day, ms) -> DayStats(ms, playsByDay[day] ?: carried?.trackDays?.get(day)?.plays ?: 0) }
         return StoredBucket(
             month = bucket.month,
             tracks = tracks,
@@ -537,10 +572,11 @@ internal object ForkBackup {
         )
     }
 
-    private fun fingerprint(bucket: DesktopListeningStats.Bucket) = Triple(
+    private fun fingerprint(bucket: DesktopListeningStats.Bucket) = listOf(
         bucket.tracks.mapValues { it.value.listenedMs to it.value.plays },
         bucket.hours.toList(),
         bucket.days.filterValues { it > 0L },
+        bucket.forkTrackDays.mapValues { (_, days) -> days.filterValues { it.ms > 0L || it.plays > 0 } }.filterValues { it.isNotEmpty() },
     )
 
     private fun mergeDays(all: List<Map<String, DayStats>>): Map<String, DayStats> {
@@ -575,6 +611,7 @@ internal fun ForkBackupGroup() {
     var confirmImport by remember { mutableStateOf(false) }
     var imported by remember { mutableStateOf<String?>(null) }
     SettingsGroup(DesktopStrings["your_data", "Your data"]) {
+        ForkReplayGenresToggle() // the phone's "Work out genres", first in Your data as there
         SettingsRow(
             Icons.Rounded.FileUpload,
             DesktopStrings["export_data", "Export data"],
@@ -637,7 +674,7 @@ internal fun ForkBackupGroup() {
 private fun months(count: Int) = if (count == 1) "1 month" else "$count months"
 
 /** The system's own file dialog: where the backup goes, or which one to read. */
-private fun pickFile(save: Boolean): Path? = runCatching {
+private fun pickFile(save: Boolean): Path? = ForkDebugBridge.takePick() ?: runCatching {
     val dialog = FileDialog(null as java.awt.Frame?, if (save) "Export data" else "Import data", if (save) FileDialog.SAVE else FileDialog.LOAD)
     dialog.directory = ForkPortable.userHome
     if (save) dialog.file = ForkBackup.suggestedName() else dialog.setFilenameFilter { _, name -> name.endsWith(".json", ignoreCase = true) }

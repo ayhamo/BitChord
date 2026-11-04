@@ -462,8 +462,9 @@ internal fun DesktopSongMenu(
                     value = if (lyricsOffsetMs != 0) formatLyricsOffset(lyricsOffsetMs) else "",
                 ) { pickingLyricsOffset = true }
             }
-            if (onSwitchLyricsQueue != null && !com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(song.videoId)) ForkPlayerMenuRows() // fork: only the player's menu, and not for a station, as on the phone
-            if (onSwitchLyricsQueue != null) ForkSavedQueuesRow { forkSavedQueues = true } // fork
+            // fork: the player's menu is the one passed onSetLyricsOffset (the phone's player no longer passes onSwitchLyricsQueue, which hid these)
+            if (onSetLyricsOffset != null && !com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(song.videoId)) ForkPlayerMenuRows() // fork: only the player's menu, and not for a station, as on the phone
+            if (onSetLyricsOffset != null) ForkSavedQueuesRow { forkSavedQueues = true } // fork
         }
 
         val albumId = song.albumId
@@ -488,6 +489,7 @@ internal fun DesktopSongMenu(
         if (!isOffline) {
             DesktopMenuRow(Icons.Rounded.Share, DesktopStrings["share", "Share"], onClick = onShare)
         }
+        if (onSetLyricsOffset != null) ForkCopyLogRow(song, onDismiss) // fork: the phone's Copy log, last, in the player's menu only
         onMore?.let {
             DesktopMenuDivider()
             DesktopMenuRow(Icons.Rounded.Tune, DesktopStrings["d_more", "More…"], onClick = it)

@@ -2239,6 +2239,17 @@ fun BitChordDesktopApp() {
 
     fun openMenu(song: Song) = pageMenu(song)
 
+    // fork: a whole album or playlist into the queue (ForkCollectionActions), as `enqueue` queues one song
+    ForkCollectionActions.window = ForkCollectionActions.Window(
+        queue = { liveQueue },
+        replaceQueue = { queue -> liveQueue = queue; saveQueue(); partySyncHolder[0]?.onLocalIntent() },
+        asQueued = { song -> canonicalSong(song).copy(radioName = liveQueue.current?.radioName).withSource(currentQueueSource()) },
+        play = { songs, source -> playSongs(songs, 0, source) },
+        open = { item -> openShelfItem(item) },
+        download = ::downloadAll,
+        scope = scope,
+    )
+
     /** What the phone records for a search hit: the thing picked, not the words typed to find it. */
     fun recordSongSearch(song: Song) = DesktopSearchHistory.record(
         SearchHistoryEntity(
@@ -3192,7 +3203,7 @@ fun BitChordDesktopApp() {
 
     MaterialTheme(
         colorScheme = desktopColorScheme(),
-        typography = desktopTypography(),
+        typography = forkTypography(desktopTypography()), // fork: the phone's Font choice (ForkAppFont.kt)
     ) {
         val ambientBackdrop by DesktopAppearanceSettings.ambientBackdrop.collectAsState()
         val windowActions = LocalDesktopWindowActions.current
@@ -3644,6 +3655,7 @@ fun BitChordDesktopApp() {
                         )
                     }
 
+                    ForkWelcome.Host(signedIn = youtubeSignedIn, onSignIn = { overlays.signIn = true }) // fork: the phone's welcome pages, once, under the sign-in dialog
                     if (overlays.signIn) {
                         DesktopSignInDialog(
                             busy = signInBusy,
@@ -3782,6 +3794,7 @@ fun BitChordDesktopApp() {
                             onDismiss = { overlays.pipeline = false },
                         )
                     }
+                    ForkReplayOverlay(replaySummary, replayHolder, visible = overlays.replay) // fork: the Replay's stories and share sheet, over the window
                 },
             ) { contentPadding ->
                 // Desktop pages start at the same top edge as Library. Only preserve space for the
@@ -4095,7 +4108,7 @@ fun BitChordDesktopApp() {
                             }
                             }
                         }
-                        overlays.replay -> DesktopReplayPage(
+                        overlays.replay -> ForkReplayPage( // fork: the phone's page (week, stories, share, genres); was DesktopReplayPage
                             summary = replaySummary,
                             period = replayPeriod,
                             holder = replayHolder,
@@ -4157,7 +4170,7 @@ fun BitChordDesktopApp() {
                             onShuffle = { songs ->
                                 playSongs(songs.shuffled(), 0, openedCollection?.let { collectionSource(it) })
                             },
-                            onDownloadAll = ::downloadAll,
+                            onDownloadAll = { songs -> openedCollection?.let { ForkPlaylistSync.remember(it.browseId, it.type, it.title, it.subtitle, it.thumbnailUrl, songs) }; downloadAll(songs) }, // fork: was ::downloadAll; recorded for "Keep playlists updated"
                             animatedCanvas = animatedCanvas,
                             onToggleLike = { song ->
                                 toggleLike(song)
@@ -4169,7 +4182,7 @@ fun BitChordDesktopApp() {
                             contentPadding = contentPadding,
                             forkOpenArtist = ::openArtist, // fork
                         )
-                        destination == DesktopDestination.LISTEN_NOW -> ForkScrollbarBox(homeListState, Modifier.fillMaxSize(), sharedPagePadding) { HomeScreen( // fork: the overlay scrollbar (PC-Continued e16ed1f8)
+                        destination == DesktopDestination.LISTEN_NOW -> ForkCardMenuHost { forkCardMenu -> ForkScrollbarBox(homeListState, Modifier.fillMaxSize(), sharedPagePadding) { HomeScreen( // fork: the overlay scrollbar (PC-Continued e16ed1f8); ForkCardMenuHost, a release card's right-click menu
                             state = ForkDesktopHome.present(homeState), // fork: was homeState; the Navidrome / YouTube / Spotify sections
                             listState = homeListState,
                             onItemClick = { item, shelfTitle -> openShelfItem(item, shelfTitle) },
@@ -4181,12 +4194,12 @@ fun BitChordDesktopApp() {
                             title = null,
                             signedIn = youtubeSignedIn,
                             onSignIn = { overlays.accounts = true },
-                            onItemLongPress = { item -> if (item.videoId != null) openMenu(item.toSong()) },
+                            onItemLongPress = { item -> if (item.videoId != null) openMenu(item.toSong()) else if (ForkCollectionActions.hasMenu(item)) forkCardMenu(item) }, // fork: else-branch, the phone's album / playlist menu
                             onLoadMore = ::loadMoreHome,
                             loadingMore = homeLoadingMore,
                             recentlyPlayedLoading = homeRecentsLoading,
                             leadHero = false,
-                        ) } // fork
+                        ) } } // fork
                         destination == DesktopDestination.EXPLORE && selectedMoodGenre != null -> Column(Modifier.fillMaxSize()) {
                             ForkScrollbarBox(moodGenreListState, Modifier.weight(1f), sharedPagePadding) { MoodGenrePlaylistsScreen( // fork: the overlay scrollbar
                                 title = selectedMoodGenre!!.title,
@@ -6332,6 +6345,7 @@ private fun DesktopSettingsScreen(
             }
             if (section == DesktopSettingsSection.STORAGE) item {
                 SettingsGroup(DesktopStrings["storage", "Storage"]) {
+                    ForkCacheFolderRow() // fork: where the song cache lives, first in Storage as the phone's cache row
                     var limitMb by remember { mutableStateOf(DesktopMediaCache.limitMb()) }
                     var cleared by remember { mutableStateOf<String?>(null) }
                     if (settingsRowVisible(DesktopStrings["song_cache_limit", "Song cache limit"])) {
@@ -6416,6 +6430,7 @@ private fun DesktopSettingsScreen(
             if (section == DesktopSettingsSection.APPEARANCE) item {
                 SettingsGroup(DesktopStrings["appearance", "Appearance"]) {
                     ForkUiScaleRow() // fork: UI scale (Desktop Revived 8782585b)
+                    ForkAppFontRow() // fork: the phone's Font, before Reduce animation
                     ForkReduceAnimationRow() // fork
                     val reduceDynamicBlur by DesktopAppearanceSettings.reduceDynamicBlur.collectAsState()
                     SettingsToggle(
@@ -6665,6 +6680,7 @@ private fun DesktopSettingsScreen(
                         }
                     }
                     }
+                    ForkPlaylistSyncToggle() // fork: the phone's "Keep playlists updated"
                 }
             }
             if (section == DesktopSettingsSection.SOURCES) item {
@@ -6712,6 +6728,7 @@ private fun DesktopSettingsScreen(
                     ForkDirectSourceRow() // fork: the phone's Direct Source Stream, under Sources
                 }
             }
+            if (section == DesktopSettingsSection.SOURCES) item { ForkSourceMatchingGroup() } // fork: the phone's "Source matching" (Track length tolerance)
             if (section == DesktopSettingsSection.ACCOUNT) item {
                 // One row rather than the four groups this used to be. Every
                 // integration option Android has lives behind it; inline, the
@@ -7234,6 +7251,7 @@ private fun DesktopCollectionPage(
                             Box {
                                 DesktopCircleButton(Icons.Rounded.MoreHoriz, DesktopStrings["more", "More"], onClick = { moreOpen = true })
                                 DropdownMenu(expanded = moreOpen, onDismissRequest = { moreOpen = false }) {
+                                    ForkCollectionQueueItems(collection, songs) { moreOpen = false } // fork: the phone's "Play next" / "Add to queue" for the whole release
                                     DropdownMenuItem(
                                         text = { Text(DesktopStrings["download_all", "Download all"]) },
                                         leadingIcon = { Icon(BitChordIcons.Download, null) },

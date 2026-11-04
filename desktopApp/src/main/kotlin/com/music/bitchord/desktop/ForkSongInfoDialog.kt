@@ -166,6 +166,7 @@ private fun ForkSongInfoPanel(song: Song, onDismiss: () -> Unit) {
                     color = DesktopDestructive,
                 )
             }
+            ForkAboutSection(song) // fork: Genius's "About this song", off by default (ForkGeniusMeanings)
         }
         DesktopCardRule()
         Row(

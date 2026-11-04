@@ -69,7 +69,9 @@ fun main() {
     DesktopPresence.install()
     ForkDebugBridge.install() // fork: test door, off unless asked for
     ForkNavidrome.install() // fork
+    ForkPlaylistSync.install() // fork: "Keep playlists updated"
     ForkPaxSenixKey.install() // fork: the PaxSenix API key, before any lyrics are asked for
+    ForkCopyLog.install() // fork: after TrackLog.echo and DebugLog.sink above (ForkCopyLog.kt)
     desktopMain()
 }
 
@@ -83,6 +85,7 @@ private fun desktopMain() = application {
             state.isMinimized = false
         }
     }
+    LaunchedEffect(visible, state.isMinimized) { ForkMemoryTrim.whileAway(!visible || state.isMinimized) } // fork: covers dropped while away (Revived a6b5311c)
     // Hoisted so the player can fill the screen and the caption buttons can maximize — see
     // [DesktopWindowMode]. Fullscreen on Windows is a native borderless window that covers the
     // taskbar, so it needs no placement change here; only ordinary maximize does.

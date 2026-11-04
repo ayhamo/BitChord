@@ -25,6 +25,7 @@ internal object DesktopTrackLog {
     fun log(line: String) {
         val stamped = "${LocalTime.now().format(clock)}  $line"
         println("BitChord: $stamped")
+        ForkCopyLog.record(line) // fork: kept for the player's Copy log too (ForkCopyLog.kt)
         val target = file ?: return
         runCatching {
             Files.writeString(

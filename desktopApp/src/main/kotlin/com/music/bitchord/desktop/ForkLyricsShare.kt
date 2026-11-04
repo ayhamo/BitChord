@@ -464,6 +464,8 @@ internal object ForkLyricsShare {
 
     /** The system's save dialog in Pictures; the file written, or null (cancelled or failed). */
     fun saveWithDialog(card: ForkLyricsCard, title: String): File? = runCatching {
+        // The test door's path (ForkDebugBridge /pick), once, in place of the dialog it can't drive.
+        ForkDebugBridge.takePick()?.let { return@runCatching it.toFile().also { file -> file.writeBytes(card.png) } }
         val dialog = FileDialog(null as java.awt.Frame?, DesktopStrings["save", "Save"], FileDialog.SAVE)
         dialog.directory = picturesDir().path
         dialog.file = fileName(title)
@@ -614,6 +616,7 @@ internal fun ForkLyricsShareSheet(hazeState: HazeState, request: LyricsShareRequ
                     },
                 )
             }
+            ForkLineMeaningSection(request.song, request.lines.filterNot { it.isGap }.map { it.text }) // fork: what Genius wrote over the picked lines, off by default (ForkGeniusMeanings)
         }
     }
 }

@@ -29,12 +29,14 @@ data class DesktopRankedEntry(
 
 /** The stretches a Replay can cover. Months and years, because that is how the listening is kept. */
 enum class DesktopReplayPeriod(val chip: String) {
+    THIS_WEEK("This week"), // fork: the phone's week (ForkReplayWeek)
     THIS_MONTH("This month"),
     THIS_YEAR("This year"),
     ALL_TIME("All time"),
     ;
 
     fun covers(month: String, today: LocalDate): Boolean = when (this) {
+        THIS_WEEK -> ForkReplayWeek.covers(month, today) // fork
         // Anything migrated from the store that predates monthly buckets.
         THIS_MONTH -> month == YearMonth.from(today).toString()
         THIS_YEAR -> month.startsWith("${today.year}-")
@@ -87,6 +89,7 @@ object DesktopListeningStats {
         val tracks: MutableMap<String, DesktopReplayEntry> = LinkedHashMap(),
         val hours: LongArray = LongArray(24),
         val days: MutableMap<String, Long> = LinkedHashMap(),
+        val forkTrackDays: MutableMap<String, MutableMap<String, ForkDayStats>> = LinkedHashMap(), // fork: per-song days, the phone's TrackEntry.days (ForkReplayWeek)
     )
 
     fun record(song: Song, playedMs: Long, countsAsPlay: Boolean) {
@@ -106,6 +109,8 @@ object DesktopListeningStats {
             bucket.hours[at.hour] += added
             val day = at.toLocalDate().toString()
             bucket.days[day] = (bucket.days[day] ?: 0L) + added
+            ForkReplayWeek.record(bucket, song.videoId, day, added, countsAsPlay) // fork: per-song days
+            ForkArtistGenres.noticed(primaryArtist(song.artist)) // fork: genre lookup, as the phone's record asks ArtistFacts
             write(buckets.values.toList())
         }
     }
@@ -133,6 +138,7 @@ object DesktopListeningStats {
         period: DesktopReplayPeriod,
         today: LocalDate,
     ): DesktopReplaySummary {
+        if (period == DesktopReplayPeriod.THIS_WEEK) return ForkReplayWeek.summarise(buckets, today) // fork
         val inPeriod = buckets.filter { period.covers(it.month, today) }
         val entries = inPeriod.flatMap { it.tracks.values }
             .groupBy { it.song.videoId }
@@ -195,6 +201,7 @@ object DesktopListeningStats {
         .sortedByDescending(DesktopRankedEntry::ms)
 
     private fun labelFor(period: DesktopReplayPeriod, today: LocalDate): String = when (period) {
+        DesktopReplayPeriod.THIS_WEEK -> ForkReplayWeek.LABEL // fork
         DesktopReplayPeriod.THIS_MONTH ->
             today.month.name.lowercase(Locale.ROOT).replaceFirstChar(Char::uppercase)
         DesktopReplayPeriod.THIS_YEAR -> today.year.toString()
@@ -254,6 +261,7 @@ object DesktopListeningStats {
                 bucket.days.forEach { (day, ms) ->
                     if (ms > 0L) append(encodeDay(bucket.month, day, ms)).append('\n')
                 }
+                ForkReplayWeek.lines(bucket, ::encodeField).forEach { append(it).append('\n') } // fork: per-song days
             }
         }
         DesktopPreferenceChunks.write(preferences, KEY_BUCKETS, text)
@@ -291,6 +299,7 @@ object DesktopListeningStats {
                 val day = fields.getOrNull(2)?.takeIf(String::isNotBlank) ?: return
                 bucket.days[day] = fields.getOrNull(3)?.toLongOrNull()?.coerceAtLeast(0L) ?: 0L
             }
+            ForkReplayWeek.ROW -> ForkReplayWeek.apply(bucket, fields) // fork: per-song days
         }
     }
 

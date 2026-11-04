@@ -34,6 +34,9 @@ internal object ForkNotice {
 
     @Composable
     fun Host() {
+        // "Keep playlists updated" asks before a big batch here too: this is the window's one
+        // host for messages over the page, so its ask needs no hook of its own in the window.
+        ForkPlaylistSync.AskHost()
         val text by message.collectAsState()
         val shown = text ?: return
         LaunchedEffect(shown) {

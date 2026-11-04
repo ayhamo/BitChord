@@ -77,7 +77,7 @@ object DesktopScrobbling {
     // A key the listener entered in Settings wins; a build that baked one in
     // (or ran with one in the environment) is the fallback, exactly as on
     // Android where AppSettings.lastfmApiKey falls back to BuildConfig.
-    private val apiKey: String?
+    internal val apiKey: String? // fork: internal, for ForkArtistGenres (Replay genres)
         get() = DesktopScrobbleSettings.lastfmApiKey.value.takeIf(String::isNotBlank)
             ?: property("bitchord.lastfm.key") ?: env("BITCHORD_LASTFM_API_KEY")
 
