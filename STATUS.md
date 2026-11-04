@@ -4,7 +4,7 @@ Snapshot for picking the work up again. Plan: `FORK_PLAN.md`. Every touched upst
 
 ## PC fork to follow (owner, 2026-11-04)
 
-- From now on the PC follows **BitChord Desktop Revived** (Bntagaaa/BitChord-Desktop-Revived, remote `revived`): engine fixes and features taken commit by commit, never their UI or branch. Watched daily by `fork-desktop-revived-watch.yml` (`.github/desktop-revived-seen.txt`). PC-Continued is no longer followed; its last pieces (speed join window, tempoDrained on arm, TEMP seek log, awaitMixEnd, silent-tail start, Atmos, EQ limiter) were taken once on 2026-11-04.
+- The PC follows **both** PC forks, picking selectively (owner, 2026-11-04, after the BitChord Discord's admins recommended PC-Continued): **PC-Continued** (jackychan4891, remote `pc-continued`) and **Desktop Revived** (Bntagaaa, remote `revived`). Engine fixes and features commit by commit, never their UI or branch. Each has a daily release watcher: `fork-pc-continued-watch.yml` / `.github/pc-continued-seen.txt` and `fork-desktop-revived-watch.yml` / `.github/desktop-revived-seen.txt` (a new release fails the run, so GitHub emails).
 - Later, the owner's list: PC-Continued's PoToken change (shared code, test phone and PC together); a "Karaoke" switch (centre-channel cancel, PC-Continued e16ed1f8; bass and drums go too); the vocals-only toggle (`vocals-only` branch, plan in the 2026-11-04 conversation; waits until the Revived switch is done).
 
 ## PC: music videos, opt-in (2026-11-04, not committed, not tried in the app)

@@ -1,0 +1,55 @@
+# Fork-only workflow. Once a day it checks jackychan4891/BitChord-PC-Continued, a PC fork of BitChord this fork picks
+# engine fixes and features from (commit by commit, never its UI). When it publishes a release
+# newer than `.github/pc-continued-seen.txt`, the run FAILS on purpose: GitHub emails the failure, and the
+# run's summary shows the release notes and a link to its commits. Issues are off on this fork,
+# so a failed run is the notice. It stays red every day until that file names the new release
+# (after reviewing it). It only reads their public repository; nothing is merged or built.
+name: Fork BitChord PC-Continued watch
+
+on:
+  schedule:
+    - cron: "47 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  WATCHED: jackychan4891/BitChord-PC-Continued
+  SEEN: .github/pc-continued-seen.txt
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github
+
+      - name: compare with the last reviewed release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          seen=$(sed -n 's/^release=//p' "$SEEN")
+          # The newest published release (pre-releases and drafts are not "latest").
+          release=$(gh api "repos/$WATCHED/releases/latest" --jq .tag_name 2>/dev/null || echo "")
+          {
+            echo "## BitChord PC-Continued"
+            echo
+            echo "Reviewed: $seen. Latest release: ${release:-none}."
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$release" ] || [ "$release" = "$seen" ]; then
+            echo "Nothing new." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          {
+            echo "### New release: $release"
+            echo
+            gh api "repos/$WATCHED/releases/latest" --jq '"[" + (.name // .tag_name) + "](" + .html_url + "), " + .published_at + "\n\n" + (.body // "")'
+            echo
+            echo "Commits since the reviewed release: https://github.com/$WATCHED/compare/$seen...$release"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::BitChord PC-Continued released $release (see the summary). After reviewing it, set release=$release in $SEEN."
+          exit 1
