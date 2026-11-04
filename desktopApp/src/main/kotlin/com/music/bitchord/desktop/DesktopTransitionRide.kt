@@ -49,18 +49,22 @@ internal object DesktopTransitionRide {
 
     fun echoAt(plan: TransitionPlan): Float = onBar(plan, FILTER_ECHO_AT).toFloat()
 
+    // fork (from Desktop Revived d77475ba, checked against the phone's CrossfadeController.Render):
+    // a filter ride's bass handoff hands over at its swap, as the phone's `handoffAt`
     fun handoffAt(plan: TransitionPlan): Float =
         if (plan.transitionStyle == TransitionStyle.DJ_BLEND && plan.bassSwap) {
-            onBeat(plan, plan.bassSwapFraction).toFloat()
+            onBeat(plan, plan.bassSwapFraction.coerceIn(0.05, 0.95)).toFloat()
+        } else if (plan.transitionStyle == TransitionStyle.DJ_FILTER && plan.filterVariant == FilterTransitionVariant.BASS_HANDOFF) {
+            filterSwapAt(plan).toFloat()
         } else {
             0.5f
         }
 
     fun echoFrom(plan: TransitionPlan): Float =
-        (echoAt(plan) - if (plan.transitionBeats > 0) 1f / plan.transitionBeats else 0f).coerceAtLeast(0f)
+        (echoAt(plan) - if (gridBeats(plan) > 0) (1.0 / gridBeats(plan)).toFloat() else 0f).coerceAtLeast(0f) // fork
 
     fun echoKill(plan: TransitionPlan): Float =
-        (if (plan.transitionBeats > 0) ECHO_KILL_BEATS / plan.transitionBeats else 0.01).toFloat()
+        (if (gridBeats(plan) > 0) ECHO_KILL_BEATS / gridBeats(plan) else 0.01).toFloat() // fork
 
     /** Approximate loudness of the dry outgoing deck or its repeats, for mix headroom. */
     fun echoLevel(plan: TransitionPlan, progress: Float): Float {
@@ -81,29 +85,33 @@ internal object DesktopTransitionRide {
         val plainOut = fall(p)
         var styledOut = plainOut
         var styledIn = plainIn
+        // fork (from Desktop Revived d77475ba; the phone's mixRise / mixFall): a bass-swap blend keeps
+        // the DJ curve as far as the vocals allow (`held`), and its outgoing fader falls from
+        // `fallFrom` (the swap, never past the midpoint or within a bar of the end, so no fall is
+        // steeper than a bar; held to the swap it was heard as the song cutting out); every filter
+        // gesture rides the same smooth pair, the filters telling them apart; an echo out keeps the
+        // outgoing fader up, the echo carrying the repeats.
+        val hold = 1f - plan.vocalOverlap.toFloat().coerceIn(0f, 1f)
         when (plan.transitionStyle) {
             TransitionStyle.DJ_BLEND -> if (plan.bassSwap) {
-                val swap = onBeat(plan, plan.bassSwapFraction).toFloat()
-                styledIn = maxOf(plainIn, rise(p / swap))
-                styledOut = if (p <= swap) 1f else fall((p - swap) / (1f - swap))
+                val swap = onBeat(plan, plan.bassSwapFraction.coerceIn(0.05, 0.95)).toFloat()
+                val grid = gridBeats(plan)
+                val from = minOf(swap, 0.5f, if (grid > 0) (1.0 - 4.0 / grid).toFloat() else 0.5f).coerceAtLeast(0f)
+                val djIn = rise(p / swap)
+                val djOut = if (p <= from) 1f else fall((p - from) / (1f - from))
+                styledIn = plainIn + (djIn - plainIn) * hold
+                styledOut = plainOut + (djOut - plainOut) * hold
             }
-            TransitionStyle.DJ_FILTER -> when (plan.filterVariant) {
-                FilterTransitionVariant.BASS_HANDOFF -> {
-                    val swap = filterSwapAt(plan).toFloat()
-                    styledOut = if (p <= swap) 1f else fall((p - swap) / (1f - swap))
-                    styledIn = rise(p / swap)
-                }
-                // The delay owns the outgoing fade: the deck fader must carry its repeats.
-                FilterTransitionVariant.ECHO_RIDE -> {
-                    styledOut = if (plan.echoSeconds > 0.0) 1f else fall(p.pow(ECHO_RIDE_FALL_SHAPE))
-                    styledIn = rise(p.pow(ECHO_RIDE_RISE_SHAPE))
-                }
-                FilterTransitionVariant.SWEEP -> {
-                    styledOut = fall(p.pow(FILTER_FALL_SHAPE))
-                    styledIn = rise(p.pow(FILTER_RISE_SHAPE))
-                }
+            TransitionStyle.DJ_FILTER -> {
+                styledOut = fall(p.pow(FILTER_FALL_SHAPE))
+                styledIn = rise(p.pow(FILTER_RISE_SHAPE))
             }
             else -> Unit
+        }
+        if (plan.echoSeconds > 0 && gridBeats(plan) > 0) {
+            result[0] = 1f
+            result[1] = styledIn + (rise(p.pow(VOCAL_SAFE_RISE_SHAPE)) - styledIn) * (1f - hold)
+            return
         }
         val clash = plan.vocalOverlap.toFloat().coerceIn(0f, 1f)
         val safeOut = fall(p.pow(VOCAL_SAFE_FALL_SHAPE))
@@ -231,10 +239,11 @@ internal object DesktopTransitionRide {
         outgoing: TransitionFilter,
         incoming: TransitionFilter,
     ) {
-        val swapAt = onBeat(plan, plan.bassSwapFraction)
+        val swapAt = onBeat(plan, plan.bassSwapFraction.coerceIn(0.05, 0.95)) // fork (Revived d77475ba)
         val width = swapWidth(plan)
         // 0 before the swap window, 1 after it: how much of the low end has changed hands.
-        val handover = ((progress - (swapAt - width)) / width).coerceIn(0.0, 1.0)
+        val from = if (gridBeats(plan) > 0) swapAt - width else swapAt - BASS_SWAP_WIDTH // fork: the phone's swapFrom
+        val handover = ((progress - from) / width).coerceIn(0.0, 1.0)
         val clash = plan.vocalOverlap.coerceIn(0.0, 1.0)
         // The incoming track's own low end is already held out by the swap, so whichever corner
         // sits higher is the one doing the work.
@@ -286,19 +295,34 @@ internal object DesktopTransitionRide {
     )
 
     private fun swapWidth(plan: TransitionPlan): Double =
-        if (plan.transitionBeats >= 2) SWAP_BEATS / plan.transitionBeats else 2 * BASS_SWAP_WIDTH
+        if (gridBeats(plan) > 0) SWAP_BEATS / gridBeats(plan) else 2 * BASS_SWAP_WIDTH // fork
 
-    private fun vocalEntryOpenBy(plan: TransitionPlan, base: Double, clash: Double): Double =
-        onBar(plan, base + (VOCAL_SAFE_ENTRY_OPEN_BY - base) * clash)
+    // fork (Revived d77475ba): each filter variant opens by its own point, as the phone's entryOpenBy
+    private fun vocalEntryOpenBy(plan: TransitionPlan, base: Double, clash: Double): Double {
+        val entry = onBar(plan, when (plan.filterVariant) {
+            FilterTransitionVariant.SWEEP -> base
+            FilterTransitionVariant.BASS_HANDOFF -> 0.38
+            FilterTransitionVariant.ECHO_RIDE -> 0.52
+        })
+        return onBar(plan, entry + (VOCAL_SAFE_ENTRY_OPEN_BY - entry) * clash)
+    }
+
+    /**
+     * Fork (Revived d77475ba): the overlap's real length in beats, as the phone's Render takes it
+     * (the planner's nominal transitionBeats is from before the length and cue were clamped); 0
+     * without a grid to put moves on.
+     */
+    private fun gridBeats(plan: TransitionPlan): Double =
+        (if (plan.beatSeconds > 0) plan.fadeSeconds / plan.beatSeconds else 0.0).takeIf { it >= 2.0 } ?: 0.0
 
     private fun onBeat(plan: TransitionPlan, fraction: Double): Double {
-        val beats = plan.transitionBeats.toDouble()
+        val beats = gridBeats(plan) // fork
         if (beats < 2.0) return fraction.coerceIn(0.05, 0.95)
         return (kotlin.math.round(fraction * beats) / beats).coerceIn(1.0 / beats, 1.0 - 1.0 / beats)
     }
 
     private fun onBar(plan: TransitionPlan, fraction: Double): Double {
-        val beats = plan.transitionBeats.toDouble()
+        val beats = gridBeats(plan) // fork
         return if (beats >= 8.0) {
             (kotlin.math.round(fraction * beats / 4.0) * 4.0 / beats)
                 .coerceIn(4.0 / beats, 1.0 - 4.0 / beats)

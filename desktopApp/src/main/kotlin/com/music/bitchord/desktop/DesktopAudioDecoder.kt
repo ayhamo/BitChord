@@ -3,6 +3,7 @@ package com.music.bitchord.desktop
 import org.bytedeco.ffmpeg.avcodec.AVCodecContext
 import org.bytedeco.ffmpeg.avcodec.AVPacket
 import org.bytedeco.ffmpeg.avformat.AVFormatContext
+import org.bytedeco.ffmpeg.avformat.AVIOInterruptCB // fork
 import org.bytedeco.ffmpeg.avformat.AVInputFormat
 import org.bytedeco.ffmpeg.avutil.AVChannelLayout
 import org.bytedeco.ffmpeg.avutil.AVDictionary
@@ -123,6 +124,29 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
     /** After a seek, decoded audio before this song position is dropped; see [seek]. */
     private var trimBeforeUs: Long? = null
 
+    /** Fork: FFmpeg's interrupt callback; see [open]. */
+    private var forkInterrupt: AVIOInterruptCB.Callback_Pointer? = null
+
+    /** Fork: the error the stream's last read ended on, when it wasn't the end of the file; see [forkThrowIfCutShort]. */
+    private var forkReadError: Int? = null
+
+    /**
+     * Fork (for Desktop Revived 700e0d16's recovery): a stream whose read failed more than
+     * [FORK_CUT_SHORT_US] before its known end (or, with no known length, a live stream) was cut off,
+     * a dropped connection or an expired address, and is reported as a failure so the engine reopens
+     * it where it was heard; FFmpeg's drain would otherwise end the song there as if it had finished.
+     */
+    private fun forkThrowIfCutShort() {
+        val error = forkReadError ?: return
+        forkReadError = null
+        val duration = durationUs
+        if (duration != null && duration > 0 && positionUs >= duration - FORK_CUT_SHORT_US) return
+        throw java.io.IOException("the stream stopped at ${positionUs / 1_000}ms (FFmpeg error $error)")
+    }
+
+    /** Fork: make-up for a multichannel source folded to stereo, 1 when nothing was; see [ForkDownmixMakeup]. */
+    private var forkDownmixMakeup = 1f
+
     /** Fork: where the first block after the open or the last [seek] really begins (ForkCueCorrection). */
     override var forkLandedUs: Long? = null
         private set
@@ -164,7 +188,14 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
         av_dict_set(options, "reconnect_delay_max", "5", 0)
         av_dict_set(options, "rw_timeout", "15000000", 0)
 
-        val opened = if (windowed) windowedContext(url, headers) else AVFormatContext(null)
+        val opened = if (windowed) windowedContext(url, headers) else avformat_alloc_context() // fork: allocated here, for the interrupt callback
+        // fork (Desktop Revived 88dcc5d0): FFmpeg's own blocking I/O (its HTTP, HLS, DASH) asks this and
+        // gives up when the thread reading is interrupted, which closing a deck does, so a closed or
+        // replaced deck's read stuck in the network doesn't hold its thread
+        forkInterrupt = object : AVIOInterruptCB.Callback_Pointer() {
+            override fun call(opaque: Pointer?): Int = if (Thread.currentThread().isInterrupted) 1 else 0
+        }
+        opened.interrupt_callback().callback(forkInterrupt)
         // The code matters.
         val inputFormat: AVInputFormat? = when (transport?.lowercase()) {
             DesktopAddonStream.HLS -> av_find_input_format("hls")
@@ -210,6 +241,13 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
         }
 
         outputFormat = requested.copy(sampleRate = context.sample_rate())
+        // fork (from PC-Continued be257dad): a multichannel (Atmos) bed folded to stereo is brought back up;
+        // only with the Atmos setting on, and never for the analyser, which asks for mono
+        forkDownmixMakeup = ForkDownmixMakeup.gainFor(
+            sourceChannels = context.ch_layout().nb_channels(),
+            outputChannels = outputFormat.channels,
+            atmosEnabled = DesktopAddonSettings.dolbyAtmosEnabled,
+        )
         measuredFormat = measure(decoder.name()?.string, context, opened)
         resampler = buildResampler(context, outputFormat)
         packet = av_packet_alloc()
@@ -284,7 +322,9 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
                 // exception and took the whole app down (0x20474343 in av_read_frame, 2026-11-03).
                 // AVERROR(EIO) instead: the decoder reports a failed read as it does any other.
                 val taken = try { source.read(scratch, minOf(size, scratch.size)) } catch (_: Throwable) { return FORK_AVERROR_EIO }
-                if (taken <= 0) return AVERROR_EOF
+                // fork: a window that could not be fetched short of the file's end is an I/O error, not the
+                // end, so a dropped stream is reopened where it was rather than ending the song
+                if (taken <= 0) return if (source.length > 0 && source.position() < source.length) FORK_AVERROR_EIO else AVERROR_EOF
                 buffer.put(scratch, 0, taken)
                 return taken
             }
@@ -359,7 +399,10 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
                 if (block.isNotEmpty()) return block
                 continue
             }
-            if (received == AVERROR_EOF) return null
+            if (received == AVERROR_EOF) {
+                forkThrowIfCutShort() // fork: a read error short of the end is a failure, not the end (DesktopDecodeAhead.forkState)
+                return null
+            }
             // Every other negative means "not enough input yet".
             if (!pump(container, pkt, context)) return null
         }
@@ -379,6 +422,7 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
                     (block[at + 3].toInt() shl 24),
             )
         }
+        if (forkDownmixMakeup != 1f) ForkDownmixMakeup.apply(samples, count, forkDownmixMakeup) // fork
         sampleCount = count
         return samples
     }
@@ -392,6 +436,7 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
         if (drained) return false
         val read = av_read_frame(container, pkt)
         if (read < 0) {
+            if (read != AVERROR_EOF) forkReadError = read // fork
             avcodec_send_packet(context, null as AVPacket?)
             drained = true
             return true
@@ -474,6 +519,7 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
         if (av_seek_frame(container, streamIndex, target, AVSEEK_FLAG_BACKWARD) < 0) return false
         avcodec_flush_buffers(context)
         drained = false
+        forkReadError = null // fork
         positionUs = micros
         trimBeforeUs = micros.takeIf { it > 0 }
         return true
@@ -507,6 +553,8 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
         readPacket = null
         seekPacket = null
         rangeSource = null
+        forkInterrupt?.deallocate() // fork
+        forkInterrupt = null
     }
 
     internal companion object {
@@ -518,6 +566,9 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
 
         /** Further apart than any index point, cue or segment lands before its target. */
         const val MAX_SEEK_TRIM_US = 30_000_000L
+
+        /** Fork: a read error this close to the known end is taken as the end; see `forkThrowIfCutShort`. */
+        const val FORK_CUT_SHORT_US = 3_000_000L
 
         /** `whence` values, which FFmpeg takes straight from stdio. */
         const val SEEK_CUR = 1

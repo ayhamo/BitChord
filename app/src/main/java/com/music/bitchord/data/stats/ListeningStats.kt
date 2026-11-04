@@ -367,6 +367,7 @@ object ListeningStats {
         return runCatching { json.decodeFromString(StoredBucket.serializer(), file.readText()) }
             .onFailure { Log.w(TAG, "Discarding unreadable listening bucket $key", it) }
             .getOrNull()
+            ?.let { com.music.bitchord.fork.ForkStatsArt.scrub(it, file) { clean -> json.encodeToString(StoredBucket.serializer(), clean) } } // fork: no server login in older covers
     }
 
     // ── Housekeeping ────────────────────────────────────────────────────────

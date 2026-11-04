@@ -2,6 +2,41 @@
 
 Snapshot for picking the work up again. Plan: `FORK_PLAN.md`. Every touched upstream line: `FORK.md`.
 
+## PC fork to follow (owner, 2026-11-04)
+
+- From now on the PC follows **BitChord Desktop Revived** (Bntagaaa/BitChord-Desktop-Revived, remote `revived`): engine fixes and features taken commit by commit, never their UI or branch. Watched daily by `fork-desktop-revived-watch.yml` (`.github/desktop-revived-seen.txt`). PC-Continued is no longer followed; its last pieces (speed join window, tempoDrained on arm, TEMP seek log, awaitMixEnd, silent-tail start, Atmos, EQ limiter) were taken once on 2026-11-04.
+- Later, the owner's list: PC-Continued's PoToken change (shared code, test phone and PC together); a "Karaoke" switch (centre-channel cancel, PC-Continued e16ed1f8; bass and drums go too); the vocals-only toggle (`vocals-only` branch, plan in the 2026-11-04 conversation; waits until the Revived switch is done).
+
+## PC: music videos, opt-in (2026-11-04, not committed, not tried in the app)
+
+- "Music videos (beta)" under Settings > Appearance (off by default): a YouTube music video's picture in the phone's player (sleeve, wide-window full player, quality drawer), kept to the audio clock. From Desktop Revived's `DesktopMusicVideo`/`DesktopVideoBeta`, our own decoder path (`ForkMusicVideo`, details in `FORK.md`). Auto is 720p on the PC; 1080p and up only when picked. Unit tests pass (`ForkMusicVideoSyncTest`, `ForkVideoRangeReaderTest`).
+- To check in the app: picture in sync after seek, pause, skip and a crossfade; CPU at 720p and 1080p; that googlevideo serves the 1 MB windows; the full-screen button does nothing on the PC (sharedUi's orientation is a no-op there).
+
+## PC engine: PC-Continued and Desktop Revived pieces (2026-11-04, not committed, not heard)
+
+Ported into our engine (rows in `FORK.md`, desktop table): PC-Continued's speed join window, the deck armed before a blend, no TEMP seek trace, quality searches kept off the decks from 15 s before a seam to 1.5 s after it, a mix started once the tail has gone silent, Atmos first (make-up gain, source walk, follow-up; only with the Atmos setting on). Desktop Revived's partial-write clock, a prepared next song kept when asked again, the phone's fader curves, mid-song decoder recovery (22 s stall or a dead stream: reopened at the heard position, 2 tries), the phone's head/tail model analysis (new `analysis/windows-v1`, so songs are measured again once), the analyser held to the playing and next song, instant playback (next song opened with no Crossfade/Automix, Next on it starts at once, 256 MiB YouTube range cache in the media cache, queue/history written off the click), a fixed 8/16-bar overlap refusing the loop mix. Not taken: PC-Continued's EQ limiter (our equaliser already runs upstream's PeakLimiter with half make-up). Built, 193 Fork/engine tests pass; the full desktop suite fails only in the four FFmpeg-less classes (19 there).
+- To listen for: speed changes (cleaner joins at 1.25x), Automix blends (outgoing fader no longer held to the swap; filter rides all one shape), a song whose end fades into silence (mix starts sooner), Atmos tracks (as loud as stereo, no pumping), analyses after the re-measure (loop mixes, vocals), gapless start of the next song with Crossfade off, Next with the next song already open (instant), pulling the network mid-song (reopens where it was).
+
+## PC: web player's volume, top-bar links, Apple artist header (2026-11-04, not committed, not tried in the app)
+
+- Top bar: the speaker mutes and restores (wheel: 5% a notch); the title opens the album, each credited artist their page (Navidrome songs: the library's pages), the progress line seeks (hover shows the times). Apple Music's photo, logo and colours on artist pages (YouTube and Navidrome), "Artist Art" switch under Animated canvas. Ported from upstream's `web/`; details in `FORK.md` (desktop table). The phone is unchanged (its `AppleArtistArt.kt` kept as is).
+- To check in the app: the scrubber's 9 dp strip slightly overlaps the artist line's foot; the Navidrome banner sits inside the page gutters, rounded, above the album-style header (which still shows the name).
+
+## PC: phone features ported (2026-11-04, not committed, not tried against the server)
+
+- Home in the phone's Navidrome / YouTube / Spotify sections (`ForkDesktopHome`): the fork's shelves no longer go into the YouTube feed, so Recently Played can't land above the server's shelves; offline the Navidrome section is the kept row, Spotify hidden.
+- Library: "Navidrome albums", "Navidrome playlists" and "Available offline" rows (filled with Home's load, as on the phone).
+- Explore: Spotify mix tiles, opening the same Spotify page as Home's shelf.
+- Offline strip under the player bar (above the mini player when compact): "Go online" when switched on by hand, a notice while the server doesn't answer.
+- "Pre-load next songs" (Settings, Navidrome group; off by default): next N server songs read whole into `navidrome_preload` in the media cache, played from there.
+- Song Info: `NavidromeSongInfo.init()` runs on the PC, but the PC has no Song Info page to show it (the dialog is the phone's `app` only).
+
+## Artist radio and Similar artists (2026-11-04, not committed, not tried on the server yet)
+
+- Navidrome artist pages, phone and PC: "Start radio" plays `getSimilarSongs2` asked with the artist's id, in the server's order (the artist's own songs allowed); an empty answer says "No similar songs found". Phone: a row after Shuffle in the sheet of the artist page's overflow and of a held artist row in the Navidrome library (not offline). PC: a round radio button beside Shuffle/Play (hidden offline). YouTube artists unchanged.
+- "Similar artists" row under the songs (`getArtistInfo2`, artists in the library only, their server pictures), each card opens that artist's Navidrome page; no row when empty or offline. One request per artist and session; the artist id comes from the songs already read, else one `search3` for the exact name.
+- To check on the server: that AudioMuse answers `getSimilarSongs2` for an artist id, and how a "A feat. B" page behaves (no artist of that name: no radio, no row).
+
 ## Now (2026-11-03)
 
 The owner's list from using the phone and PC. Done and tested on the emulator (branch `android-fixes`):

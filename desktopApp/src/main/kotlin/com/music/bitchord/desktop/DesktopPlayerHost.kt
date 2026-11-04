@@ -60,6 +60,12 @@ internal object DesktopPlayerHost : PlayerHost {
     @Composable
     override fun CanvasVideo(spec: CanvasVideoSpec, modifier: Modifier) = DesktopCanvasVideo(spec, modifier)
 
+    override val musicVideoSupported: Boolean get() = ForkMusicVideo.supported // fork: music videos, opt-in (ForkMusicVideo)
+    @Composable override fun MusicVideo(videoId: String, fit: Boolean, onRenderedChanged: (Boolean) -> Unit, modifier: Modifier) = ForkMusicVideoSurface(videoId, fit, onRenderedChanged, modifier) // fork
+    override val musicVideoAspect: StateFlow<Float> get() = ForkMusicVideo.aspect // fork
+    override val musicVideoQuality: StateFlow<com.music.bitchord.ui.player.MusicVideoQualityUi> get() = ForkMusicVideo.quality // fork
+    override fun setMusicVideoQuality(height: Int?) = ForkMusicVideo.setQuality(height) // fork
+
     // Local files carry their art on the row already; there is no remote store to ask.
     @Composable
     override fun rememberRemoteArtworkUrl(song: Song?): String? = song?.thumbnailUrl

@@ -199,12 +199,9 @@ object NavidromeHome {
             // Home's "Navidrome" section is the first this many shelves and "Spotify" the last (ForkHome); none, no sections.
             com.music.bitchord.ui.screens.ForkHome.navidromeShelves.value = navidrome.size
             com.music.bitchord.ui.screens.ForkHome.spotifyShelves.value = spotify.size
-            when {
-                navidrome.isEmpty() && spotify.isEmpty() -> feed
-                feed is UiState.Success -> UiState.Success(navidrome + feed.data + spotify)
-                // Loading or failed: the library is still worth showing meanwhile.
-                else -> UiState.Success(navidrome + spotify)
-            }
+            // Loading or failed: the library is still worth showing meanwhile, and a failed feed says so
+            // with Retry in its section. The list carries the sizes it was cut with (ForkHomeShelves).
+            com.music.bitchord.ui.screens.ForkHomeShelves.merge(feed, navidrome, spotify)
         }.stateIn(scope, SharingStarted.Eagerly, youtube.value)
 
     private fun NavidromeClient.PlaylistRow.toItem(client: NavidromeClient, context: Context) = ShelfItem(

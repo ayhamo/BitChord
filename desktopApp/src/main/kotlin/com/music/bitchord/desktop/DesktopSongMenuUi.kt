@@ -475,6 +475,7 @@ internal fun DesktopSongMenu(
                 DesktopMenuRow(Icons.Rounded.Person, DesktopStrings["open_artist", "Open artist"]) { onOpenArtist(artistId) }
             }
         }
+        ForkSongInfoRow(song, onDismiss) // fork: the phone's Song Info, after Open artist as there
 
         DesktopMenuDivider()
         DesktopMenuRow(

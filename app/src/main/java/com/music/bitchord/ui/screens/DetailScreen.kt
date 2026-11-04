@@ -370,6 +370,7 @@ fun DetailScreen(
         rawSongs.withIndex().associate { (i, s) -> s.videoId to ((if (byTag) s.trackNumber else null) ?: (i + 1)) }
     }
     val isArtist = page.type == BrowseType.ARTIST
+    val forkSections = com.music.bitchord.ui.components.forkWithSimilarArtists(page.browseId, page.sections) // fork: a Navidrome artist's "Similar artists"
     // Whether the top release card's album is already saved isn't on the shelf
     // item; it is read off the album once, as soon as the card is known.
     val topReleaseId = if (isArtist) page.sections.topRelease()?.browseId else null
@@ -826,7 +827,7 @@ fun DetailScreen(
             }
 
             // Albums / Singles & EPs carousels (artist pages).
-            items(page.sections) { shelf ->
+            items(forkSections) { shelf -> // fork: forkSections for page.sections
                 val maxItems = forkRowMax(ARTIST_ROW_MAX_ITEMS, 14.dp) // fork: the cap follows the window's width
                 val canShowAll = shelf.items.size > maxItems
                 val displayItems = remember(shelf.items, maxItems) {

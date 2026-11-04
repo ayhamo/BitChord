@@ -48,7 +48,18 @@ internal object ForkYouTubeHistory {
 
     fun init(store: NavidromePlatform.Store) {
         saved = store
+        // A "no match" note is only good for MISS_MS, but it stayed in the store (one per song played,
+        // read whole at every start) until the song played again. Expired ones go, off the caller's thread.
+        scope.launch {
+            val now = System.currentTimeMillis()
+            val expired = store.keys().filter { key -> store.string(key)?.let { expiredMiss(it, now) } == true }
+            if (expired.isNotEmpty()) store.remove(expired)
+        }
     }
+
+    /** Whether a saved note is a "no match" older than [MISS_MS]. */
+    internal fun expiredMiss(line: String, now: Long): Boolean =
+        line.substringBefore('|') == NONE && now - (line.substringAfter('|', "").toLongOrNull() ?: 0L) >= MISS_MS
 
     fun remember(song: Song) {
         if (song.videoId.startsWith(NAVIDROME_ID_PREFIX)) songs[song.videoId] = song

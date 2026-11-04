@@ -267,6 +267,9 @@ class CrossfadeController(
 
     private var phase = Phase.IDLE
 
+    /** Fork: crossfade on Next / Previous, lent what it needs of this class. */
+    internal val forkSkip = ForkCrossfadeSkip({ phase == Phase.IDLE }, { phase == Phase.ARMING }, { handedOff }, { outgoing }, active, ::configuredFadeMs, versionSwapActive, (DEFAULT_SMART_FALLBACK_SECONDS * 1000).toLong(), { fade, to -> begin(fade, endMs = 0L, smart = false, targetIndex = to) }, ::bail) // fork
+
     /**
      * The player the session was on when this transition began — the one whose
      * track is being left. Held explicitly rather than re-read through
@@ -681,12 +684,12 @@ class CrossfadeController(
             // The listener moving the playhead is something no half-finished
             // crossfade should survive. Nothing this class does registers here
             // any more: the handoff is a role swap, not a seek.
-            if (reason == Player.DISCONTINUITY_REASON_SEEK) forkDropSkip() // fork
+            if (reason == Player.DISCONTINUITY_REASON_SEEK) forkSkip.drop() // fork
             if (reason == Player.DISCONTINUITY_REASON_SEEK) bail()
         }
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-            forkDropSkipOn(reason) // fork
+            forkSkip.dropOn(reason) // fork
             when (reason) {
                 // Something replaced the queue out from under the fade — a new
                 // album, a new search result — so the tail still playing is a
@@ -830,7 +833,7 @@ class CrossfadeController(
      * player this class has finished with.
      */
     fun onSkipRequested() {
-        forkDropSkip() // fork
+        forkSkip.drop() // fork
         if (phase != Phase.IDLE) bail()
     }
 
@@ -1433,7 +1436,7 @@ class CrossfadeController(
         rampStep = 0
         render = renderStyle
         planInFlight = plan
-        armDeadline = SystemClock.elapsedRealtime() + forkArmTimeout(targetIndex) + rampSteps * beatMs // fork: was ARM_TIMEOUT_MS
+        armDeadline = SystemClock.elapsedRealtime() + forkSkip.armTimeoutMs(targetIndex, ARM_TIMEOUT_MS) + rampSteps * beatMs // fork: was ARM_TIMEOUT_MS
         handedOff = false
         outgoing = out
         incoming = into
@@ -1614,7 +1617,7 @@ class CrossfadeController(
         // a prepared decoder open against a stopped player is worse than arming
         // again when playback resumes.
         if (!out.playWhenReady) return bail()
-        if (forkSkipFailed(into)) return bail() // fork
+        if (forkSkip.failed(into)) return bail() // fork
 
         val expired = SystemClock.elapsedRealtime() > armDeadline
         val ready = into.playbackState == Player.STATE_READY
@@ -1708,6 +1711,7 @@ class CrossfadeController(
         // both of which the outgoing player owned — and those tracks would
         // otherwise be lost at the swap.
         reconcileQueue(out, into)
+        if (!forkSkip.mirrorQueue(out, into)) return bail() // fork: edits made while a skip armed (ForkCrossfadeSkip.mirrorQueue)
 
         Log.d(TAG, "handoff at in=${into.currentPosition}ms out=${out.currentPosition}ms")
 
@@ -1837,7 +1841,7 @@ class CrossfadeController(
         // from under it: until the handoff its queue still runs on past the
         // track, and reaching the end would start the next item — the very
         // song fading in — a second time on the player that is leaving.
-        if (!handedOff && (isSkipBlend() /* fork: see isSkipBlend */ || progress >= render.handoffAt || (outRemaining != null && outRemaining <= HANDOFF_GUARD_MS))) {
+        if (!handedOff && (forkSkip.isSkipBlend() /* fork: see ForkCrossfadeSkip.isSkipBlend */ || progress >= render.handoffAt || (outRemaining != null && outRemaining <= HANDOFF_GUARD_MS))) {
             handOff(out, player)
         }
         publishBlend(out, player)
@@ -1854,7 +1858,7 @@ class CrossfadeController(
         val settingSwitchedOff = if (smartFadeActive) {
             !AppSettings.smartFadeEnabled.value
         } else {
-            configuredFadeMs() <= 0L && !skipFadeOn() // fork: && !skipFadeOn()
+            configuredFadeMs() <= 0L && !forkSkip.fadeOn() // fork: && !forkSkip.fadeOn()
         }
         // An echo out rings past the end of the blend, carried by the outgoing
         // player's own silenced audio, so that player is kept until its tail
@@ -2228,25 +2232,13 @@ class CrossfadeController(
     private val lyricSpans = java.util.concurrent.ConcurrentHashMap<String, LyricSpans>()
     private val lyricsAsked = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
-    /**
-     * Fork: when each song's lyrics were asked for. A lookup still running after
-     * [FORK_LYRICS_WAIT_MS] no longer holds the loop mix back: the song is cleared by the
-     * vocal mask instead, as one with no synced lyrics is. Waiting on slow lyrics providers is
-     * one of the ways a pair ended up with the plain blend.
-     */
-    private val forkLyricsAskedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
-
-    private fun forkLyricsFor(id: String): LyricSpans? = lyricSpans[id]
-        ?: forkLyricsAskedAt[id]?.takeIf { android.os.SystemClock.elapsedRealtime() - it >= FORK_LYRICS_WAIT_MS }?.let { forkNoLyricsYet }
-
-    /** Fork: what [forkLyricsFor] stands in with; the plan's key tells it apart, so the pair plans again once real lyrics land. */
-    private val forkNoLyricsYet = LyricSpans(null)
+    private val forkLyrics = ForkLyricsWait(lyricSpans, LyricSpans(null)) // fork: lyrics late past 8 s don't hold the loop mix back
 
     /** Asks for [item]'s synced lyrics once; a loop they vouch for needs no vocal mask. */
     private fun askLyrics(item: MediaItem, durationMs: Long) {
         val id = item.mediaId
         if (!lyricsAsked.add(id)) return
-        forkLyricsAskedAt[id] = android.os.SystemClock.elapsedRealtime() // fork
+        forkLyrics.asked(id) // fork
         scope.launch(Dispatchers.IO) {
             val lines = runCatching { syncedLines(item, durationMs) }.getOrNull()
             // Only line-synced lyrics say where a voice is; plain text says nothing about time.
@@ -2302,14 +2294,13 @@ class CrossfadeController(
         }
         askLyrics(current, durationMs)
         askLyrics(next, nextDurationMs)
-        val outLyrics = forkLyricsFor(current.mediaId) // fork: not held up past FORK_LYRICS_WAIT_MS
-        val inLyrics = forkLyricsFor(next.mediaId) // fork
+        val outLyrics = forkLyrics.spansFor(current.mediaId) // fork: was lyricSpans[current.mediaId]
+        val inLyrics = forkLyrics.spansFor(next.mediaId) // fork: was lyricSpans[next.mediaId]
         if (outLyrics == null || inLyrics == null) {
             noteLoopVerdict(pair, null, "waiting on lyrics")
             return null
         }
-        val key = "$pair|${System.identityHashCode(currentAnalysis)}|${System.identityHashCode(nextAnalysis)}" +
-            "|${outLyrics === forkNoLyricsYet}${inLyrics === forkNoLyricsYet}" // fork: plans again once late lyrics arrive
+        val key = "$pair|${System.identityHashCode(currentAnalysis)}|${System.identityHashCode(nextAnalysis)}" + forkLyrics.keyPart(outLyrics, inLyrics) // fork: + keyPart, plans again once late lyrics arrive
         val cached = loopPlanned
         // Kept while its loop is still far enough ahead to set up; a seek past
         // that plans again from the new playhead.
@@ -2786,7 +2777,7 @@ class CrossfadeController(
         clearMixView()
         if (!handedOff && phase != Phase.FADING) {
             // Nothing was ever audible; no ramp to run.
-            val forkCarry = forkTakeSkip() // fork
+            val forkCarry = forkSkip.take() // fork
             finish()
             forkCarry() // fork
             return
@@ -2864,7 +2855,7 @@ class CrossfadeController(
         outgoing = null
         incoming = null
         handedOff = false
-        forkDropSkip() // fork
+        forkSkip.drop(ended = true) // fork
         outgoingItemIndex = C.INDEX_UNSET
         queuedItemCount = 0
         incomingCueTimeMs = 0L
@@ -2879,7 +2870,7 @@ class CrossfadeController(
 
     /** Still a next track, still playing, still switched on — by whichever setting armed this one. */
     private fun stillWorthFading(): Boolean {
-        if (isSkipBlend()) return skipFadeOn() // fork: a skip may be headed backwards, or away from the last item
+        if (forkSkip.isSkipBlend()) return forkSkip.fadeOn() // fork: a skip may be headed backwards, or away from the last item
         val stillOn = if (smartFadeActive) AppSettings.smartFadeEnabled.value else configuredFadeMs() > 0L
         return stillOn && (outgoing ?: active()).hasNextMediaItem()
     }
@@ -4121,9 +4112,6 @@ class CrossfadeController(
         const val LOOP_SETUP_SECONDS = 15.0
         const val LOOP_ARM_LEAD_MS = 12_000L
         const val LOOP_MIN_LEAD_MS = 9_000L
-
-        /** Fork: how long a loop mix waits on a song's synced lyrics; see `forkLyricsAskedAt`. */
-        const val FORK_LYRICS_WAIT_MS = 8_000L
         const val LOOP_BUILD_TIMEOUT_MS = 8_000L
 
         /** After the incoming player starts, how long its clock settles before it is measured against the deck. */
@@ -4142,118 +4130,4 @@ class CrossfadeController(
         /** A retired sink has long stopped rendering by then. */
         const val LOOP_RENDERER_CLOSE_DELAY_MS = 1_500L
     }
-
-    // fork: crossfade on manual skip ------------------------------------------
-
-    /**
-     * Where a manual skip is headed while [crossfadeSkip] arms it, or
-     * [C.INDEX_UNSET]. A skip that never becomes audible — the incoming track
-     * not ready in time, a pause, an error — still has to happen, so [bail]
-     * carries it out plainly.
-     */
-    private var skipTarget = C.INDEX_UNSET
-
-    /**
-     * Whether the blend in flight was started by Next / Previous rather than a
-     * track running out. Read by the service at the handoff, so a skipped song
-     * is not booked as finished (scrobbles, "sleep after this song"). A skip also
-     * hands over at once ([driveFade]), so the screen shows the chosen song as soon
-     * as it plays (its audio still blends). Safe: mid-song, the outgoing player
-     * isn't reading the next file.
-     */
-    fun isSkipBlend(): Boolean = skipTarget != C.INDEX_UNSET
-
-    /**
-     * The song a manual skip is headed to while it is still arming (its track loading, the session
-     * still on the old player), else [C.INDEX_UNSET]. The session reports it as current meanwhile:
-     * Media3's controller shows the next song the moment Next is pressed, and a session still
-     * answering with the old one flipped the screen back until the handoff (fork).
-     */
-    fun pendingSkipIndex(): Int = if (!handedOff && phase != Phase.IDLE) skipIndex() else C.INDEX_UNSET
-
-    /** The song a skip is headed to, by id: "Play next" or a row moved above it while arming shifts its index. */
-    private var skipTargetId: String? = null
-
-    /** [skipTarget], looked up again by [skipTargetId] when the queue moved under it. */
-    private fun skipIndex(): Int {
-        val out = outgoing ?: return skipTarget
-        if (skipTarget == C.INDEX_UNSET || skipTargetId == null) return skipTarget
-        if (skipTarget in 0 until out.mediaItemCount && out.getMediaItemAt(skipTarget).mediaId == skipTargetId) return skipTarget
-        return (0 until out.mediaItemCount).firstOrNull { out.getMediaItemAt(it).mediaId == skipTargetId } ?: C.INDEX_UNSET
-    }
-
-    /** Whether a manual skip is blending under a setting that allows it: the slider, or Automix's fallback. */
-    private fun skipFadeOn(): Boolean =
-        skipTarget != C.INDEX_UNSET && (configuredFadeMs() > 0L || AppSettings.smartFadeEnabled.value)
-
-    /**
-     * Next / Previous as a blend into [toIndex] rather than a cut (fork-only).
-     *
-     * With a crossfade length set, or with Automix on (then a plain fade, see below): nothing in
-     * flight, playing, no party, no version swap. The fade runs the same arm →
-     * blend → handoff as a track running out, except it is cued now: [begin]
-     * loads [toIndex] instead of the next item and the fade point is "as soon
-     * as the incoming track is ready". Returns false when it didn't take the
-     * skip; the caller then skips the upstream way.
-     */
-    fun crossfadeSkip(toIndex: Int): Boolean {
-        // A second press while the first skip is still arming: carry the first
-        // one out now (see [bail]) and let the caller skip on from there plainly.
-        // [toIndex] was read before that seek, so it is stale.
-        if (phase == Phase.ARMING && skipTarget != C.INDEX_UNSET) {
-            bail()
-            return false
-        }
-        if (!com.music.bitchord.fork.ForkSettings.crossfadeOnSkip.value) return false
-        // One stream to the DAC: no blend, as a song running out (planAutoTransition).
-        if (BitPerfectOutput.status.value.active) return false
-        if (phase != Phase.IDLE) return false
-        if (versionSwapActive() || ListenTogether.state.value.inParty) return false
-        val out = active()
-        if (!out.isPlaying || toIndex == out.currentMediaItemIndex) return false
-        // Direct Source Stream can take longer to answer than a skip waits to arm: the old song would
-        // play on under the new title, then cut to silence. Its own way to skip wins (a server's song doesn't use it).
-        if (DirectSourceGate.isActive() && toIndex in 0 until out.mediaItemCount && !com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(out.getMediaItemAt(toIndex).mediaId)) return false
-        if (toIndex !in 0 until out.mediaItemCount) return false
-        // With Automix on, a skip blends too (there is no time to analyse it, so a plain fade of the
-        // slider's length, or Automix's own fallback with the slider off); songs running out are
-        // still Automix's, planned at the end as before.
-        val fade = configuredFadeMs().takeIf { it > 0L }
-            ?: if (AppSettings.smartFadeEnabled.value) (DEFAULT_SMART_FALLBACK_SECONDS * 1000).toLong() else 0L
-        if (fade <= 0L) return false
-        skipTarget = toIndex
-        skipTargetId = out.getMediaItemAt(toIndex).mediaId
-        if (!begin(fade, endMs = 0L, smart = false, targetIndex = toIndex)) {
-            skipTarget = C.INDEX_UNSET
-            return false
-        }
-        return true
-    }
-
-    private fun forkDropSkip() {
-        skipTarget = C.INDEX_UNSET
-    }
-
-    /** A new queue or a jump replaces a pending skip. */
-    private fun forkDropSkipOn(transitionReason: Int) {
-        if (transitionReason == Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED ||
-            transitionReason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK
-        ) forkDropSkip()
-    }
-
-    /** A skip gives a slow stream only a few seconds; then it happens plainly (see [bail]). */
-    private fun forkArmTimeout(targetIndex: Int): Long =
-        if (targetIndex != C.INDEX_UNSET) SKIP_ARM_TIMEOUT_MS else ARM_TIMEOUT_MS
-
-    /** A standby whose stream failed will never get ready: a skip bails now rather than hold the old song, and the new title at 0:00. */
-    private fun forkSkipFailed(into: Player): Boolean = isSkipBlend() && into.playerError != null
-
-    /** What [bail] does after [finish] (which forgets it) when nothing was audible yet: a manual skip that never got to blend still happens. */
-    private fun forkTakeSkip(): () -> Unit {
-        val skip = skipIndex()
-        val out = outgoing
-        return { if (skip != C.INDEX_UNSET && out != null && skip in 0 until out.mediaItemCount) out.seekTo(skip, 0L) }
-    }
 }
-
-private const val SKIP_ARM_TIMEOUT_MS = 3_000L // fork

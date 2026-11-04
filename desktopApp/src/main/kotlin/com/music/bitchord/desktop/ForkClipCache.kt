@@ -106,6 +106,8 @@ internal object ForkClipCache {
     fun afterSongCacheCleared() {
         scope.launch {
             Kind.entries.forEach { NavidromeClips.forgetMisses(it.notes) }
+            ForkPreload.clear() // the songs read ahead go with the song cache
+            ForkAudioRangeCache.shared.clear() // and the audio windows kept from YouTube (Desktop Revived 88dcc5d0)
             cleared.value++
         }
     }

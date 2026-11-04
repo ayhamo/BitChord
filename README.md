@@ -33,6 +33,11 @@
 
 The full list of changes, with every line touched in upstream files, is in [FORK.md](FORK.md).
 
+**Keeping up** (for whoever maintains this fork)
+- Upstream's app releases are merged and rebuilt daily (`fork-sync-release.yml`).
+- [BitChord Desktop Revived](https://github.com/Bntagaaa/BitChord-Desktop-Revived), the PC fork this fork follows for PC engine fixes and features (taken commit by commit, never their UI), is checked daily (`fork-desktop-revived-watch.yml`): the run fails, and GitHub emails, when they have a new release or commits; after reviewing them, update `.github/desktop-revived-seen.txt`. (BitChord PC-Continued was followed until 2026-11-04; what was taken from it is credited in FORK.md.)
+- Upstream's web player, [bitchord-8bw.pages.dev](https://bitchord-8bw.pages.dev/home), gets features before the apps, and its newest code isn't public yet (the author plans to open-source it). Until then, look over the live site now and then for new features worth bringing to the PC app; the `web/` folder in this repository can lag behind the site.
+
 ---
 
 <div align="center">

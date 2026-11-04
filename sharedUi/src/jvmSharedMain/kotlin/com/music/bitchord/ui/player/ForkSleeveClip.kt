@@ -163,16 +163,29 @@ internal fun forkBigArtFits(phoneWidth: Boolean, windowWidth: Dp, windowHeight: 
 private const val FORK_ART_SHRINK_DELAY_MS = 1_000L
 
 /**
+ * Fork: whether the player's clips, the paused cover and the big art treat the music as playing.
+ * `isPlaying` is false while a song buffers too (a seek, a stall, a track's start), and a ~1 s
+ * stall faded the paused cover in over the clip and out again and froze the clip with it: a
+ * buffering player ([isLoading]) has not been paused, so only a real pause counts.
+ */
+internal fun forkPlaysOn(isPlaying: Boolean, isLoading: Boolean): Boolean = isPlaying || isLoading
+
+/**
  * Fork: "Fullscreen cover art" while playing, the small cover while paused, as a paused
- * backdrop already brings the small cover back. Only a pause that lasts counts:
- * `isPlaying` is also false while a song buffers, and the art shouldn't jump for that.
+ * backdrop already brings the small cover back. Only a pause that lasts counts: a track
+ * change also reads as not playing for a moment, and the art shouldn't jump for that.
+ *
+ * Not with a clip to show ([hasClip]): the banner's clip has its own player, and shrinking to
+ * the small cover tore its decoder down and built the sleeve's (then the reverse on resume),
+ * each on the main thread with the clip starting over, which upstream's banner is built to
+ * avoid. A paused clip just holds its frame in the banner, as with the switch off.
  */
 @Composable
-internal fun rememberForkArtAwake(isPlaying: Boolean): Boolean {
+internal fun rememberForkArtAwake(isPlaying: Boolean, hasClip: Boolean = false): Boolean {
     var awake by remember { mutableStateOf(isPlaying) }
     LaunchedEffect(isPlaying) {
         if (!isPlaying) delay(FORK_ART_SHRINK_DELAY_MS)
         awake = isPlaying
     }
-    return awake
+    return awake || hasClip
 }

@@ -40,7 +40,11 @@ import org.bytedeco.javacpp.IntPointer
 import org.bytedeco.javacpp.PointerPointer
 
 /** The motion artwork, decoded here rather than played by a second media stack. */
-internal class DesktopCanvasDecoder {
+internal class DesktopCanvasDecoder(
+    private val forkMaxEdge: Int = MAX_EDGE, // fork: a music video decodes at its own size (ForkMusicVideo)
+    private val forkFrameThreads: Boolean = false, // fork: a music video never loops, so frame threading is safe
+    private val forkIo: ForkVideoIo? = null, // fork: googlevideo serves windows only (ForkVideoIo)
+) {
 
     private var format: AVFormatContext? = null
     private var codec: AVCodecContext? = null
@@ -80,8 +84,9 @@ internal class DesktopCanvasDecoder {
         }
         av_dict_set(options, "rw_timeout", "15000000", 0)
 
-        val opened = AVFormatContext(null)
-        check(avformat_open_input(opened, url, null, options) >= 0) { "could not open the clip" }
+        val opened = forkIo?.context() ?: AVFormatContext(null) // fork: was AVFormatContext(null)
+        val forkOpened = avformat_open_input(opened, url, null, options); org.bytedeco.ffmpeg.global.avutil.av_dict_free(options) // fork: the options were never freed (from Desktop Revived 9b2c72c9)
+        check(forkOpened >= 0) { "could not open the clip" } // fork: was the open call itself
         format = opened
         check(avformat_find_stream_info(opened, null as AVDictionary?) >= 0) { "no stream info" }
         streamIndex = forkSmallestFitting(opened) ?: av_find_best_stream( // fork: see forkSmallestFitting
@@ -98,7 +103,7 @@ internal class DesktopCanvasDecoder {
         // fork: as many decoding threads as FFmpeg sees fit, slices only: frame threading holds frames
         // back, and the loop's seek-and-flush at the end would drop them (a jump at every loop)
         context.thread_count(0)
-        context.thread_type(2) // FF_THREAD_SLICE (libavcodec/avcodec.h); the bindings leave the macro out
+        context.thread_type(if (forkFrameThreads) 3 else 2) // FF_THREAD_SLICE (libavcodec/avcodec.h); the bindings leave the macro out. fork: | FF_THREAD_FRAME for a music video (YouTube's H.264 is one slice a frame, so slices alone are one thread)
         check(avcodec_open2(context, decoder, null as AVDictionary?) >= 0) { "decoder refused to open" }
         codec = context
 
@@ -107,7 +112,8 @@ internal class DesktopCanvasDecoder {
         check(sourceWidth > 0 && sourceHeight > 0) { "the clip has no size" }
 
         // Scaled down on the way out.
-        val scale = minOf(1.0, MAX_EDGE.toDouble() / maxOf(sourceWidth, sourceHeight))
+        val scale = minOf(1.0, forkMaxEdge.toDouble() / maxOf(sourceWidth, sourceHeight)) // fork: was MAX_EDGE
+        forkReadClock(stream) // fork: frame times, for a music video's sync
         width = ((sourceWidth * scale).toInt() / 2) * 2
         height = ((sourceHeight * scale).toInt() / 2) * 2
 
@@ -218,6 +224,9 @@ internal class DesktopCanvasDecoder {
         format?.let { avformat_close_input(it) }
         buffer?.deallocate()
         strides?.deallocate()
+        planes?.deallocate() // fork: was left to the collector (from Desktop Revived 9b2c72c9)
+        forkIo?.close() // fork: custom I/O is not freed by avformat_close_input
+        forkDrained = false // fork
         frame = null
         packet = null
         scaler = null
@@ -231,6 +240,70 @@ internal class DesktopCanvasDecoder {
         streamIndex = -1
         sourceWidth = 0
         sourceHeight = 0
+    }
+
+    // ---- fork: a music video (ForkMusicVideo), from Desktop Revived 9b2c72c9's seekTo/frameTimeMs ----
+
+    private var forkTimeBase = 0.0
+    private var forkStart = 0L
+    private var forkDrained = false
+
+    /** Fork: the time base and start of the chosen stream, for [forkNext]'s frame times. */
+    private fun forkReadClock(stream: org.bytedeco.ffmpeg.avformat.AVStream) {
+        val base = stream.time_base()
+        forkTimeBase = if (base.den() > 0) base.num().toDouble() / base.den() else 0.0
+        forkStart = stream.start_time().takeIf { it != org.bytedeco.ffmpeg.global.avutil.AV_NOPTS_VALUE } ?: 0L
+    }
+
+    /**
+     * Fork: the next frame in decode order without looping, and its time in ms. Converted into
+     * [into] only when [keep] says so: a frame the music video drops (late, or decoded through on
+     * the way to a seek's target) costs no scaling and no copy. Null at the end (or a failed read).
+     */
+    fun forkNext(into: ByteArray, keep: (Long) -> Boolean): ForkDecodedFrame? {
+        val container = format ?: return null
+        val context = codec ?: return null
+        val pkt = packet ?: return null
+        val decoded = frame ?: return null
+        while (true) {
+            if (avcodec_receive_frame(context, decoded) == 0) {
+                val stamp = decoded.best_effort_timestamp()
+                val ms = if (stamp != org.bytedeco.ffmpeg.global.avutil.AV_NOPTS_VALUE && forkTimeBase > 0) {
+                    ((stamp - forkStart) * forkTimeBase * 1_000).toLong()
+                } else {
+                    -1L
+                }
+                if (!keep(ms)) return ForkDecodedFrame(ms, kept = false)
+                val converter = scalerFor(decoded.format()) ?: return null
+                sws_scale(converter, decoded.data(), decoded.linesize(), 0, sourceHeight, planes, strides)
+                view?.let { pixels ->
+                    pixels.rewind()
+                    pixels.get(into, 0, minOf(into.size, width * height * 4))
+                }
+                return ForkDecodedFrame(ms, kept = true)
+            }
+            if (forkDrained) return null
+            if (av_read_frame(container, pkt) < 0) {
+                // Frame threading holds frames back: an empty packet lets them out.
+                forkDrained = true
+                avcodec_send_packet(context, null as AVPacket?)
+                continue
+            }
+            if (pkt.stream_index() == streamIndex) avcodec_send_packet(context, pkt)
+            av_packet_unref(pkt)
+        }
+    }
+
+    /** Fork: to the keyframe at or before [millis]; [forkNext] then decodes on from there. */
+    fun forkSeek(millis: Long): Boolean {
+        val container = format ?: return false
+        val context = codec ?: return false
+        if (forkTimeBase <= 0) return false
+        val timestamp = (millis.coerceAtLeast(0L) / 1_000.0 / forkTimeBase).toLong() + forkStart
+        if (av_seek_frame(container, streamIndex, timestamp, AVSEEK_FLAG_BACKWARD) < 0) return false
+        avcodec_flush_buffers(context)
+        forkDrained = false
+        return true
     }
 
     private companion object {

@@ -54,6 +54,14 @@ internal class DesktopRangeStream(
     /** Fetches the window containing [at]. */
     private fun fetchWindowFor(at: Long): Boolean {
         val start = at - (at % windowBytes)
+        // fork (Desktop Revived 88dcc5d0): a window kept on disk is read from there (ForkAudioRangeCache)
+        val forkKey = if (windowBytes <= ForkAudioRangeCache.MAX_SPAN) ForkAudioRangeCache.keyFor(url, headers, windowBytes) else null
+        forkKey?.let { ForkAudioRangeCache.shared.read(it, start) }?.let { span ->
+            windowStart = start
+            length = span.total
+            window = span.bytes
+            return at < windowStart + window.size
+        }
         val end = start + windowBytes - 1
         val request = HttpRequest.newBuilder(URI.create(url))
             .timeout(Duration.ofSeconds(20))
@@ -87,6 +95,10 @@ internal class DesktopRangeStream(
         }
         window = body
         if (length < 0) length = windowStart + body.size
+        // fork: an answered range is kept for next time (only a range answer, never a whole file)
+        if (forkKey != null && stated != null && windowStart == start && body.isNotEmpty() && length >= start + body.size) {
+            ForkAudioRangeCache.shared.write(forkKey, start, body, length, System.currentTimeMillis() + ForkAudioRangeCache.KEEP_MS)
+        }
         return body.isNotEmpty()
     }
 

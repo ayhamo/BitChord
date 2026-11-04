@@ -392,10 +392,17 @@ internal object DesktopSourceRegistry {
         song: Song,
         quality: String?,
     ): Deferred<DesktopStream?>? {
-        if (playing.format.isLossless) return null
+        // fork (PC-Continued 18b6b3ae): with Atmos wanted a lossless copy still leaves the mix question
+        // open, and every other source is asked, whatever its rung (ForkAtmos)
+        val chasingAtmos = ForkAtmos.wanted() && !ForkAtmos.isAtmos(playing)
+        if (playing.format.isLossless && !chasingAtmos) return null
         val winnerRank = configs().firstOrNull { it.id == playing.sourceId }?.kind?.rank
             ?: DesktopSourceKind.YOUTUBE.rank
-        val better = candidates.filter { it.config.kind.rank < winnerRank }
+        val better = if (chasingAtmos) {
+            candidates.filter { it.config.id != playing.sourceId }
+        } else {
+            candidates.filter { it.config.kind.rank < winnerRank }
+        }
         if (better.isEmpty()) return null
         DesktopTrackLog.log(
             "still looking for a better copy of '${song.title}' from " +
@@ -417,15 +424,40 @@ internal object DesktopSourceRegistry {
                 async { openBest(source, song, quality) }
             }
             .toMutableList()
+        // fork (PC-Continued 18b6b3ae): with Atmos wanted, a stereo copy that answers first is held for
+        // ForkAtmos.GRACE_MS while the others may still bring the immersive one
+        var held: DesktopStream? = null
+        var graceEndsAt = 0L
         try {
             while (running.isNotEmpty()) {
-                val done = select<Deferred<DesktopStream?>> {
-                    running.forEach { candidate -> candidate.onAwait { candidate } }
+                val done = if (held == null) {
+                    select<Deferred<DesktopStream?>> {
+                        running.forEach { candidate -> candidate.onAwait { candidate } }
+                    }
+                } else {
+                    val left = graceEndsAt - System.currentTimeMillis()
+                    if (left <= 0L || ForkAtmos.mixEngaged) break
+                    withTimeoutOrNull(left) {
+                        select<Deferred<DesktopStream?>> {
+                            running.forEach { candidate -> candidate.onAwait { candidate } }
+                        }
+                    } ?: break
                 }
                 running -= done
-                done.await()?.let { return@coroutineScope it }
+                val stream = done.await() ?: continue
+                if (!ForkAtmos.wanted() || ForkAtmos.isAtmos(stream)) return@coroutineScope stream
+                if (held == null) {
+                    held = stream
+                    graceEndsAt = System.currentTimeMillis() + ForkAtmos.GRACE_MS
+                    DesktopTrackLog.log(
+                        "holding ${stream.format.summary.ifBlank { "a stereo copy" }} of " +
+                            "'${song.title}' while the other sources look for Dolby Atmos",
+                    )
+                } else {
+                    held = betterOf(held, stream)
+                }
             }
-            null
+            held
         } finally {
             running.forEach { it.cancel() }
         }
@@ -436,6 +468,10 @@ internal object DesktopSourceRegistry {
         // fork (PC-Continued c310d0e3): a swap interrupts the song, so it has to buy something. Any
         // lossless copy used to be taken, an identical one included, so a second look could swap
         // the playing FLAC for the same FLAC.
+        // fork (PC-Continued 18b6b3ae): Atmos is a mix, not a rung; an Atmos copy only gets this far with
+        // the setting on (playableHere), and one playing is not swapped for stereo
+        if (playing?.isDolbyAtmos == true) return false
+        if (candidate.isDolbyAtmos) return true
         if (playing == null) return candidate.isLossless
         if (candidate.isLossless != playing.isLossless) return candidate.isLossless
         if (candidate.isLossless) {
@@ -468,10 +504,13 @@ internal object DesktopSourceRegistry {
         // This is an explicit second look. Empty catalogue answers and failed/expired stream URLs
         // from the first pass must not make the retry a cache hit.
         DesktopAddonSource.clearCompletedTrackCalls()
+        val chasingAtmos = ForkAtmos.wanted() && playing?.format?.isDolbyAtmos != true // fork (PC-Continued 18b6b3ae)
         val playingRank = configs().firstOrNull { it.id == playing?.sourceId }?.kind?.rank
             ?: DesktopSourceKind.YOUTUBE.rank
         val better = playbackAdapters(quality).filter {
-            it.config.kind != DesktopSourceKind.YOUTUBE && it.config.kind.rank < playingRank
+            it.config.kind != DesktopSourceKind.YOUTUBE &&
+                // fork: the immersive mix is asked of every other source, whatever its rung
+                (if (chasingAtmos) it.config.id != playing?.sourceId else it.config.kind.rank < playingRank)
         }
         if (better.isEmpty()) return null
         DesktopTrackLog.log(
@@ -531,9 +570,20 @@ internal object DesktopSourceRegistry {
     internal fun preferred(matches: List<Song>, target: Song, wantsLossless: Boolean): List<Song> {
         val sameLength = matches.filter { DesktopTrackMatcher.withinSeconds(it, target, SAME_RECORDING_SEC) }
         val eligible = sameLength.ifEmpty { matches }
-        if (!wantsLossless) return eligible
+        // fork (PC-Continued e16ed1f8): an Atmos mix is only ever its own row, so with Atmos wanted those
+        // rows go first (with the setting off the order is as before)
+        // Only asked when there is an Atmos row to put first: wanted() probes FFmpeg for E-AC-3, and a
+        // plain ranking has no reason to load the codecs (it made three ranking tests need FFmpeg).
+        val ranked = if (eligible.any { it.sourceQuality == DesktopModuleSource.DOLBY } && ForkAtmos.wanted()) {
+            val immersiveFirst = eligible.sortedByDescending { it.sourceQuality == DesktopModuleSource.DOLBY }
+            if (immersiveFirst.firstOrNull()?.sourceQuality == DesktopModuleSource.DOLBY) return immersiveFirst
+            eligible
+        } else {
+            eligible
+        }
+        if (!wantsLossless) return ranked
         // Stable, so the confidence order the matcher produced survives inside each tier.
-        return eligible.sortedByDescending { it.sourceQuality == DesktopModuleSource.LOSSLESS }
+        return ranked.sortedByDescending { it.sourceQuality == DesktopModuleSource.LOSSLESS }
     }
 
     /** Which of two renditions of the same recording is the better one. */
@@ -541,20 +591,21 @@ internal object DesktopSourceRegistry {
         val held = current ?: return candidate
         val a = candidate.format
         val b = held.format
-        if (a.isLossless != b.isLossless) return if (a.isLossless) candidate else held
+        // fork (PC-Continued 18b6b3ae): Atmos before lossless; an Atmos copy only gets here with the setting on
         if (a.isDolbyAtmos != b.isDolbyAtmos) return if (a.isDolbyAtmos) candidate else held
+        if (a.isLossless != b.isLossless) return if (a.isLossless) candidate else held
         return if ((a.kbps ?: 0) > (b.kbps ?: 0)) candidate else held
     }
 
     private fun playableHere(source: SourceAdapter, stream: DesktopStream): Boolean {
-        if (stream.isDolbyAtmos && !DesktopCodecs.supportsDolbyAtmos) {
+        if (ForkAtmos.isAtmos(stream) && !DesktopCodecs.supportsDolbyAtmos) { // fork: the format's flag too
             DesktopTrackLog.log(
                 "${source.descriptor.name} offered a Dolby Atmos rendition, " +
                     "which this build has no E-AC-3 decoder for",
             )
             return false
         }
-        if (stream.isDolbyAtmos && !DesktopAddonSettings.dolbyAtmosEnabled) {
+        if (ForkAtmos.isAtmos(stream) && !DesktopAddonSettings.dolbyAtmosEnabled) { // fork
             DesktopTrackLog.log(
                 "${source.descriptor.name} offered a Dolby Atmos rendition, which is switched off",
             )

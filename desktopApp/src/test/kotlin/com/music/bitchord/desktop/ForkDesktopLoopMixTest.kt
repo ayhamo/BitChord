@@ -201,6 +201,7 @@ class ForkDesktopLoopMixTest {
         deckRate: Double = 1.0,
         swapping: Boolean = false,
         state: TrackAnalysisState = TrackAnalysisState.ANALYSED,
+        phraseBars: Int = 0,
     ) = ForkLoopPair(
         outSong = Song("a", "A", "Artist", null),
         inSong = Song("b", "B", "Artist", null),
@@ -221,6 +222,7 @@ class ForkDesktopLoopMixTest {
         skipSilence = skipSilence,
         deckRate = deckRate,
         swapping = swapping,
+        phraseBars = phraseBars,
     )
 
     @Test
@@ -234,5 +236,6 @@ class ForkDesktopLoopMixTest {
         assertEquals("the song is still easing out of its own mix", ForkLoopMixRules.refusal(pair(deckRate = 1.02)))
         assertEquals("a better copy is crossing in", ForkLoopMixRules.refusal(pair(swapping = true)))
         assertEquals("waiting on analysis", ForkLoopMixRules.refusal(pair(state = TrackAnalysisState.ANALYSING)))
+        assertEquals("a fixed 16-bar overlap is chosen", ForkLoopMixRules.refusal(pair(phraseBars = 16)))
     }
 }

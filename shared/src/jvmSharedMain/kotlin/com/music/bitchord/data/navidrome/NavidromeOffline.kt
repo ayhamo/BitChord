@@ -149,13 +149,49 @@ object NavidromeOffline {
      */
     @Volatile private var manifestUnreadable = false
 
+    /** Counted down once [load] has read the folder and the manifest; see [ready]. */
+    private val loaded = java.util.concurrent.CountDownLatch(1)
+
+    /** Set on the thread running [load], which must not wait for itself. */
+    private val loading = ThreadLocal<Boolean>()
+
+    /**
+     * Whether [init] ran, waiting for its read of the folder and the manifest unless this is that
+     * read. Everything that answers from what is kept goes through here: a song built, a page
+     * opened or a keep started before the read finishes waits for it (a keep that didn't would
+     * write a manifest with no pages in it), instead of the whole start waiting.
+     */
+    private fun ready(): Boolean {
+        if (!::dir.isInitialized) return false
+        if (loaded.count > 0L && loading.get() != true) loaded.await()
+        return true
+    }
+
+    /**
+     * Takes the folder and reads what is kept in it on [scope], not on the caller's thread: the
+     * app calls this from its start on the main thread, and the read (four folder listings, `.part`
+     * deletes and a [Song] built per kept track) stalled the start with a big library kept.
+     */
     fun init(directory: File, rowTitle: String, goneLabel: String) {
-        dir = directory.apply { mkdirs() }
+        this.rowTitle = rowTitle
+        this.goneLabel = goneLabel
+        dir = directory
+        scope.launch {
+            loading.set(true)
+            try {
+                load()
+            } finally {
+                loading.remove()
+                loaded.countDown()
+            }
+        }
+    }
+
+    private fun load() {
+        dir.mkdirs()
         coverDir.mkdirs()
         clipDir.mkdirs()
         lyricsDir.mkdirs()
-        this.rowTitle = rowTitle
-        this.goneLabel = goneLabel
         // Half-written files of a process that died mid-download: nothing is downloading yet.
         listOf(dir, coverDir, clipDir, lyricsDir).forEach { d -> d.listFiles()?.filter { it.name.endsWith(".part") }?.forEach { it.delete() } }
         // Song files are the only top-level files without a dot (offline.json, clips.json, *.part have one).
@@ -178,7 +214,7 @@ object NavidromeOffline {
 
     /** The kept file for a Navidrome song id, or null. */
     fun localFile(songId: String): File? =
-        if (::dir.isInitialized && songId in onDiskIds) File(dir, songId) else null
+        if (ready() && songId in onDiskIds) File(dir, songId) else null
 
     /**
      * Where a Navidrome song plays from when the address it carried is no good: its kept file,
@@ -195,7 +231,7 @@ object NavidromeOffline {
 
     /** The kept lyrics for a Navidrome song id, or null. */
     fun lyricsFile(songId: String): File? =
-        if (::dir.isInitialized) File(lyricsDir, "$songId.lrc").takeIf { it.isFile } else null
+        if (ready()) File(lyricsDir, "$songId.lrc").takeIf { it.isFile } else null
 
     /** The song id of a kept file's `file://` address, or null. */
     fun songIdForFile(uri: String): String? {
@@ -221,7 +257,7 @@ object NavidromeOffline {
     }
 
     /** A kept clip's address for the song, or null; see [NavidromeClips]. */
-    fun clipUrl(songId: String, kind: NavidromeClips.Kind): String? = clips["$songId|${kind.name}"]
+    fun clipUrl(songId: String, kind: NavidromeClips.Kind): String? = clips.takeIf { ready() }?.get("$songId|${kind.name}")
 
     fun noteSize(songId: String, bytes: Long) {
         sizes[songId] = bytes
@@ -235,7 +271,7 @@ object NavidromeOffline {
     }
 
     /** What a kept page takes on the phone: its songs' files, lyrics and clips (covers are shared and small). Disk reads: call off the main thread. */
-    fun pageBytes(id: String): Long = _pages.value[id]?.songs.orEmpty().sumOf { song ->
+    fun pageBytes(id: String): Long = _pages.takeIf { ready() }?.value?.get(id)?.songs.orEmpty().sumOf { song ->
         val songId = song.videoId.removePrefix(NavidromeSettings.ID_PREFIX)
         (localFile(songId)?.length() ?: 0L) + (lyricsFile(songId)?.length() ?: 0L) +
             NavidromeClips.Kind.entries.sumOf { kind -> clipUrl(songId, kind)?.let { clipFile(it).length() } ?: 0L }
@@ -243,14 +279,14 @@ object NavidromeOffline {
 
     /** Every kept song once that has its file, for offline mode's library listing. */
     fun keptSongs(): List<Song> =
-        _pages.value.values.flatMap { it.songs }.distinctBy { it.videoId }.filter(::hasFile).map(::onDisk)
+        if (!ready()) emptyList() else _pages.value.values.flatMap { it.songs }.distinctBy { it.videoId }.filter(::hasFile).map(::onDisk)
 
     /** A kept page's songs that have their files (the server can't be reached), or null when [browseId] isn't kept. */
     fun pageState(browseId: String): UiState<List<Song>>? =
-        _pages.value[browseId]?.songs?.filter(::hasFile)?.map(::onDisk)?.let { UiState.Success(it) }
+        _pages.takeIf { ready() }?.value?.get(browseId)?.songs?.filter(::hasFile)?.map(::onDisk)?.let { UiState.Success(it) }
 
     /** How many of a kept page's songs have no file yet (they failed to download); 0 when it is whole or not kept. */
-    fun missing(id: String): Int = _pages.value[id]?.songs.orEmpty().count { !hasFile(it) }
+    fun missing(id: String): Int = _pages.takeIf { ready() }?.value?.get(id)?.songs.orEmpty().count { !hasFile(it) }
 
     private fun hasFile(song: Song) = localFile(song.videoId.removePrefix(NavidromeSettings.ID_PREFIX)) != null
 
@@ -263,7 +299,7 @@ object NavidromeOffline {
      * budget) is recorded with what it has, so nothing downloaded is lost.
      */
     fun keep(id: String, title: String, subtitle: String, cover: String?, songs: List<Song>) {
-        if (jobs[id]?.isActive == true || songs.isEmpty()) return
+        if (!ready() || jobs[id]?.isActive == true || songs.isEmpty()) return
         val page = Page(id, title, subtitle, cover, songs)
         active[id] = page
         setProgress(id, 0f)
@@ -420,7 +456,7 @@ object NavidromeOffline {
      * changing on the server is a retag, not something to follow.
      */
     fun syncPlaylists() {
-        if (!::dir.isInitialized || NavidromePlatform.offline.value) return
+        if (!ready() || NavidromePlatform.offline.value) return
         val kept = _pages.value.values.filter { it.id.startsWith(NavidromePlaylists.PREFIX) }
         if (kept.isEmpty()) return
         scope.launch {
@@ -476,6 +512,7 @@ object NavidromeOffline {
      * one being kept for the first time goes, as [remove].
      */
     fun stop(id: String) {
+        ready()
         if (id in _pages.value) jobs[id]?.cancel() else remove(id)
     }
 
@@ -491,6 +528,7 @@ object NavidromeOffline {
         setProgress(id, null)
         publishStatus()
         scope.launch {
+            ready()
             if (id in _pages.value) {
                 _pages.update { it - id }
                 writeManifest()
@@ -503,9 +541,10 @@ object NavidromeOffline {
 
     /** Lets every page go. */
     fun removeAll() {
+        if (!ready()) return
         _pages.value.keys.toList().forEach(::remove)
         // An unreadable list holds its files for good (sweep can't tell what it kept): being asked to clear everything answers that.
-        if (::dir.isInitialized && manifestUnreadable) {
+        if (manifestUnreadable) {
             unreadableManifest.delete()
             manifestUnreadable = false
             sweep()
@@ -519,7 +558,7 @@ object NavidromeOffline {
      * and are left to them.
      */
     private fun sweep() = synchronized(ioLock) {
-        if (!::dir.isInitialized || manifestUnreadable) return@synchronized
+        if (!::dir.isInitialized || manifestUnreadable) return@synchronized // every caller has waited for [ready] already; waiting here, under [ioLock], could hold up [load]
         val pages = _pages.value.values + active.values
         val songIds = pages.flatMap { it.songs }.mapTo(HashSet()) { it.videoId.removePrefix(NavidromeSettings.ID_PREFIX) }
         val coverIds = pages.flatMap { p -> p.songs.map { it.thumbnailUrl } + p.cover }.mapNotNullTo(HashSet()) { url -> url?.let(::coverIdOf)?.let { coverFile(it).name } }
@@ -546,12 +585,12 @@ object NavidromeOffline {
     }
 
     /** Bytes everything kept takes. Disk reads: call off the main thread. */
-    fun sizeBytes(): Long = if (::dir.isInitialized) dir.walkTopDown().filter { it.isFile }.sumOf { it.length() } else 0L
+    fun sizeBytes(): Long = if (ready()) dir.walkTopDown().filter { it.isFile }.sumOf { it.length() } else 0L
 
     /** The kept pages as a Library row (title supplied by the caller). */
     fun shelf(title: String): HomeShelf = HomeShelf(
         title,
-        _pages.value.values.sortedBy { it.title.lowercase() }.map { page ->
+        _pages.value.values.takeIf { ready() }.orEmpty().sortedBy { it.title.lowercase() }.map { page ->
             ShelfItem(title = page.title, subtitle = if (page.gone) goneLabel else page.subtitle, thumbnailUrl = page.cover, videoId = null, browseId = page.id)
         },
         "Navidrome",

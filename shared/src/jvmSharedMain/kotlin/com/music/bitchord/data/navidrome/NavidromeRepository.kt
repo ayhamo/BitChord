@@ -49,6 +49,7 @@ object NavidromeRepository {
         cached = null
         NavidromeClips.reset()
         NavidromeAlbums.clear() // album ids belong to the old server or account
+        NavidromeArtistInfo.clear() // so do artist ids and similar artists
     }
 
     suspend fun getSongs(): List<Song> = lock.withLock {
@@ -167,6 +168,7 @@ object NavidromeRepository {
      */
     fun NavidromeClient.SongRow.toSong(client: NavidromeClient): Song {
         NavidromeAlbums.remember(album, albumId) // so its album page opens with one request
+        NavidromeArtistInfo.remember(this) // so its artists' radio and similar artists need no search for the id
         sizeBytes?.let { NavidromePlatform.kept.noteSize(id, it) } // so "Available offline" can say how much a page takes
         val lossless = suffix?.lowercase() in LOSSLESS_SUFFIXES
         val artistName = artist ?: "Unknown Artist"

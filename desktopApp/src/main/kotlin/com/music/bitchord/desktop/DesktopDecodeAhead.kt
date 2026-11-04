@@ -1,5 +1,6 @@
 package com.music.bitchord.desktop
 
+import java.util.concurrent.TimeUnit // fork
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
@@ -20,6 +21,23 @@ internal interface DesktopSampleSource {
 }
 
 /**
+ * Fork (from Desktop Revived 700e0d16): what the worker behind [DesktopDecodeAhead] is doing, so a
+ * dead decoder can't pass for one that is still buffering, nor a failed one for the end of the song.
+ */
+internal enum class ForkDecodeState { RUNNING, EOF, FAILED, CLOSED }
+
+/**
+ * Fork: whether a deck reopened [attempt] times may be reopened again, out of [limit]. A deck that has
+ * played [forgiveNs] since its last reopen has earned its tries back; one never reopened
+ * ([recoveredAtNs] 0) has not, or a failing resolve would be retried for ever (nanoTime minus 0 is
+ * always past the window).
+ */
+internal fun forkRecoveryAllowed(attempt: Int, recoveredAtNs: Long, nowNs: Long, limit: Int, forgiveNs: Long): Boolean {
+    if (attempt > 0 && recoveredAtNs != 0L && nowNs - recoveredAtNs > forgiveNs) return true
+    return attempt < limit
+}
+
+/**
  * Decodes a track a few seconds ahead of the speakers, on a thread of its own.
  *
  * The audio thread used to call the decoder directly, and the decoder reads straight from the
@@ -37,7 +55,7 @@ internal class DesktopDecodeAhead(
     val durationUs: Long?,
     val measuredFormat: DesktopStreamFormat?,
     /** How far ahead to decode, in samples across all channels. */
-    private val aheadSamples: Int = outputFormat.sampleRate * outputFormat.channels * AHEAD_SECONDS,
+    private var aheadSamples: Int = outputFormat.sampleRate * outputFormat.channels * AHEAD_SECONDS, // fork: var, see forkPrepareForPlayback
     name: String = "BitChord-Decode",
 ) {
 
@@ -51,6 +69,10 @@ internal class DesktopDecodeAhead(
     private var queuedSamples = 0
     private var ended = false
     private var closed = false
+    /** Fork (Revived 700e0d16): the decoder threw; see [forkState]. */
+    private var failed: Throwable? = null
+    /** Fork (Revived 418d328d): when the audio thread first found the queue empty with the worker live, else 0. */
+    private var underrunSinceNanos = 0L
     private var pendingSeekUs: Long? = null
     /** Bumped by every seek, so a block decoded before it is never played after it. */
     private var generation = 0
@@ -75,20 +97,40 @@ internal class DesktopDecodeAhead(
     }
 
     /** The next decoded block, waiting for the decoder only if it has fallen behind. */
-    fun readSamples(): FloatArray? = lock.withLock {
-        if (queue.isEmpty() && !ended && !closed) {
+    fun readSamples(): FloatArray? = readSamples(Long.MAX_VALUE)
+
+    /**
+     * Fork (from Desktop Revived 418d328d): the next block, but the caller has control back after
+     * [maxWaitMillis]. A decoder can sit in a network read for seconds, and the audio thread also
+     * drains Pause, Seek and track changes, so it must not wait on one for ever. A null is the end
+     * (see [forkState]) or, while it is [ForkDecodeState.RUNNING], an underrun.
+     */
+    fun readSamples(maxWaitMillis: Long): FloatArray? = lock.withLock {
+        if (queue.isEmpty() && !ended && !closed && failed == null) {
             val waitedFrom = System.nanoTime()
-            while (queue.isEmpty() && !ended && !closed) ready.await()
+            if (maxWaitMillis == Long.MAX_VALUE) {
+                while (queue.isEmpty() && !ended && !closed && failed == null) ready.await()
+            } else {
+                var left = TimeUnit.MILLISECONDS.toNanos(maxWaitMillis.coerceAtLeast(0L))
+                while (queue.isEmpty() && !ended && !closed && failed == null && left > 0L) left = ready.awaitNanos(left)
+            }
             val waitedMs = (System.nanoTime() - waitedFrom) / 1_000_000
-            if (started && waitedMs >= STARVED_LOG_MS) {
+            if (started && queue.isNotEmpty() && waitedMs >= STARVED_LOG_MS) {
                 DesktopTrackLog.log("decode-ahead ran dry: the audio thread waited ${waitedMs}ms for the decoder")
             }
         }
         val block = queue.removeFirstOrNull()
         if (block == null) {
             sampleCount = 0
+            // fork: an empty queue with the worker live is an underrun, timed for the stall check
+            if (!ended && !closed && failed == null) {
+                if (underrunSinceNanos == 0L) underrunSinceNanos = System.nanoTime()
+            } else {
+                underrunSinceNanos = 0L
+            }
             return null
         }
+        underrunSinceNanos = 0L // fork
         queuedSamples -= block.size
         forkClock.taken() // fork
         started = true
@@ -97,17 +139,45 @@ internal class DesktopDecodeAhead(
         block
     }
 
+    /** Fork (Desktop Revived 88dcc5d0): a deck opened ahead with a short read-ahead grows to the full one when it plays. */
+    fun forkPrepareForPlayback() = lock.withLock {
+        aheadSamples = maxOf(aheadSamples, outputFormat.sampleRate * outputFormat.channels * AHEAD_SECONDS)
+        wake.signalAll()
+    }
+
     /** Fork: whether a block is decoded and waiting, so a read now would not wait on the worker. */
     fun forkHasSamples(): Boolean = lock.withLock { queue.isNotEmpty() }
+
+    /** Fork (Revived 700e0d16): the worker's lifecycle; FAILED is a decoder that threw, not the song's end. */
+    val forkState: ForkDecodeState
+        get() = lock.withLock {
+            when {
+                closed -> ForkDecodeState.CLOSED
+                failed != null -> ForkDecodeState.FAILED
+                ended && queue.isEmpty() -> ForkDecodeState.EOF
+                else -> ForkDecodeState.RUNNING
+            }
+        }
+
+    /** Fork: why [forkState] is FAILED. */
+    val forkFailure: Throwable? get() = lock.withLock { failed }
+
+    /** Fork (Revived 418d328d): how long the queue has been empty while the worker is live, 0 when it isn't. */
+    val forkUnderrunMs: Long
+        get() = lock.withLock {
+            if (underrunSinceNanos == 0L) 0L else (System.nanoTime() - underrunSinceNanos).coerceAtLeast(0L) / 1_000_000
+        }
 
     /** Moves to [micros]; whatever was decoded ahead of the old position is thrown away. */
     fun seek(micros: Long): Boolean {
         lock.withLock {
+            if (closed || failed != null) return false // fork: the worker is gone; see forkState
             generation++
             queue.clear()
             queuedSamples = 0
             ended = false
             started = false
+            underrunSinceNanos = 0L // fork
             pendingSeekUs = micros
             forkClock.seeked() // fork
             wake.signal()
@@ -118,12 +188,17 @@ internal class DesktopDecodeAhead(
     /** Stops decoding; the decoder itself is closed by the worker, once any read in flight returns. */
     fun close() {
         lock.withLock {
+            if (closed) return // fork
             closed = true
             queue.clear()
             queuedSamples = 0
+            underrunSinceNanos = 0L // fork
             wake.signal()
             ready.signalAll()
         }
+        // fork (Revived 700e0d16): a read stuck in the network gives up sooner (the stream's callbacks
+        // answer an interrupted read as an I/O error), so a closed deck doesn't keep its thread
+        worker.interrupt()
     }
 
     private fun decodeLoop() {
@@ -131,10 +206,10 @@ internal class DesktopDecodeAhead(
             while (true) {
                 var seekTo: Long? = null
                 val decodingFor = lock.withLock {
-                    while (!closed && pendingSeekUs == null && (ended || queuedSamples >= aheadSamples)) {
+                    while (!closed && failed == null && pendingSeekUs == null && (ended || queuedSamples >= aheadSamples)) {
                         wake.await()
                     }
-                    if (closed) return
+                    if (closed || failed != null) return
                     seekTo = pendingSeekUs
                     pendingSeekUs = null
                     generation
@@ -145,11 +220,21 @@ internal class DesktopDecodeAhead(
                     continue
                 }
 
+                // fork (Revived 700e0d16): a decoder that throws is FAILED, not the end of the song, so the
+                // engine can reopen the stream at the heard position instead of skipping the rest
                 val decoded = try {
                     source.readSamples()?.copyOf(source.sampleCount)
                 } catch (failure: Exception) {
-                    DesktopTrackLog.log("decode-ahead: decoder failed, ending the track: ${failure.message}")
-                    null
+                    lock.withLock {
+                        if (decodingFor == generation && !closed) {
+                            DesktopTrackLog.log("decode-ahead: decoder failed: ${failure.message}")
+                            failed = failure
+                            underrunSinceNanos = 0L
+                            ready.signalAll()
+                        }
+                    }
+                    if (lock.withLock { failed != null || closed }) return
+                    continue
                 }
                 val forkLanded = source.forkLandedUs // fork: read on the decoder's own thread
                 lock.withLock {
@@ -178,9 +263,12 @@ internal class DesktopDecodeAhead(
         }
     }
 
-    private companion object {
+    internal companion object { // fork: internal, for the instant next deck's short read-ahead
         /** Long enough to ride out a slow range request or a reconnect. */
         const val AHEAD_SECONDS = 8
+
+        /** Fork (Desktop Revived 88dcc5d0): what a next deck opened only for instant playback holds until it plays. */
+        const val FORK_INSTANT_AHEAD_SECONDS = 2
 
         /** Waits shorter than this are ordinary scheduling, not a network stall worth logging. */
         const val STARVED_LOG_MS = 20L

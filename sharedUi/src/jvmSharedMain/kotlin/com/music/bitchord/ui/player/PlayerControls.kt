@@ -243,12 +243,12 @@ internal fun PlayerScrubber(
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Text(
-                    text = formatTime((shown * durationMs).toLong()),
+                    text = ForkLiveClock.elapsed() ?: formatTime((shown * durationMs).toLong()), // fork: a station's time
                     style = MaterialTheme.typography.labelMedium,
                     color = LocalPlayerTint.current.copy(alpha = 0.55f),
                 )
                 Text(
-                    text = "-" + formatTime(durationMs - (shown * durationMs).toLong()),
+                    text = ForkLiveClock.remaining() ?: ("-" + formatTime(durationMs - (shown * durationMs).toLong())), // fork: a station is live
                     style = MaterialTheme.typography.labelMedium,
                     color = LocalPlayerTint.current.copy(alpha = 0.55f),
                 )

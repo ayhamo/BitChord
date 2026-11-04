@@ -40,6 +40,7 @@ import com.music.bitchord.data.navidrome.NavidromePlatform
 import com.music.bitchord.data.navidrome.NavidromeRadio
 import com.music.bitchord.ui.components.contextClick
 import java.security.MessageDigest
+import kotlinx.coroutines.launch
 
 /**
  * Fork: the server's internet radio stations on the desktop. The stations are the phone's
@@ -155,4 +156,47 @@ private fun ForkRadioRow(station: Song, playing: Boolean, onClick: () -> Unit, m
         }
         menu(station)
     }
+}
+
+/**
+ * Fork: a station whose server closes the stream cleanly (a restart, a dropped mount, an idle
+ * timeout) reads to the engine as a track that ended, and the queue moved on as if the song had
+ * finished. A live stream has no end: it is opened again after [DELAY_MS], up to [MAX] times a
+ * minute, then let go as before (a server that keeps closing it isn't coming back).
+ */
+internal object ForkRadioReconnect {
+    private const val MAX = 5
+    private const val WINDOW_MS = 60_000L
+    private const val DELAY_MS = 1_000L
+
+    private val recent = ArrayDeque<Long>()
+
+    /**
+     * Called as [song] runs out. False for anything but a station, or one out of tries: the engine
+     * ends it as usual. True: [reopen] runs in a moment on [scope], while [stillCurrent] says
+     * nothing else was started meanwhile.
+     */
+    fun closed(
+        song: Song,
+        scope: kotlinx.coroutines.CoroutineScope,
+        stillCurrent: () -> Boolean,
+        now: Long = System.currentTimeMillis(),
+        reopen: () -> Unit,
+    ): Boolean {
+        if (!NavidromeRadio.isRadio(song.videoId)) return false
+        synchronized(recent) {
+            while (recent.isNotEmpty() && now - recent.first() > WINDOW_MS) recent.removeFirst()
+            if (recent.size >= MAX) return false
+            recent.addLast(now)
+        }
+        DesktopTrackLog.log("radio: '${song.title}' closed by its server, opening it again")
+        scope.launch {
+            kotlinx.coroutines.delay(DELAY_MS)
+            if (stillCurrent()) reopen()
+        }
+        return true
+    }
+
+    /** For tests: forget the tries counted so far. */
+    internal fun reset() = synchronized(recent) { recent.clear() }
 }

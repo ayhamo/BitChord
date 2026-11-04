@@ -59,6 +59,10 @@ class NavidromeClient(
         val sizeBytes: Long? = null,
         /** The `comment` tag (OpenSubsonic): yt-dlp's files end it with their YouTube address, see [NavidromeYouTubeCover]. */
         val comment: String? = null,
+        /** The server's id for [artist] (Subsonic `artistId`): on a newer Navidrome its first credited artist's. */
+        val artistId: String? = null,
+        /** Every credited artist as (id, name) (OpenSubsonic `artists`), so an artist page can find its own id. */
+        val artists: List<Pair<String, String>> = emptyList(),
     )
 
     suspend fun ping() {
@@ -86,6 +90,27 @@ class NavidromeClient(
         val result = call("getSimilarSongs2", "id" to id, "count" to count.toString())
         return songRows(result["similarSongs2"]?.jsonObject?.get("song"))
     }
+
+    /** One artist as the server lists it: [coverArt] is its picture's id for [coverUrl] (`ar-…`). */
+    data class ArtistRow(val id: String, val name: String, val coverArt: String?)
+
+    /** Artists whose name matches [query] (`search3`, artists only), for an artist page that has only the name. */
+    suspend fun searchArtists(query: String, count: Int = 20): List<ArtistRow> {
+        val result = call(
+            "search3",
+            "query" to query,
+            "artistCount" to count.toString(),
+            "albumCount" to "0",
+            "songCount" to "0",
+        )
+        return parseArtists(result["searchResult3"]?.jsonObject?.get("artist"))
+    }
+
+    /**
+     * The artists `getArtistInfo2` calls similar to [id]. Without `includeNotPresent` the server
+     * keeps to the artists in this library, which are the only ones a page can be opened for.
+     */
+    suspend fun similarArtists(id: String): List<ArtistRow> = parseSimilarArtists(call("getArtistInfo2", "id" to id))
 
     suspend fun randomSongs(count: Int): List<SongRow> {
         val result = call("getRandomSongs", "size" to count.toString())
@@ -365,6 +390,8 @@ class NavidromeClient(
             starred = o.string("starred") != null,
             sizeBytes = (o["size"] as? JsonPrimitive)?.longOrNull,
             comment = o.string("comment"),
+            artistId = o.string("artistId"),
+            artists = parseArtists(o["artists"]).map { it.id to it.name },
         )
     }
 
@@ -376,6 +403,21 @@ class NavidromeClient(
 
     companion object {
         private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+
+        /** `getArtistInfo2`'s answer (the `subsonic-response` object): its `similarArtist` list, in the server's order. */
+        fun parseSimilarArtists(result: JsonObject): List<ArtistRow> =
+            parseArtists((result["artistInfo2"] as? JsonObject)?.get("similarArtist"))
+
+        /** A list of artist objects (or the bare one Subsonic JSON writes for one): each with an id and a name. */
+        fun parseArtists(element: JsonElement?): List<ArtistRow> = when (element) {
+            null -> emptyList()
+            is JsonArray -> element
+            else -> listOf(element)
+        }.mapNotNull { entry ->
+            val o = entry as? JsonObject ?: return@mapNotNull null
+            fun field(key: String) = (o[key] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+            ArtistRow(id = field("id") ?: return@mapNotNull null, name = field("name") ?: return@mapNotNull null, coverArt = field("coverArt"))
+        }
 
         /** `getLyricsBySongId`'s answer (the `subsonic-response` object); apart from [call] so it can be tested. */
         fun parseLyrics(result: JsonObject): List<LyricsRow> {

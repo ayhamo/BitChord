@@ -66,6 +66,8 @@ internal class ForkLoopPair(
     val deckRate: Double,
     /** A quality upgrade of the playing song is crossing in or waiting to. */
     val swapping: Boolean,
+    /** The Automix overlap chosen in Settings: 0 adaptive, else a fixed 8 or 16 bars. */
+    val phraseBars: Int = 0,
 ) {
     val pairKey: String get() = "${outSong.videoId}->${inSong.videoId}"
 }
@@ -102,6 +104,9 @@ internal object ForkLoopMixRules {
      */
     fun refusal(p: ForkLoopPair): String? = when {
         !p.automix -> "Automix is off"
+        // From Desktop Revived d150d26f: a fixed 8 or 16-bar overlap asked for is the planner's blend;
+        // the loop mix picks its own length.
+        p.phraseBars != 0 -> "a fixed ${p.phraseBars}-bar overlap is chosen"
         p.inParty -> "in a Listen Together party"
         p.speed != 1f -> "playback speed is not 1x"
         p.skipSilence -> "skip silence is on"

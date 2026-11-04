@@ -1735,6 +1735,7 @@ private fun BitChordApp(
             }
         }
     }
+    com.music.bitchord.ui.components.ForkArtistRadioBinding { load -> browseActions = null; if (controller != null && !refusedByHost()) { val request = ++playRequestGeneration; scope.launch { val station = load() ?: return@launch; val c = controller ?: return@launch; if (request != playRequestGeneration) return@launch; activeRadioSeed = null; c.beginRadioQueue(); c.playSongs(station, 0); c.commitRadioQueue() } } } // fork: a Navidrome artist's "Start radio", played as openTopPick plays a station
     /**
      * A Find Your Mood tile, on Home or on its Show all grid: that mood's
      * station, steered by the same scene words the Mood for You card was

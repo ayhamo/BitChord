@@ -65,13 +65,27 @@ class DesktopPersistence {
      */
     private val UNSET = "\u0000unset"
 
-    fun history(): List<Song> = readSongs(KEY_HISTORY)
+    fun history(): List<Song> = ForkPlaybackWrites.latestHistory ?: readSongs(KEY_HISTORY) // fork: the newest, written or not
 
-    fun saveHistory(songs: List<Song>) = writeSongs(KEY_HISTORY, songs.take(MAX_HISTORY))
+    // fork (Desktop Revived 88dcc5d0): on the writer thread, not on the click (ForkPlaybackWrites)
+    fun saveHistory(songs: List<Song>) {
+        val snapshot = songs.take(MAX_HISTORY)
+        ForkPlaybackWrites.latestHistory = snapshot
+        ForkPlaybackWrites.submit(KEY_HISTORY) { writeSongs(KEY_HISTORY, snapshot) }
+    }
 
-    fun queue(): List<Song> = readSongs(KEY_QUEUE)
+    fun queue(): List<Song> = ForkPlaybackWrites.latestQueue ?: readSongs(KEY_QUEUE) // fork
 
-    fun saveQueue(songs: List<Song>) = writeSongs(KEY_QUEUE, songs.take(MAX_QUEUE))
+    // fork (Desktop Revived 88dcc5d0): the queue and its index as one snapshot, on the writer thread
+    fun saveQueue(songs: List<Song>, index: Int? = null) {
+        val snapshot = songs.take(MAX_QUEUE)
+        ForkPlaybackWrites.latestQueue = snapshot
+        if (index != null) ForkPlaybackWrites.latestQueueIndex = index
+        ForkPlaybackWrites.submit(KEY_QUEUE) {
+            writeSongs(KEY_QUEUE, snapshot)
+            if (index != null) DesktopPreferenceChunks.write(preferences, "queue_index", index.toString())
+        }
+    }
 
     /** Tracks pinned to YouTube's own upload — see [DesktopOriginalVersion]. */
     internal fun originalVersionIds(): Set<String> = readLines(KEY_ORIGINAL_VERSIONS).toSet()
@@ -195,7 +209,8 @@ class DesktopPersistence {
     }
 
     fun string(key: String, default: String = ""): String =
-        DesktopPreferenceChunks.read(preferences, key) ?: default
+        (if (key == "queue_index") ForkPlaybackWrites.latestQueueIndex?.toString() else null) // fork: a queue snapshot not yet written
+            ?: DesktopPreferenceChunks.read(preferences, key) ?: default
 
     fun saveString(key: String, value: String) =
         DesktopPreferenceChunks.write(preferences, key, value)

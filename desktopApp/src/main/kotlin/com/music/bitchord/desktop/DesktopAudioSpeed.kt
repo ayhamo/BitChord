@@ -16,8 +16,14 @@ internal class DesktopAudioSpeed(
     /** Half a window. */
     private val hop = (sampleRate * 0.028f).roundToInt().coerceAtLeast(64)
 
-    /** How far either side the reader may slide to find a better join. */
-    private val search = (sampleRate * 0.007f).roundToInt().coerceAtLeast(16)
+    /**
+     * How far either side the reader may slide to find a better join.
+     *
+     * fork (from PC-Continued be257dad): 12 ms, was 7. It has to clear the drift one hop gathers at
+     * the fastest speed: a 25% speed-up moves the nominal read 7 ms past the window before it, and a
+     * join that cannot reach that far crossfades into the wrong audio.
+     */
+    private val search = (sampleRate * 0.012f).roundToInt().coerceAtLeast(16) // fork
 
     private var pending = FloatArray(0)
     private var pendingFrames = 0

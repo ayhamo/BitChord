@@ -836,8 +836,7 @@ fun BitChordDesktopApp() {
         // desktop; never let a shared running order overwrite the queue restored after leaving or
         // after a process restart.
         if (DesktopListenTogether.state.value.inParty) return
-        persistence.saveQueue(liveQueue.songs)
-        persistence.saveString("queue_index", liveQueue.index.toString())
+        persistence.saveQueue(liveQueue.songs, liveQueue.index) // fork: one snapshot, written off the click (ForkPlaybackWrites)
     }
 
     /** Opens whatever the queue is currently pointing at. */
@@ -1636,6 +1635,7 @@ fun BitChordDesktopApp() {
         )
     }
     ForkDebugBridge.engine = playbackEngine // fork
+    ForkMusicVideo.attach(playbackEngine.state) // fork: a music video's picture follows the audio clock
     val partySync = remember(playbackEngine) {
         DesktopPartySync(
             scope = scope,
@@ -1773,6 +1773,7 @@ fun BitChordDesktopApp() {
     }
 
     LaunchedEffect(playbackSpeed) { playbackEngine.setPlaybackSpeed(playbackSpeed) }
+    LaunchedEffect(playbackSpeed) { ForkMusicVideo.speed = playbackSpeed.coerceIn(0.25f, 3.0f) } // fork: the picture's clock runs at it
     LaunchedEffect(volume) { playbackEngine.setVolume(volume) }
     LaunchedEffect(audioQuality) { playbackEngine.setAudioQuality(audioQuality.name) }
     LaunchedEffect(automixPerformance) {
@@ -1865,6 +1866,7 @@ fun BitChordDesktopApp() {
         }
     }
     val playback by playbackEngine.state.collectAsState()
+    LaunchedEffect(liveQueue, playback.isPlaying) { ForkPreload.around(liveQueue.current, liveQueue.upcoming, playback.isPlaying) } // fork: "Pre-load next songs"
 
     // The shared player reads the playhead off this one object, and only where it
     // draws it — see PlaybackPosition — so a tick never recomposes the player.
@@ -2039,6 +2041,7 @@ fun BitChordDesktopApp() {
         // nothing, and only when something is actually missing.
         if (!overlays.nowPlaying) return@LaunchedEffect
         if (current.artistId != null && current.albumId != null) return@LaunchedEffect
+        if (com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(current.videoId)) return@LaunchedEffect // fork: a station's id means nothing to YouTube
         trackLinks = DesktopSearchClient.trackLinks(current.videoId).getOrNull()
     }
     // Keyed on the same things, plus the rate: Discord counts the bar down on
@@ -2485,7 +2488,7 @@ fun BitChordDesktopApp() {
         }
         val added = shelves.withoutRepeatsOf(existing)
             .filter { it.items.isNotEmpty() && homeSeenTitles.add(it.title.lowercase()) }
-        if (added.isNotEmpty()) homeState = UiState.Success(ForkSpotifyHome.keepLast(existing + added)) // fork: was existing + added
+        if (added.isNotEmpty()) homeState = UiState.Success(existing + added)
     }
 
     /**
@@ -2494,6 +2497,7 @@ fun BitChordDesktopApp() {
      * there is no Recently Played to ask for, which is also how the phone has it.
      */
     fun loadHome() {
+        ForkDesktopHome.load() // fork: Home's Navidrome and Spotify sections, YouTube or not
         if (!youtubeSourceEnabled) {
             homeState = UiState.Error("YouTube Music is disabled")
             return
@@ -2502,19 +2506,12 @@ fun BitChordDesktopApp() {
         val signedIn = DesktopYouTubeAuth.isSignedIn
         homeIdentity = "$signedIn/${DesktopAccounts.activeAccountId()}"
         homeState = UiState.Loading
+        com.music.bitchord.ui.screens.ForkHome.youtubeError.value = null // fork
         homeContinuation = null
         homeSeenTitles.clear()
         homeLoadingMore = false
         homeRecentsLoading = signedIn
         scope.launch {
-            launch { // fork: the server's shelves lead Home
-                val shelves = ForkNavidrome.homeShelves()
-                if (generation == homeGeneration && shelves.isNotEmpty()) publishHomeShelves(shelves, prepend = true)
-            }
-            launch { // fork: Spotify's mixes close Home
-                val mixes = ForkSpotifyHome.shelf()
-                if (generation == homeGeneration && mixes != null) publishHomeShelves(listOf(mixes))
-            }
             launch {
                 DesktopSearchClient.home().fold(
                     onSuccess = { feed ->
@@ -2523,6 +2520,7 @@ fun BitChordDesktopApp() {
                         publishHomeShelves(feed.shelves)
                     },
                     onFailure = {
+                        if (generation == homeGeneration) com.music.bitchord.ui.screens.ForkHome.youtubeError.value = it.message ?: "Could not load Home" // fork: shown beside the server's shelves
                         if (generation == homeGeneration && homeState !is UiState.Success) {
                             homeState = UiState.Error(it.message ?: "Could not load Home")
                         }
@@ -2987,6 +2985,7 @@ fun BitChordDesktopApp() {
     }
 
     fun openMoodGenre(item: MoodGenre) {
+        if (ForkSpotifyHome.isMix(item.browseId)) return openShelfItem(ShelfItem(title = item.title, subtitle = SPOTIFY_SHELF, thumbnailUrl = item.thumbnailUrl, videoId = null, browseId = item.browseId)) // fork: a Spotify mix's tile opens the page Home's shelf opens
         if (ForkNavidrome.ownsPage(item.browseId)) { // fork: a server genre's tile is a page of its songs, as on the phone
             openCollection(item.browseId, BrowseItem(browseId = item.browseId, title = item.title, subtitle = "Navidrome", thumbnailUrl = item.thumbnailUrl, type = BrowseType.PLAYLIST))
             return
@@ -3047,6 +3046,7 @@ fun BitChordDesktopApp() {
     )
 
     ForkNotice.Host() // fork
+    ForkSongInfoDialog.Host() // fork: the song menu's "Song info", above the player too
     // What the shared player reads as settings, kept in step with the window's own.
     SideEffect {
         DesktopPlayerSettings.animatedCanvas.value = animatedCanvas
@@ -3305,6 +3305,13 @@ fun BitChordDesktopApp() {
                         onOpenAccounts = { DesktopTrackLog.log("accounts: opening the switcher"); overlays.accounts = true },
                         canGoBack = navHistory.isNotEmpty(),
                         onBack = ::goBack,
+                        forkLinks = rememberForkTopBarLinks( // fork
+                            durationMs = { playback.durationMs },
+                            seekFraction = { f -> playbackEngine.state.value.durationMs.takeIf { it > 0 }?.let { seekPlayer((f * it).toLong()) } },
+                            openAlbum = ::openAlbum,
+                            openArtist = ::openArtist,
+                            search = ::runSearch,
+                        ),
                     )
                 },
                 sidebar = {
@@ -4098,6 +4105,7 @@ fun BitChordDesktopApp() {
                             // the button.
                             onToggleSubscription = if (youtubeSignedIn) ::toggleSubscription else null,
                             contentPadding = contentPadding,
+                            forkBrowseId = openedArtist!!.browseId, // fork
                         )
                         openedCollection?.loading == true -> DesktopPageScaffold(contentPadding) {
                             Box(Modifier.fillMaxSize()) {
@@ -4141,9 +4149,10 @@ fun BitChordDesktopApp() {
                             downloadedIds = downloads.map(Song::videoId).toSet(),
                             downloadInProgress = downloadInProgress,
                             contentPadding = contentPadding,
+                            forkOpenArtist = ::openArtist, // fork
                         )
                         destination == DesktopDestination.LISTEN_NOW -> HomeScreen(
-                            state = homeState,
+                            state = ForkDesktopHome.present(homeState), // fork: was homeState; the Navidrome / YouTube / Spotify sections
                             listState = homeListState,
                             onItemClick = { item, shelfTitle -> openShelfItem(item, shelfTitle) },
                             onRetry = ::loadHome,
@@ -4446,6 +4455,7 @@ private fun DesktopTopBar(
     /** The app's one way back — every page's own arrow was folded into this. */
     canGoBack: Boolean,
     onBack: () -> Unit,
+    forkLinks: ForkTopBarLinks? = null, // fork: the title, credits and progress line open pages and seek
 ) {
     val titleBarEnabled by DesktopTitleBarSetting.enabled.collectAsState()
     val inlineCaption = DesktopPlatform.drawsOwnWindowFrame && !titleBarEnabled
@@ -4601,18 +4611,18 @@ private fun DesktopTopBar(
                                             px = ROW_ART_PX,
                                         )
                                         Column(
-                                            Modifier.weight(1f).padding(start = 12.dp, end = 56.dp),
+                                            Modifier.weight(1f).padding(start = 12.dp, end = 56.dp).forkDimWhileScrubbing(forkLinks), // fork
                                             horizontalAlignment = Alignment.CenterHorizontally,
                                         ) {
                                             Text(
-                                                song.title,
+                                                forkTopBarTitle(song, forkLinks), // fork: opens its album
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis,
                                                 style = MaterialTheme.typography.labelLarge,
                                                 fontWeight = FontWeight.SemiBold,
                                             )
                                             Text(
-                                                song.artist,
+                                                forkTopBarCredits(song, forkLinks), // fork: each credited artist opens their page
                                                 color = DesktopSecondary,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis,
@@ -4639,6 +4649,7 @@ private fun DesktopTopBar(
                                                 )
                                             },
                                     )
+                                    forkLinks?.let { ForkTopBarScrubber(it, { currentProgress }, Modifier.align(Alignment.BottomStart).padding(start = 44.dp)) } // fork
                                 }
                             }
                         }
@@ -4651,20 +4662,7 @@ private fun DesktopTopBar(
                     horizontalArrangement = Arrangement.spacedBy(1.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(
-                        Icons.Rounded.VolumeUp,
-                        DesktopStrings["d_volume", "Volume"],
-                        tint = DesktopSecondary,
-                        modifier = Modifier.size(17.dp),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    DesktopThinSlider(
-                        value = volume,
-                        onValueChange = onVolumeChange,
-                        idleHeight = 4.dp,
-                        activeHeight = 8.dp,
-                        modifier = Modifier.width(78.dp),
-                    )
+                    ForkVolumeControl(volume, onVolumeChange) // fork: the speaker mutes, the wheel steps 5% (was a plain icon beside DesktopThinSlider)
                     Spacer(Modifier.width(5.dp))
                     DesktopToolbarButton(onClick = onOpenAudioOutput, size = 32.dp) {
                         Icon(
@@ -5053,6 +5051,7 @@ private fun DesktopBottomChrome(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        ForkOfflineBar(compact = true) // fork: the offline strip, above the mini player
         if (compact && song != null) {
             DesktopMiniPlayer(
                 song = song,
@@ -5264,6 +5263,7 @@ private fun DesktopFrame(
                             if (!compact) sidebar()
                             Column(Modifier.weight(1f).fillMaxHeight()) {
                             topBar(compact)
+                            if (!compact) ForkOfflineBar(compact = false) // fork: the offline strip, under the player bar
                             Row(Modifier.fillMaxWidth().weight(1f)) {
                                 Box(
                                     Modifier
@@ -5380,6 +5380,7 @@ private fun DesktopArtistPage(
     /** Null for a guest: a channel subscription is the account's. */
     onToggleSubscription: ((SubscriptionState) -> Unit)?,
     contentPadding: PaddingValues,
+    forkBrowseId: String = "", // fork: the key Apple's header art is cached under
 ) {
     DesktopPageScaffold(contentPadding) {
         when (state) {
@@ -5396,12 +5397,14 @@ private fun DesktopArtistPage(
                 // Android caps the top-songs block and pages it sideways so the release shelves are
                 // not buried under a hundred rows.
                 val top = artist.songs.take(MAX_ARTIST_SONGS)
-                Box(Modifier.fillMaxSize()) {
+                val forkApple = rememberForkAppleArt(forkBrowseId.ifBlank { name }, name, artist) { com.music.bitchord.data.AppleCatalogue.titlesOf(artist) } // fork: Apple Music's header
+                Box(Modifier.fillMaxSize().forkAppleTint(forkApple)) { // fork: forkAppleTint
                     LazyColumn(
                         contentPadding = pagePadding(bottom = 32.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         item(key = "artist-header") {
+                            if (forkApple != null) ForkAppleArtistBanner(forkApple, name, ARTIST_BANNER_HEIGHT, artist.thumbnailUrl) else // fork
                             DesktopArtistBanner(artist.thumbnailUrl, name, palette)
                         }
                         if (artist.subscriberCountText != null || artist.monthlyListenerCount != null) {
@@ -5442,7 +5445,8 @@ private fun DesktopArtistPage(
                                         onClick = { onToggleSubscription(subscription) },
                                     )
                                 }
-                                DesktopPlayPill(
+                                ForkArtistPlayPill( // fork: Apple's fill when the page has Apple's art (was DesktopPlayPill)
+                                    forkApple,
                                     label = DesktopStrings["play", "Play"],
                                     onClick = { if (top.isNotEmpty()) onPlaySongs(top, 0) },
                                 )
@@ -6493,6 +6497,8 @@ private fun DesktopSettingsScreen(
                             onClick = onOpenSpotifyCanvasSetup,
                         )
                     }
+                    ForkArtistArtSwitch() // fork: "Artist Art", the web's Apple Music switch
+                    ForkMusicVideoSwitch() // fork: "Music videos (beta)", off by default
                 }
             }
             if (section == DesktopSettingsSection.MISCELLANEOUS) item {
@@ -7043,8 +7049,10 @@ private fun DesktopCollectionPage(
     downloadedIds: Set<String>,
     downloadInProgress: Set<String>,
     contentPadding: PaddingValues,
+    forkOpenArtist: (String, String) -> Unit = { _, _ -> }, // fork: a Navidrome artist's "Similar artists"
 ) {
     val songs = collection.songs
+    val forkSimilar = rememberForkSimilarArtists(collection.browseId) // fork
     // The phone's "search this list": a filter over the rows already loaded.
     var searching by remember(collection.browseId) { mutableStateOf(false) }
     var listQuery by remember(collection.browseId) { mutableStateOf("") }
@@ -7091,6 +7099,7 @@ private fun DesktopCollectionPage(
             ),
             verticalArrangement = Arrangement.spacedBy(0.dp),
         ) {
+            forkNavidromeArtistBanner(collection.browseId, songs) // fork: Apple Music's header on a Navidrome artist
             item {
                 Row(
                     Modifier.fillMaxWidth().padding(bottom = 36.dp),
@@ -7175,6 +7184,7 @@ private fun DesktopCollectionPage(
                                 },
                             )
                             ForkOfflineButton(collection.browseId, collection.title, collection.subtitle.orEmpty(), collection.thumbnailUrl, collection.songs) // fork
+                            ForkArtistRadioButton(collection.browseId) { station -> onPlaySongs(station, 0) } // fork: a Navidrome artist's "Start radio"
                             Box {
                                 DesktopCircleButton(Icons.Rounded.MoreHoriz, DesktopStrings["more", "More"], onClick = { moreOpen = true })
                                 DropdownMenu(expanded = moreOpen, onDismissRequest = { moreOpen = false }) {
@@ -7262,6 +7272,7 @@ private fun DesktopCollectionPage(
                     onRemove = onRemoveFromPlaylist?.takeIf { song.setVideoId != null },
                 )
             }
+            forkSimilarArtists(forkSimilar, forkOpenArtist) // fork
             if (collection.continuation != null) {
                 // Reaching this row is what asks for the next page, the way the home feed pages.
                 item(key = "collection-more") {

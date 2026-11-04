@@ -1,0 +1,75 @@
+# Fork-only workflow. Once a day it checks Bntagaaa/BitChord-Desktop-Revived, the PC fork whose
+# fixes and features this fork picks from. When they have a release or commits newer than
+# `.github/desktop-revived-seen.txt`, the run FAILS on purpose: GitHub emails the failure, and the run's
+# summary lists their new release notes and commits. Issues are off on this fork, so a failed run is
+# the notice. It stays red every day until the file is updated to what was reviewed.
+# It only reads their public repository; nothing is merged or built.
+name: Fork Desktop Revived watch
+
+on:
+  schedule:
+    - cron: "41 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  WATCHED: Bntagaaa/BitChord-Desktop-Revived
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github
+
+      - name: compare with what was reviewed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          seen_release=$(sed -n 's/^release=//p' .github/desktop-revived-seen.txt)
+          seen_commit=$(sed -n 's/^commit=//p' .github/desktop-revived-seen.txt)
+          branch=$(gh api "repos/$WATCHED" --jq .default_branch)
+          head=$(gh api "repos/$WATCHED/commits/$branch" --jq .sha)
+          # No release at all is not an error: then only commits are watched.
+          release=$(gh api "repos/$WATCHED/releases/latest" --jq .tag_name 2>/dev/null || echo "")
+
+          new=0
+          {
+            echo "## BitChord Desktop Revived"
+            echo
+            echo "Reviewed: release \`$seen_release\`, commit \`${seen_commit:0:10}\`. Now: release \`${release:-none}\`, $branch at \`${head:0:10}\`."
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -n "$release" ] && [ "$release" != "$seen_release" ]; then
+            new=1
+            {
+              echo "### New release: $release"
+              echo
+              gh api "repos/$WATCHED/releases/latest" --jq '"[" + .name + "](" + .html_url + "), " + .published_at + "\n\n" + (.body // "")'
+              echo
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ "$head" != "$seen_commit" ]; then
+            new=1
+            {
+              echo "### New commits on $branch"
+              echo
+              # compare lists at most 250 commits; enough for a daily check.
+              gh api "repos/$WATCHED/compare/$seen_commit...$head" \
+                --jq '.commits[] | "- [`" + .sha[0:10] + "`](https://github.com/'"$WATCHED"'/commit/" + .sha + ") " + .commit.author.date[0:10] + " " + (.commit.message | split("\n")[0])' \
+                || echo "- (couldn't compare: their history may have been rewritten; see https://github.com/$WATCHED/commits/$branch)"
+              echo
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ "$new" = 1 ]; then
+            echo "::error::BitChord Desktop Revived has something new (see the summary). After reviewing, update .github/desktop-revived-seen.txt."
+            exit 1
+          fi
+          echo "Nothing new." >> "$GITHUB_STEP_SUMMARY"

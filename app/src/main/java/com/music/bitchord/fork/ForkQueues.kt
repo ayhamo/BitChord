@@ -9,6 +9,7 @@ import com.music.bitchord.data.navidrome.NavidromeOffline
 import com.music.bitchord.data.navidrome.NavidromeRepository
 import com.music.bitchord.data.navidrome.NavidromeSettings
 import com.music.bitchord.playback.QueueSource
+import com.music.bitchord.playback.queueEntryId
 import com.music.bitchord.playback.toSong
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -125,8 +126,13 @@ object ForkQueues {
                 if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) swapped = true
             }
         }
+        // The old queue can change before the swap lands too (AutoPlay appending, an edit), which
+        // also reads as a playlist change: the swap is only seen once the current song is a new
+        // entry. Its entry id is dropped, so the new queue gives it a fresh one (a queue saved this
+        // run still carried the ids of the queue it was saved from, the one being replaced).
+        val replaced = player?.currentMediaItem?.queueEntryId
         val listening = player?.takeIf { queue.positionMs > 0L }?.also { it.addListener(swap) }
-        start(queue.songs, queue.index, QueueSource(queue.name, PlaybackSourceType.QUEUE))
+        start(queue.songs.map { it.copy(queueEntryId = null) }, queue.index, QueueSource(queue.name, PlaybackSourceType.QUEUE))
         val target = queue.current?.videoId
         if (target == null || listening == null) {
             listening?.removeListener(swap)
@@ -139,7 +145,9 @@ object ForkQueues {
             var waited = 0L
             while (waited < RESTORE_WAIT_MS) {
                 val p = player ?: return@launch
-                if (swapped && p.currentMediaItem?.mediaId == target && p.playbackState == Player.STATE_READY) {
+                if (swapped && isNewEntry(p.currentMediaItem?.queueEntryId, replaced) &&
+                    p.currentMediaItem?.mediaId == target && p.playbackState == Player.STATE_READY
+                ) {
                     p.seekTo(queue.positionMs)
                     delay(500)
                     if (kotlin.math.abs(p.currentPosition - queue.positionMs) < 5_000) {
@@ -154,6 +162,9 @@ object ForkQueues {
             Log.d(TAG, "saved queue ${queue.name}: never reached ${queue.current?.title}, not seeking")
         }
     }
+
+    /** Whether the playing entry [now] is not the one [replaced] was; with no entry ids to tell by, only the playlist change counts. */
+    internal fun isNewEntry(now: String?, replaced: String?): Boolean = now == null || replaced == null || now != replaced
 
     fun delete(id: String) {
         _saved.update { list -> list.filterNot { it.id == id } }

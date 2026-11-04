@@ -54,6 +54,7 @@ import com.music.bitchord.data.navidrome.NavidromeRepository
 import com.music.bitchord.data.navidrome.NavidromeSettings
 import com.music.bitchord.data.navidrome.NavidromeSongInfo
 import com.music.bitchord.playback.QueueBuilder
+import com.music.bitchord.ui.screens.ForkLibraryPlaylists
 import com.music.bitchord.ui.player.ForkCanvasSwitch
 import java.nio.file.Files
 import java.nio.file.Path
@@ -99,6 +100,7 @@ internal object ForkNavidrome {
 
     fun install() {
         NavidromeSettings.init(PrefsStore("com/music/bitchord/navidrome", sealed = setOf("password")))
+        NavidromePlatform.onKeptRow = { ForkLibraryPlaylists.offline.value = it } // the Library's "Available offline" row; before the kept pages load
         ForkOffline.install() // before the clips: its files answer them
         NavidromeClips.init(PrefsStore("com/music/bitchord/navidrome_clips", sealed = emptySet()))
         NavidromeSongInfo.init()
@@ -110,6 +112,7 @@ internal object ForkNavidrome {
         ForkCanvasSwitch.covers.value = settings.string(KEY_COVERS) != "off"
         ForkNavidromeSettings.install()
         ForkNavidromeGenres.install()
+        ForkPreload.install()
         ForkRadio.install(PrefsStore("com/music/bitchord/navidrome_radio_logos", sealed = emptySet()))
     }
 
@@ -122,6 +125,7 @@ internal object ForkNavidrome {
         if (!owns(song) || !NavidromeSettings.isConfigured()) return null
         // The plain path, as the engine gives its own saved files: FFmpeg doesn't decode a file:// address.
         NavidromeOffline.localFile(song.videoId.removePrefix(NavidromeSettings.ID_PREFIX))?.let { return DesktopStream(it.absolutePath) }
+        ForkPreload.file(song.videoId.removePrefix(NavidromeSettings.ID_PREFIX))?.let { return DesktopStream(it.absolutePath) } // "Pre-load next songs": read whole already
         // With the login: FFmpeg opens this itself, not through the HTTP client that adds it.
         return DesktopStream(NavidromeRepository.withLogin(NavidromeRepository.client().streamUrl(song.videoId.removePrefix(NavidromeSettings.ID_PREFIX))))
     }
@@ -200,14 +204,20 @@ internal object ForkNavidrome {
         }
     }
 
-    /** The server's album and playlist shelves for the top of Home; none without a login or a server. */
-    suspend fun homeShelves(): List<HomeShelf> {
-        if (!NavidromeSettings.isConfigured()) return emptyList()
-        val shown = ForkNavidromeSettings.homeShelves.value // "Navidrome on Home"
-        // Offline: what is kept here, in place of the server's shelves, as on the phone.
-        if (ForkOffline.offline.value) return listOfNotNull(NavidromeOffline.shelf("Available offline").takeIf { shown && it.items.isNotEmpty() })
+    /**
+     * The server's album and playlist shelves for Home's "Navidrome" section, read with the
+     * Library's "Navidrome albums" and "Navidrome playlists" rows ([ForkLibraryPlaylists.shelves]),
+     * as the phone reads them (`NavidromeHome.loadServer`). Null keeps what is shown: offline
+     * (nothing goes out) or a server that failed. Empty with no server, which clears the rows too.
+     * "Navidrome on Home" and the kept row offline are applied where Home is drawn ([ForkDesktopHome]).
+     */
+    suspend fun serverShelves(): List<HomeShelf>? {
+        if (!NavidromeSettings.isConfigured()) {
+            ForkLibraryPlaylists.shelves.value = emptyList()
+            return emptyList()
+        }
+        if (ForkOffline.offline.value) return null
         NavidromeOffline.syncPlaylists() // kept playlists follow the server
-        if (!shown) return emptyList() // after the sync: as on the phone, the switch only hides the shelves
         val client = NavidromeRepository.client()
         fun albums(rows: List<NavidromeClient.AlbumRow>) = rows.map { row ->
             NavidromeAlbums.remember(row.name, row.id)
@@ -236,15 +246,46 @@ internal object ForkNavidrome {
                     }
                     HomeShelf("Playlists", items, "Navidrome")
                 }
+                // Every album, A to Z, for the Library's row (not shown on Home), a page at a time.
+                // Its own failure: a page that times out on a big library keeps the Library's row as it
+                // was rather than blanking Home's shelves with it. Capped, so a server that ignores
+                // `offset` (the same page each time) can't loop for ever.
+                val allAlbums = async {
+                    runCatching {
+                        val rows = ArrayList<com.music.bitchord.data.navidrome.NavidromeClient.AlbumRow>()
+                        var offset = 0
+                        for (pageIndex in 0 until ALL_ALBUMS_MAX_PAGES) {
+                            val page = client.albums("alphabeticalByName", ALL_ALBUMS, offset)
+                            if (pageIndex > 0 && page.firstOrNull()?.id == rows.firstOrNull()?.id) break
+                            rows.addAll(page)
+                            if (page.size < ALL_ALBUMS) break
+                            offset += ALL_ALBUMS
+                        }
+                        HomeShelf("Navidrome albums", albums(rows), "Navidrome")
+                    }.onFailure {
+                        if (it is kotlinx.coroutines.CancellationException) throw it
+                        DesktopTrackLog.log("navidrome: all albums: ${it.message}")
+                    }.getOrNull()
+                }
                 val loaded = shelves.awaitAll()
-                (listOf(loaded.first(), playlists.await()) + loaded.drop(1)).filter { it.items.isNotEmpty() }
+                val playlistShelf = playlists.await()
+                val albumShelf = allAlbums.await() ?: ForkLibraryPlaylists.shelves.value.firstOrNull { it.title == "Navidrome albums" }
+                ForkLibraryPlaylists.shelves.value = listOfNotNull(albumShelf, playlistShelf.copy(title = "Navidrome playlists"))
+                // Playlists second: after what is new, before what is played most.
+                (listOf(loaded.first(), playlistShelf) + loaded.drop(1)).filter { it.items.isNotEmpty() }
             }
         }.getOrElse {
             if (it is kotlinx.coroutines.CancellationException) throw it
             DesktopTrackLog.log("navidrome: home shelves: ${it.message}")
-            emptyList()
+            null
         }
     }
+
+    /** Subsonic's largest `getAlbumList2` page. */
+    private const val ALL_ALBUMS = 500
+
+    /** 20,000 albums; past that the Library's row stops (the Navidrome page still has them all). */
+    private const val ALL_ALBUMS_MAX_PAGES = 40
 
     private const val PER_SHELF = 20
 

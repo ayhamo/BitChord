@@ -40,6 +40,37 @@ object ForkPreload {
     private var job: Job? = null
     @Volatile private var pending: List<Uri> = emptyList()
 
+    /** The song being written now, and what counts down when its writer has let go of the cache entry; see [yieldTo]. */
+    private class Writing(val uri: Uri, val writer: CacheWriter) {
+        val done = java.util.concurrent.CountDownLatch(1)
+    }
+
+    @Volatile private var writing: Writing? = null
+
+    /** How long a player opening a song waits for its pre-load to let go: one read's worth on a slow link. */
+    private const val YIELD_WAIT_MS = 2_000L
+
+    /**
+     * Called as the player opens [uri] through the song cache (`AudioCache.playbackFactory`, on the
+     * loader's thread). A pre-load still writing that song holds its cache entry for the whole
+     * download, and a reader that finds an entry locked streams the song past the cache: the
+     * next song, or a crossfade's standby opening it seconds before the end, came down twice at
+     * once, on the one song that had to buffer in time. So the pre-load gives way: its writer
+     * stops, and the player waits (at most [YIELD_WAIT_MS]) for the entry to be free, then reads
+     * and caches the rest itself.
+     */
+    fun yieldTo(uri: Uri) {
+        val now = writing ?: return
+        if (!sameSong(now.uri, uri)) return
+        now.writer.cancel()
+        if (!now.done.await(YIELD_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+            Log.d(TAG, "pre-load ${uri.getQueryParameter("id")}: still writing after ${YIELD_WAIT_MS} ms")
+        }
+    }
+
+    private fun sameSong(a: Uri, b: Uri): Boolean =
+        a == b || (a.host == b.host && a.getQueryParameter("id")?.let { it == b.getQueryParameter("id") } == true)
+
     /**
      * Ids upstream's YouTube read-ahead must leave alone: Navidrome songs stream from their own
      * server, a live station has nothing to read ahead, and (fixes upstream) files on a WebDAV or
@@ -88,6 +119,8 @@ object ForkPreload {
                 if (AudioCache.isFullyCached(uri)) continue
                 val source = AudioCache.forkReadAhead() ?: return@launch
                 val writer = CacheWriter(source, DataSpec(uri), null, null)
+                val now = Writing(uri, writer)
+                writing = now
                 // cache() blocks this thread, so the job can't finish being cancelled until it
                 // returns: a sibling waits for the cancel and stops the writer (invokeOnCompletion
                 // would only fire after cache() had read the whole file anyway).
@@ -109,6 +142,8 @@ object ForkPreload {
                     failed = true
                 } finally {
                     stopper.cancel()
+                    if (writing === now) writing = null
+                    now.done.countDown()
                 }
             }
             // A song that failed (a dropped connection) is tried again at the next read-ahead, not skipped for good.

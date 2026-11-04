@@ -243,7 +243,7 @@ fun HomeScreen(
                     // The loading skeleton already owns the hero slot. Until
                     // Recently Played lands, every real shelf must retain its
                     // compact-card layout instead of briefly becoming a hero.
-                    forkHomeFeed(forkHome, state.data, leadHero, recentlyPlayedLoading) { list, firstIsHero, keyPrefix -> itemsIndexedShelves( // fork: per ForkHome section
+                    forkHomeFeed(forkHome, state.data, leadHero, recentlyPlayedLoading, onRetry) { list, firstIsHero, keyPrefix -> itemsIndexedShelves( // fork: per ForkHome section
                         shelves = list,
                         onMoodClick = onMoodClick.takeIf { keyPrefix.isEmpty() || keyPrefix.startsWith("youtube") }, // fork: one Find Your Mood, however many sections
                         onMoodsShowAll = onMoodsShowAll,

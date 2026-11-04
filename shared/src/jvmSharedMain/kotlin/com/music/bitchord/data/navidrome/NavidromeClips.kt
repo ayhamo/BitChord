@@ -48,8 +48,19 @@ object NavidromeClips {
     @Volatile private var token: String? = null
     private val tokenLock = Any()
 
+    /** The login in flight, which every other caller needing a token waits on; see [token]. */
+    private var login: java.util.concurrent.CompletableFuture<String?>? = null
+
+    /** How long a caller waits on another's login before going on without a token. */
+    private const val LOGIN_WAIT_S = 20L
+
     fun init(store: NavidromePlatform.Store) {
         prefs = store
+        // The per-song "no clip" notes of the server's x-clip route, which nothing writes or reads
+        // since its clips left the server (see [clip]): kept until a clip cache was cleared, one per
+        // song and kind in a store read whole at every start. Pruned once here.
+        runCatching { store.keys().filter { it.endsWith("|${Kind.COVER.name}") || it.endsWith("|${Kind.BACKDROP.name}") } }
+            .getOrNull()?.takeIf { it.isNotEmpty() }?.let(store::remove)
         // Kept covers and clips (NavidromeOffline) are answered from the phone before anything goes out.
         Http.forkInterceptor = Interceptor { chain -> NavidromePlatform.kept.serve(chain.request()) ?: interceptor.intercept(chain) }
     }
@@ -133,11 +144,12 @@ object NavidromeClips {
     private val interceptor = Interceptor { chain ->
         val request = chain.request().withSubsonicLogin()
         if (!needsLogin(request.url)) return@Interceptor chain.proceed(request)
-        val first = chain.proceed(request.withToken(token(fresh = false)))
+        val used = token(failed = null)
+        val first = chain.proceed(request.withToken(used))
         if (first.code != 401) return@Interceptor first
-        // Expired login: once more with a new one.
+        // Expired login: once more with a new one (one login for every request that failed on it).
         first.close()
-        chain.proceed(request.withToken(token(fresh = true)))
+        chain.proceed(request.withToken(token(failed = used)))
     }
 
     /** The login a song's address leaves out (see [NavidromeClient.withLogin]), for this server only. */
@@ -151,16 +163,40 @@ object NavidromeClips {
     private fun Request.withToken(token: String?): Request =
         if (token == null) this else newBuilder().header("X-ND-Authorization", "Bearer $token").build()
 
-    /** Navidrome's login token, logging in when there is none (or [fresh] asks for a new one). */
-    private fun token(fresh: Boolean): String? = synchronized(tokenLock) {
-        if (!fresh) token?.let { return it }
+    /**
+     * Navidrome's login token, logging in when there is none, or when the one there is [failed]
+     * (a 401). The login runs outside [tokenLock]: held across the network, every request needing
+     * a token queued behind one slow login, and each that had failed on the old token then logged
+     * in again in turn. One caller logs in; the others wait on its answer ([login]).
+     */
+    private fun token(failed: String?): String? {
+        token?.takeIf { it != failed }?.let { return it }
+        val mine = java.util.concurrent.CompletableFuture<String?>()
+        val running = synchronized(tokenLock) {
+            token?.takeIf { it != failed }?.let { return it }
+            login ?: mine.also { login = it }
+        }
+        if (running !== mine) {
+            return runCatching { running.get(LOGIN_WAIT_S, java.util.concurrent.TimeUnit.SECONDS) }.getOrNull()
+        }
+        val fresh = try {
+            logIn()
+        } finally {
+            synchronized(tokenLock) { login = null }
+        }
+        synchronized(tokenLock) { token = fresh }
+        mine.complete(fresh)
+        return fresh
+    }
+
+    private fun logIn(): String? {
         val base = base() ?: return null
         val body = buildJsonObject {
             put("username", NavidromeSettings.username.value)
             put("password", NavidromeSettings.password.value)
         }.toString().toRequestBody("application/json".toMediaType())
         val url = base.newBuilder().addPathSegment("auth").addPathSegment("login").build()
-        token = try {
+        return try {
             Http.client.newCall(Request.Builder().url(url).post(body).build()).execute().use { response ->
                 if (!response.isSuccessful) {
                     Log.d(TAG, "login: HTTP ${response.code}")
@@ -178,6 +214,5 @@ object NavidromeClips {
             Log.d(TAG, "login: ${e.message}")
             null
         }
-        token
     }
 }

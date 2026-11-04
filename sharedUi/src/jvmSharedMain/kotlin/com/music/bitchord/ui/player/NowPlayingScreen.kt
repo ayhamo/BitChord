@@ -1289,7 +1289,9 @@ fun NowPlayingScreen(
         }
     }
     val fullBleedArt by PlayerSettings.fullBleedArtwork.collectAsStateWithLifecycle()
-    val forkArtAwake = rememberForkArtAwake(isPlaying) // fork
+    val forkClipPlays = forkPlaysOn(isPlaying, isLoading) // fork: a stall is not a pause
+    ForkLiveClock.Follow(song, position) // fork: a station's time under the seek bar
+    val forkArtAwake = rememberForkArtAwake(forkClipPlays, hasClip = canvas != null) // fork
     SideEffect { ForkCanvasSwitch.bigArtFits.value = forkBigArtFits(playerFillsWindow(windowWidth), windowWidth, windowHeight) } // fork: for the PC menu's row (after a commit, not mid-composition)
     // Full-bleed is a phone idiom. What the width has to rule out is a player
     // running a foot wider than the column of controls under it — edge to edge
@@ -2010,7 +2012,7 @@ fun NowPlayingScreen(
                         // The whole screen is the sheets' frost source: there is
                         // no full-bleed banner here to be it instead.
                         fullArtworkBlurContent(backgroundModifier.hazeSource(playerHaze))
-                        forkLandscapeClip?.let { ForkLandscapeBackdrop(it, fullArtworkBlurImage, isPlaying, dockMoving, dimmed = lyricsOpen || queueOpen, modifier = backgroundModifier) } // fork
+                        forkLandscapeClip?.let { ForkLandscapeBackdrop(it, fullArtworkBlurImage, forkClipPlays, dockMoving, dimmed = lyricsOpen || queueOpen, modifier = backgroundModifier) } // fork
                     },
                     artwork = { artworkModifier ->
                         LandscapeArtwork(
@@ -2313,7 +2315,7 @@ fun NowPlayingScreen(
                         val stillStart = remember(clip.url) { stillAtMount() }
                         CanvasArtworkPlayer(
                             canvas = clip,
-                            isPlaying = isPlaying,
+                            isPlaying = forkClipPlays, // fork: was isPlaying
                             // Paused for the whole collapse into the queue/lyrics panel
                             // and back, not just once it hands off to the still frame at
                             // p >= 0.5 — see [CanvasArtworkPlayer.pausedForTransition].
@@ -2521,7 +2523,7 @@ fun NowPlayingScreen(
                             .background(Color.Black),
                     )
                 }
-                ForkPausedCover(visible = spotifyCanvasPresentation && !isPlaying && !lyricsOpen && !queueOpen, artUrl = remoteArt) // fork: paused, the cover comes back over the full-screen clip
+                ForkPausedCover(visible = spotifyCanvasPresentation && !forkClipPlays && !lyricsOpen && !queueOpen, artUrl = remoteArt) // fork: paused, the cover comes back over the full-screen clip
 
                 Column(
                     modifier = Modifier
@@ -3306,7 +3308,7 @@ fun NowPlayingScreen(
                                     val stillStart = remember(canvas.url) { stillAtMount() }
                                     CanvasArtworkPlayer(
                                         canvas = canvas,
-                                        isPlaying = isPlaying,
+                                        isPlaying = forkClipPlays, // fork: was isPlaying
                                         // The panels first: a collapse the tap asked
                                         // for is paused from the tap, and then never
                                         // asks after its first frame of movement.

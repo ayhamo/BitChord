@@ -45,7 +45,18 @@ object ForkYouTubeHistory {
 
     fun init(context: Context) {
         prefs = context.getSharedPreferences("bitchord_fork_yt_history", Context.MODE_PRIVATE)
+        // A "no match" note is only good for MISS_MS, but it stayed in the file (one per song played,
+        // read whole at every start) until the song played again. Expired ones go, off the main thread.
+        scope.launch {
+            val now = System.currentTimeMillis()
+            val expired = prefs.all.filter { (_, value) -> (value as? String)?.let { expiredMiss(it, now) } == true }.keys
+            if (expired.isNotEmpty()) prefs.edit().also { editor -> expired.forEach { editor.remove(it) } }.apply()
+        }
     }
+
+    /** Whether a saved note is a "no match" older than [MISS_MS]. */
+    internal fun expiredMiss(line: String, now: Long): Boolean =
+        line.substringBefore('|') == NONE && now - (line.substringAfter('|', "").toLongOrNull() ?: 0L) >= MISS_MS
 
     /** Called as each Navidrome song is queued for playing (its title and artist are needed to search). */
     fun remember(song: Song) {

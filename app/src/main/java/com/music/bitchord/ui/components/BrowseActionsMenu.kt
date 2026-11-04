@@ -174,6 +174,7 @@ fun BrowseActionsMenu(
         ) {
             onPlay?.let { ActionRow(SfIcons.Play, stringResource(R.string.play), onClick = it) }
             onShuffle?.let { ActionRow(SfIcons.Shuffle, stringResource(R.string.shuffle), onClick = it) }
+            ForkArtistRadioRow(target, MaterialTheme.colorScheme.primary) // fork: "Start radio" for a Navidrome artist
             ActionRow(
                 SfIcons.PlayNext,
                 stringResource(R.string.play_next),

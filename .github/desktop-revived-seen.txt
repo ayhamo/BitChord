@@ -1,0 +1,4 @@
+# What the fork has looked at in Bntagaaa/BitChord-Desktop-Revived (read by fork-desktop-revived-watch.yml).
+# After reviewing their new release or commits, set these to their new values and push.
+release=v1.9.0
+commit=7d151b2d34a701971fb0c0bc787e07ef50d3d105

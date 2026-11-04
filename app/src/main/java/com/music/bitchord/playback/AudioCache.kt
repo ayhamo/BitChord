@@ -1199,6 +1199,7 @@ object AudioCache {
                 activeDs = if (scheme == "file" || scheme == "content" || com.music.bitchord.data.navidrome.NavidromeRadio.isStream(dataSpec.uri.toString())) { // fork: a live radio stream isn't cached
                     upstreamDs
                 } else {
+                    com.music.bitchord.fork.ForkPreload.yieldTo(dataSpec.uri) // fork: a server song's pre-load lets go of its cache entry
                     settleDirectEntry(dataSpec.uri)
                     cacheDs
                 }

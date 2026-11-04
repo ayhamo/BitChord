@@ -987,6 +987,7 @@ class PlaybackService : MediaLibraryService() {
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
+            if (com.music.bitchord.fork.ForkRadioReopen.onTransition(exoPlayer, reason)) return // fork: a station closed by its server opens again
             // A quality swap replaces the playing item, which Media3
             // reports here as a playlist change — indistinguishable, from
             // this callback's point of view, from the queue moving on. It
@@ -1062,6 +1063,7 @@ class PlaybackService : MediaLibraryService() {
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
+            if (state == Player.STATE_ENDED && com.music.bitchord.fork.ForkRadioReopen.onEnded(exoPlayer)) return // fork: a station closed by its server opens again
             if (state == Player.STATE_ENDED) {
                 SleepTimer.cancel()
                 // The queue ran dry, so no transition will ever close the last
@@ -3498,7 +3500,7 @@ class PlaybackService : MediaLibraryService() {
         // that callback is driven explicitly instead. Without this the crossfade
         // would silently stop scrobbling, stop writing history, stop honouring
         // "sleep after this song" and stop reading ahead.
-        val skipBlend = crossfade?.isSkipBlend() == true // fork: a skip that crossfaded didn't end the song
+        val skipBlend = crossfade?.forkSkip?.isSkipBlend() == true // fork: a skip that crossfaded didn't end the song
         onTrackBecameCurrent(
             incoming.currentMediaItem,
             previousEnded = !skipBlend, // fork
@@ -8253,7 +8255,7 @@ class PlaybackService : MediaLibraryService() {
                 castPrevious()
                 return
             }
-            if (crossfade.crossfadeSkip(wrappedPlayer.forkPreviousTarget())) return // fork
+            if (crossfade.forkSkip.crossfadeSkip(wrappedPlayer.forkPreviousTarget())) return // fork
             super.seekToPrevious()
         }
 
@@ -8392,7 +8394,7 @@ class PlaybackService : MediaLibraryService() {
         override fun seekToPreviousMediaItem() {
             if (locked()) return
             onUserIntent()
-            if (!cast.active && crossfade.crossfadeSkip(wrappedPlayer.forkPreviousTarget())) return // fork
+            if (!cast.active && crossfade.forkSkip.crossfadeSkip(wrappedPlayer.forkPreviousTarget())) return // fork
             crossfade.onSkipRequested()
             if (cast.active) {
                 castPrevious()
@@ -8404,7 +8406,7 @@ class PlaybackService : MediaLibraryService() {
         override fun seekToNextMediaItem() {
             if (locked()) return
             onUserIntent()
-            if (!cast.active && crossfade.crossfadeSkip(wrappedPlayer.nextMediaItemIndex)) return // fork
+            if (!cast.active && crossfade.forkSkip.crossfadeSkip(wrappedPlayer.nextMediaItemIndex)) return // fork
             crossfade.onSkipRequested()
             wrappedPlayer.seekToNextMediaItem()
         }
@@ -8412,7 +8414,7 @@ class PlaybackService : MediaLibraryService() {
         override fun seekToNext() {
             if (locked()) return
             onUserIntent()
-            if (!cast.active && crossfade.crossfadeSkip(wrappedPlayer.nextMediaItemIndex)) return // fork
+            if (!cast.active && crossfade.forkSkip.crossfadeSkip(wrappedPlayer.nextMediaItemIndex)) return // fork
             crossfade.onSkipRequested()
             wrappedPlayer.seekToNext()
         }

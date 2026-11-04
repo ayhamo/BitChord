@@ -1,5 +1,6 @@
 package com.music.bitchord.data.navidrome
 
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.model.PlaybackSourceType
@@ -108,8 +109,8 @@ object NavidromeRadio {
         }
         val found = runCatching {
             serverLogo(station)
-                ?: directory("byurl", "url" to stream.publicPart())
-                ?: directory("byurl", "url" to station.streamUrl.publicPart())
+                ?: stream.takeIf(::isPublicStream)?.let { directory("byurl", "url" to it.publicPart()) }
+                ?: station.streamUrl.takeIf(::isPublicStream)?.let { directory("byurl", "url" to it.publicPart()) }
                 ?: directory("byname/" + station.name.substringBefore(" (").trim(), "order" to "votes", "reverse" to "true", "limit" to "10")
         }.onFailure { Log.d(TAG, "radio logo ${station.name}: ${it.message}") }
         // A failed lookup (no network) is not remembered; only a real answer is.
@@ -148,6 +149,37 @@ object NavidromeRadio {
                 .mapNotNull { (it as? JsonObject)?.get("favicon")?.let { f -> (f as? JsonPrimitive)?.contentOrNull } }
                 .firstOrNull { it.startsWith("http") && !it.substringBefore('?').endsWith(".svg", ignoreCase = true) }
         }
+    }
+
+    /**
+     * Whether a station's stream may be named to radio-browser.info: only one on the open internet.
+     * A stream on the Navidrome server's own host, a private or Tailscale address (`100.64.0.0/10`,
+     * `.ts.net`), a LAN name (`.local`, `.lan`, `.home`, `.internal`, one label) or a non-web scheme
+     * would tell a third party a private host name for nothing, since the directory can't list it;
+     * those stations go by name alone. Doesn't resolve names: a public name that points inward is
+     * as public as its owner made it.
+     */
+    internal fun isPublicStream(url: String, serverHost: String? = runCatching { NavidromeSettings.url.value.toHttpUrlOrNull()?.host }.getOrNull()): Boolean {
+        val parsed = url.toHttpUrlOrNull() ?: return false
+        val host = parsed.host.lowercase().trimEnd('.')
+        if (serverHost != null && host == serverHost.lowercase()) return false
+        if ('.' !in host && ':' !in host) return false
+        if (listOf(".local", ".lan", ".home", ".internal", ".localdomain", ".home.arpa", ".ts.net", ".localhost").any(host::endsWith)) return false
+        if (host == "localhost") return false
+        val parts = host.split('.')
+        val v4 = parts.mapNotNull { part -> part.toIntOrNull()?.takeIf { it in 0..255 } }
+        if (parts.size == 4 && v4.size == 4) {
+            val a = v4[0]
+            val b = v4[1]
+            return !(a == 10 || a == 127 || a == 0 || (a == 169 && b == 254) || (a == 172 && b in 16..31) ||
+                (a == 192 && b == 168) || (a == 100 && b in 64..127))
+        }
+        if (':' in host) {
+            // IPv6: loopback, unique local (fc00::/7), link-local (fe80::/10).
+            val h = host.trim('[', ']')
+            return !(h == "::1" || h.startsWith("fc") || h.startsWith("fd") || h.startsWith("fe8") || h.startsWith("fe9") || h.startsWith("fea") || h.startsWith("feb"))
+        }
+        return true
     }
 
     private const val DIRECTORY_HOST = "de1.api.radio-browser.info"

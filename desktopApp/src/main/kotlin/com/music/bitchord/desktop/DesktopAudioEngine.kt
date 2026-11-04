@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.first // fork
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -179,6 +180,15 @@ class DesktopPlaybackEngine(
         /** Brings this track to the output stream's rate, when the two differ; see [readSource]. */
         var converter: DesktopRateConverter? = null
 
+        /** Fork (Desktop Revived 700e0d16): reopens tried for this song's deck so far, and one in flight. */
+        var forkRecoveryAttempt = 0
+        var forkRecoveryRequested = false
+        var forkRecoveredAtNs = 0L
+        /** The reopen this deck is waiting for; an answer to an older one is closed. */
+        var forkRecoveryTicket: Any? = null
+        /** Fork: when this deck was opened, for [ForkInstantDeck.fresh]. */
+        val forkOpenedAtNs: Long = System.nanoTime()
+
         /** Back to the decoder at the listener's speed, dropping any beatmatch stretch. */
         fun dropTempo() {
             // The converter's history is from before whatever moved the decoder.
@@ -192,7 +202,9 @@ class DesktopPlaybackEngine(
     }
 
     private sealed interface Command {
-        class Start(val track: Track, val playWhenReady: Boolean) : Command
+        class Start(val track: Track, val playWhenReady: Boolean, val forkGeneration: Long = -1L) : Command // fork: forkGeneration
+        /** fork: Next onto the song whose deck is already open; [resolve] is the ordinary open when it can't be used. */
+        class ForkSelect(val song: Song, val playWhenReady: Boolean, val generation: Long, val resolve: () -> Unit) : Command
         /** Replaces only the playing deck; a quality upgrade must not discard the prepared next deck. */
         class ReplaceCurrent(val track: Track, val playWhenReady: Boolean) : Command
         class Upcoming(val track: Track) : Command
@@ -203,6 +215,8 @@ class DesktopPlaybackEngine(
         class MixNow(val fadeSeconds: Int) : Command
         /** fork: a manual skip's blend; see [forkSkipTo]. [track] is null for the deck already open. */
         class ForkSkip(val song: Song, val track: Track?, val fadeSeconds: Int, val ticket: Any) : Command
+        /** fork: a dead or stalled deck's replacement, opened at the heard position; see [forkRequestRecovery]. */
+        class ForkRecovered(val failed: Track, val replacement: Track?, val reason: String, val ticket: Any) : Command
         data object ClearUpcoming : Command
         data object Reconfigure : Command
         data object Flush : Command
@@ -246,10 +260,32 @@ class DesktopPlaybackEngine(
         resolveJob?.cancel()
         nextResolveJob?.cancel()
         upgradeJob?.cancel()
-        commands += Command.Flush
+        // fork: no Flush when the open next deck is taken (ForkSelect flushes, keeping it)
+        val forkReuse = startAtMs == 0L && priorFailure == null && excludedSourceId == null && nextDeckOpenId == song.videoId
+        if (!forkReuse) commands += Command.Flush
         searchingBetterFor = null
         incomingSearchingFor = null
         _state.value = DesktopPlaybackState(song = song, volume = volume, isLoading = true)
+        val forkGeneration = forkLoadGeneration.incrementAndGet() // fork: an open finishing after a newer load is dropped
+        val forkResolve = { forkResolveLoad(song, playWhenReady, excludedSourceId, startAtMs, priorFailure, forkGeneration) }
+        // fork (Desktop Revived 88dcc5d0): Next onto the song already open as the next deck starts it at once
+        if (forkReuse) {
+            commands += Command.ForkSelect(song, playWhenReady, forkGeneration, forkResolve)
+            return
+        }
+        forkResolve()
+    }
+
+    /** fork: [loadInternal]'s resolve and open, apart so [Command.ForkSelect] can fall back on it. */
+    private fun forkResolveLoad(
+        song: Song,
+        playWhenReady: Boolean,
+        excludedSourceId: String?,
+        startAtMs: Long,
+        priorFailure: Throwable?,
+        forkGeneration: Long,
+    ) {
+        if (forkGeneration != forkLoadGeneration.get()) return
         resolveJob = scope.launch {
             // Only when the file is really there: a download record can outlive the file it names,
             // and handing the decoder a path that is not there fails as "could not open stream"
@@ -267,7 +303,7 @@ class DesktopPlaybackEngine(
                     opened.fold(
                         onSuccess = { track ->
                             searchingBetterFor = song.videoId.takeIf { live.pendingSubstitute != null }
-                            commands += Command.Start(track, playWhenReady)
+                            commands += Command.Start(track, playWhenReady, forkGeneration)
                             live.pendingSubstitute?.let { watchForUpgrade(song, it) }
                         },
                         onFailure = { failure -> retryAfterFailure(song, playWhenReady, live.stream, failure) },
@@ -286,7 +322,7 @@ class DesktopPlaybackEngine(
     }
 
     /** Opens a decoder on [stream], off the audio thread. */
-    private suspend fun openTrack(song: Song, stream: DesktopStream, startAtMs: Long): Result<Track> =
+    private suspend fun openTrack(song: Song, stream: DesktopStream, startAtMs: Long, forkInstantOnly: Boolean = false): Result<Track> = // fork: forkInstantOnly
         withContext(Dispatchers.IO) {
             val decoder = DesktopAudioDecoder()
             decoder.open(
@@ -306,6 +342,10 @@ class DesktopPlaybackEngine(
                     outputFormat = decoder.outputFormat,
                     durationUs = decoder.durationUs,
                     measuredFormat = decoder.measuredFormat,
+                    // fork (Desktop Revived 88dcc5d0): a next deck opened only so it starts at once holds
+                    // 2 s until it plays, then grows to the full read-ahead (forkPrepareForPlayback)
+                    aheadSamples = decoder.outputFormat.sampleRate * decoder.outputFormat.channels *
+                        (if (forkInstantOnly) DesktopDecodeAhead.FORK_INSTANT_AHEAD_SECONDS else DesktopDecodeAhead.AHEAD_SECONDS),
                     name = "BitChord-Decode ${song.title.take(24)}",
                 )
                 Track(song, ahead, stream, startAtMs * 1_000)
@@ -337,16 +377,23 @@ class DesktopPlaybackEngine(
     private fun watchForUpgrade(song: Song, pending: Deferred<DesktopStream?>) {
         upgradeJob = scope.launch {
             try {
-                if (take(song, runCatching { pending.await() }.getOrNull())) return@launch
+                forkAwaitMixEnd() // fork (PC-Continued be257dad): no copy's deck is opened during a mix or the seam's lead
+                // fork (PC-Continued 18b6b3ae): with Atmos on, a lossless copy leaves the mix question open
+                // and the follow-ups below still ask for the immersive one (ForkAtmos)
+                val pendingStream = runCatching { pending.await() }.getOrNull()
+                if (take(song, pendingStream) && (pendingStream == null || !ForkAtmos.wanted() || ForkAtmos.isAtmos(pendingStream))) return@launch
                 // The live race takes the first copy that beats YouTube, so a slower lossless
                 // source can still be searching when a lossy one wins — and a source that failed
                 // that minute may answer properly now. Android asks again; so does this.
                 repeat(LOSSLESS_FOLLOW_UPS) {
                     val current = _state.value
                     if (current.song?.videoId != song.videoId) return@launch
-                    if (current.streamFormat?.isLossless == true) return@launch
                     if (current.streamFormat?.isDolbyAtmos == true) return@launch
-                    if (DesktopMusicSources.ceiling(null) != DesktopAudioQuality.LOSSLESS) return@launch
+                    val atmosWanted = ForkAtmos.wanted() // fork: a FLAC is what the Atmos copy replaces
+                    if (!atmosWanted && current.streamFormat?.isLossless == true) return@launch
+                    if (!atmosWanted && DesktopMusicSources.ceiling(null) != DesktopAudioQuality.LOSSLESS) return@launch
+                    forkAwaitMixEnd() // fork
+                    if (_state.value.song?.videoId != song.videoId) return@launch // fork
                     val playing = DesktopStream(url = "", format = current.streamFormat ?: DesktopStreamFormat(), sourceId = current.streamSourceId)
                     if (take(song, DesktopMusicSources.upgradeFor(song, playing))) return@launch
                 }
@@ -374,6 +421,10 @@ class DesktopPlaybackEngine(
             )
             return false
         }
+        // fork (PC-Continued be257dad): asked again rather than trusting the caller's wait, a skip
+        // arms a seam at any moment, and opening the better copy is a network read and a demuxer.
+        forkAwaitMixEnd()
+        if (_state.value.song?.videoId != song.videoId) return true // fork
         DesktopTrackLog.log(
             "upgrading '${song.title}' to ${better.format.summary.ifBlank { "another rendition" }}" +
                 " from ${DesktopMusicSources.sourceNameFor(better)}",
@@ -458,11 +509,7 @@ class DesktopPlaybackEngine(
     fun seekTo(positionMs: Long) {
         // fork: nothing to seek in a live stream, and FFmpeg's generic seek reads forward to its target.
         if (com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(_state.value.song?.videoId)) return
-        // TEMP seek diagnostics: who asked, so a seek undone by a second one shows up.
-        DesktopTrackLog.log(
-            "seek requested: ${positionMs}ms (at ${_state.value.positionMs}ms) from " +
-                Throwable().stackTrace.drop(1).take(6).joinToString(" < ") { "${it.fileName}:${it.lineNumber}" },
-        )
+        // fork (from PC-Continued be257dad): the TEMP log that captured a stack trace on every seek is gone
         commands += Command.SeekTo(positionMs.coerceAtLeast(0))
     }
 
@@ -482,18 +529,21 @@ class DesktopPlaybackEngine(
     }
 
     fun setCrossfadeSeconds(seconds: Int) {
+        if (crossfadeSeconds == seconds.coerceIn(0, MAX_CROSSFADE_SECONDS)) return // fork (Desktop Revived d77475ba): unchanged does nothing
         crossfadeSeconds = seconds.coerceIn(0, MAX_CROSSFADE_SECONDS)
         if (crossfadeSeconds == 0 && !automixEnabled && !skipMixEnabled) clearUpcoming()
     }
 
     /** Enables Android's separate Automix setting. */
     fun setAutomixEnabled(enabled: Boolean) {
+        if (automixEnabled == enabled) return // fork (Desktop Revived d77475ba)
         automixEnabled = enabled
         if (!enabled && crossfadeSeconds == 0 && !skipMixEnabled) clearUpcoming()
     }
 
     /** Enables blending into the next track on a manual skip; see [beginSkipMix]. */
     fun setSkipMixEnabled(enabled: Boolean) {
+        if (skipMixEnabled == enabled) return // fork (Desktop Revived d77475ba)
         skipMixEnabled = enabled
         if (!enabled && !automixEnabled && crossfadeSeconds == 0) clearUpcoming()
     }
@@ -504,6 +554,7 @@ class DesktopPlaybackEngine(
      * back to the adaptive planner.
      */
     fun setAutomixPhraseBars(bars: Int) {
+        if (automixPhraseBars == (if (bars == 8 || bars == 16) bars else 0)) return // fork (Desktop Revived d150d26f): unchanged does nothing
         automixPhraseBars = if (bars == 8 || bars == 16) bars else 0
     }
 
@@ -533,11 +584,13 @@ class DesktopPlaybackEngine(
                 return
             }
         }
+        if (forkKeepsPreparedNext(song)) return // fork (Desktop Revived d77475ba)
         nextResolveJob?.cancel()
         clearUpcoming()
-        if (song == null || transitionSecondsFor(song) == 0) return
+        if (song == null || !forkPreparesNext(song)) return // fork: with no transition too, for an instant start (Desktop Revived 88dcc5d0)
         if (com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(song.videoId)) return // fork: nothing to read ahead on a live stream (`ForkPreload.skipsReadAhead` on the phone); it opens when it plays
         nextSong = song
+        forkNextQuality = audioQuality // fork
         // A download plays from its file, here as in [loadInternal] — never from whichever source
         // would have answered for it.
         val local = DesktopDownloadManager.savedFile(song)?.toAbsolutePath()?.toString()?.let { DesktopStream(it) }
@@ -545,6 +598,7 @@ class DesktopPlaybackEngine(
         // Measured on YouTube Opus (or the file) whatever will end up serving it, so Automix has
         // its analysis without anything being fetched from the source that will play it.
         if (automixEnabled && !song.isVideoOrigin) {
+            analyzer.focusOn(_state.value.song?.videoId, song.videoId) // fork (Desktop Revived a5603aa5)
             analyzer.request(song, local, song.durationText.durationSeconds())
         }
         if (local == null && DesktopMusicSources.mayServeFromAddon(song)) {
@@ -569,6 +623,13 @@ class DesktopPlaybackEngine(
      */
     private fun resolveUpcoming(song: Song, local: DesktopStream? = null, race: Boolean = false) {
         nextResolveJob = scope.launch {
+            // fork (Desktop Revived 88dcc5d0): opened only for an instant start, the next song waits until
+            // the playing one is heard and a second more, so it doesn't compete with that start
+            val instantOnly = transitionSecondsFor(song) == 0
+            if (instantOnly) {
+                _state.first { !it.isLoading && !it.awaitingAudio && it.isPlaying }
+                delay(FORK_INSTANT_PREPARE_DELAY_MS)
+            }
             val askedAt = System.nanoTime()
             val resolved: Result<DesktopLiveResolution> = when {
                 local != null -> Result.success(DesktopLiveResolution(local))
@@ -577,7 +638,7 @@ class DesktopPlaybackEngine(
             }
             resolved.fold(
                 onSuccess = { live ->
-                    openTrack(song, live.stream, startAtMs = 0).fold(
+                    openTrack(song, live.stream, startAtMs = 0, forkInstantOnly = instantOnly).fold( // fork
                         onSuccess = { track ->
                             // A newer [prepareNext] may have asked for another track while this one
                             // was resolving.
@@ -590,6 +651,7 @@ class DesktopPlaybackEngine(
                                 "incoming '${song.title}' ready from ${DesktopMusicSources.sourceNameFor(live.stream)}" +
                                     " in ${(System.nanoTime() - askedAt) / 1_000_000}ms",
                             )
+                            forkUpcomingQueuedFor = song.videoId // fork: see forkKeepsPreparedNext
                             commands += Command.Upcoming(track)
                             live.pendingSubstitute?.let { upgradeIncoming(song, track.stream, it) }
                         },
@@ -625,7 +687,7 @@ class DesktopPlaybackEngine(
                 return@launch
             }
             // Not heard yet: the incoming deck itself is replaced, with nothing to interrupt.
-            if (upcoming?.song?.videoId == song.videoId && fadeRemaining <= 0 && !displaySwitched) {
+            if (upcoming?.song?.videoId == song.videoId && fadeRemaining <= 0 && !displaySwitched && !forkMixEngaged) { // fork: not in the seam's lead either (PC-Continued be257dad)
                 openTrack(song, better, startAtMs = 0).fold(
                     onSuccess = { commands += Command.ReplaceUpcoming(it) },
                     onFailure = { settleIncomingSearch(song) },
@@ -814,6 +876,7 @@ class DesktopPlaybackEngine(
         val track = current
         if (track == null || paused) {
             if (paused) sink.pause()
+            forkSilence.reset() // fork: ForkSilentTail
             if (paused && fadeRemaining > 0) publishBlend(playing = false)
             Thread.sleep(20)
             return
@@ -825,6 +888,8 @@ class DesktopPlaybackEngine(
         forkStartWaitingSwap(track) // fork
         val block = readCurrent(track)
         val count = currentReadCount
+        if (block == null && forkUnderrunOrFailed(track)) return // fork: a stalled or dead decoder (Desktop Revived 700e0d16 / 418d328d)
+        if (block != null && track.forkRecoveryRequested) forkKeepSelfRecovered(track) // fork
         if (block != null && count > 0) forkMixSwap(block, count) // fork
         if (block == null && forkSwap != null) { forkFinishSwap(); return } // fork: the old copy ran out first
         if (block == null) {
@@ -872,8 +937,9 @@ class DesktopPlaybackEngine(
                 skippedUs = skippedFrames.coerceAtLeast(0L) * 1_000_000.0 / rate * deck,
             )
         }
-        sink.write(samples, count)
-        framesWritten += count / sink.format.channels.coerceAtLeast(1)
+        if (fadeRemaining <= 0 && forkLoopRun == null) forkSilence.meter(samples, count, sink.format.channels) // fork: ForkSilentTail
+        // fork (Desktop Revived 337653d8): only the frames the device accepted move the clock (ForkPcmWrite)
+        forkWritePcmFully(samples, count, sink.format.channels.coerceAtLeast(1), sink.format.bytesPerSample, sink::write, { framesWritten += it })
         if (count > 0 && _state.value.awaitingAudio) _state.update { it.copy(awaitingAudio = false) }
     }
 
@@ -889,6 +955,7 @@ class DesktopPlaybackEngine(
     /** Starts [playhead] over: what the speakers are playing right now is [positionUs] of [track]. */
     private fun resetPlayhead(track: Track, positionUs: Long) {
         playhead.reset(sink.framesPlayed(), positionUs, usPerFrame(track))
+        forkSilence.reset() // fork: the song starts somewhere new (ForkSilentTail)
     }
 
     /** Mixes the outgoing track with the one coming in, when a crossfade is running. */
@@ -1010,12 +1077,12 @@ class DesktopPlaybackEngine(
             track.tempoDrained = false
         }
         val tempo = track.tempo ?: run {
-            val block = readSource(track)
+            val block = readSource(track, FORK_DECODE_POLL_MS) // fork: timed, so a stall can't hold the commands up
             currentReadCount = if (block == null) 0 else sourceReadCount
             return block
         }
         while (tempo.available == 0) {
-            val source = readSource(track) ?: run {
+            val source = readSource(track, FORK_DECODE_POLL_MS) ?: run { // fork: timed
                 currentReadCount = 0
                 return null
             }
@@ -1046,7 +1113,9 @@ class DesktopPlaybackEngine(
             sink.format.sampleRate,
         ).also { track.tempo = it }
         while (tempo.available < wanted) {
-            val source = readSource(track) ?: break
+            // fork: timed as the playing deck's read is; an incoming stream stalled mid-blend used to hold
+            // the audio thread (and Pause, Seek, Next with it) until FFmpeg's 15 s read timeout
+            val source = readSource(track, FORK_DECODE_POLL_MS) ?: break
             tempo.speed = track.tempoRate.toFloat()
             tempo.push(source, sourceReadCount)
         }
@@ -1071,8 +1140,8 @@ class DesktopPlaybackEngine(
      * and stayed that way for the rest of the track, until Next reopened the stream at its rate.
      * Android never meets it: each of its players has its own output.
      */
-    private fun readSource(track: Track): FloatArray? {
-        val block = track.decoder.readSamples() ?: return null
+    private fun readSource(track: Track, forkWaitMs: Long = Long.MAX_VALUE): FloatArray? { // fork: forkWaitMs, see readCurrent
+        val block = track.decoder.readSamples(forkWaitMs) ?: return null
         val count = track.decoder.sampleCount
         val from = track.decoder.outputFormat.sampleRate
         val to = sink.format.sampleRate
@@ -1126,6 +1195,7 @@ class DesktopPlaybackEngine(
 
     /** End of a track. */
     private fun finishTrack(track: Track) {
+        if (upcoming != null && forkPlainHandoff(track)) return // fork: an instant next deck, or none after this track (Desktop Revived 88dcc5d0)
         if (upcoming != null) {
             promoteUpcoming()
             return
@@ -1138,6 +1208,7 @@ class DesktopPlaybackEngine(
             it.copy(isPlaying = false, positionMs = it.durationMs, positionSampledAtNanos = System.nanoTime())
         }
         if (forkSkipTicket != null) return // fork: the old song ran out under a skip that has already moved the queue; ending it would move it again
+        if (ForkRadioReconnect.closed(track.song, scope, { _state.value.song?.videoId == track.song.videoId }, reopen = { load(track.song) })) return // fork: a station closed by its server opens again
         onEnded()
     }
 
@@ -1158,6 +1229,7 @@ class DesktopPlaybackEngine(
         incomingFilter.open()
         current?.decoder?.close()
         current = incoming
+        incoming.decoder.forkPrepareForPlayback() // fork
         if (incoming.tempo != null && kotlin.math.abs(incoming.tempoRate - 1.0) > FORK_TEMPO_UNITY) { // fork: slowed too
             val gap = kotlin.math.abs(incoming.tempoRate - 1.0)
             val steps = ceil(gap / TEMPO_STEP_PER_BEAT).toInt().coerceAtLeast(1)
@@ -1223,6 +1295,7 @@ class DesktopPlaybackEngine(
      */
     private fun endBlend() {
         DesktopPlayerSettings.smartMixBlend.value = null
+        forkEndMixEngaged() // fork: the searches may open a deck again, after the settle (PC-Continued be257dad)
         var had = false
         var next: Song? = null
         synchronized(blendLock) {
@@ -1295,16 +1368,22 @@ class DesktopPlaybackEngine(
     private fun drainCommands() {
         while (true) {
             when (val command = commands.poll() ?: return) {
-                is Command.Start -> startTrack(command.track, command.playWhenReady)
+                is Command.Start -> if (command.forkGeneration >= 0 && command.forkGeneration != forkLoadGeneration.get()) {
+                    command.track.decoder.close() // fork: an open that finished after a newer load
+                } else {
+                    startTrack(command.track, command.playWhenReady)
+                }
+                is Command.ForkSelect -> forkSelect(command)
                 is Command.ReplaceCurrent -> replaceCurrent(command.track, command.playWhenReady)
                 is Command.Upcoming -> {
+                    forkUpcomingQueuedFor = null // fork
                     upcoming?.decoder?.close()
                     upcoming = command.track
                     nextDeckOpenId = command.track.song.videoId
                 }
                 is Command.ReplaceUpcoming -> {
                     val track = command.track
-                    if (upcoming?.song?.videoId == track.song.videoId && fadeRemaining <= 0 && !displaySwitched && forkLoopRun == null) { // fork: not under a loop mix's decks
+                    if (upcoming?.song?.videoId == track.song.videoId && fadeRemaining <= 0 && !displaySwitched && forkLoopRun == null && !forkMixEngaged) { // fork: not under a loop mix's decks, nor in the seam's lead
                         DesktopTrackLog.log(
                             "incoming '${track.song.title}' upgraded to " +
                                 "${track.stream.format.summary.ifBlank { "another rendition" }} before its transition",
@@ -1321,6 +1400,7 @@ class DesktopPlaybackEngine(
                 is Command.SeekTo -> performSeek(command.millis)
                 is Command.MixNow -> startSkipMix(command.fadeSeconds)
                 is Command.ForkSkip -> forkStartSkip(command)
+                is Command.ForkRecovered -> forkInstallRecovered(command)
                 Command.Reconfigure -> { forkLoopBail("the output was reopened", settle = true); reconfigureSink() } // fork
                 Command.ClearUpcoming -> {
                     forkLoopBail("the next song changed", settle = true) // fork
@@ -1595,6 +1675,7 @@ class DesktopPlaybackEngine(
         // decoder it is about to read from.
         if (current !== track) current?.decoder?.close()
         current = track
+        track.decoder.forkPrepareForPlayback() // fork
         fadeRemaining = 0
         forkArmCueCheck(track, track.startUs) // fork: ForkCueCorrection
 
@@ -1680,7 +1761,11 @@ class DesktopPlaybackEngine(
         val next = upcoming
         // A track held back from read-ahead has no decoder yet, but is measured all the same.
         val held = if (next == null) nextSong else null
-        if (track.song.isVideoOrigin || next?.song?.isVideoOrigin == true || held?.isVideoOrigin == true) return
+        if (track.song.isVideoOrigin || next?.song?.isVideoOrigin == true || held?.isVideoOrigin == true) {
+            analyzer.focusOn(null, null) // fork (Desktop Revived a5603aa5)
+            return
+        }
+        analyzer.focusOn(track.song.videoId, next?.song?.videoId ?: held?.videoId) // fork (Desktop Revived a5603aa5): only this pair is measured, the playing song first
         requestAnalysis(track)
         next?.let(::requestAnalysis)
         held?.let { analyzer.request(it, nextLocalStream, it.durationText.durationSeconds()) }
@@ -1693,8 +1778,9 @@ class DesktopPlaybackEngine(
         if (displaySwitched && upcoming != null) promoteUpcoming()
         forkSwapBeforeSeek() // fork
         val track = current ?: return
+        if (forkSeekReopens(track, millis)) return // fork: a dead or reopening deck is reopened at the seek
         val landed = track.decoder.seek(millis * 1_000)
-        // TEMP seek diagnostics.
+        // Whether the seek moved at all is the first thing to know when a position looks wrong. // fork (PC-Continued be257dad): kept, no longer TEMP
         DesktopTrackLog.log("seek performed: ${millis}ms on '${track.song.title}' ${if (landed) "ok" else "FAILED"}")
         // The stretcher still holds audio from before the seek, which would play first; and a
         // listener who has moved the playhead is past the handoff, so the ease ends here — as it
@@ -1831,11 +1917,13 @@ class DesktopPlaybackEngine(
             val duration = (track.decoder.durationUs ?: 0L) / 1_000
             if (held == null || duration <= 0) {
                 _state.update { it.copy(transitionWindow = null) }
+                forkMixEngaged = forkMixing() || forkLoopRun != null // fork
                 return
             }
             val nextMs = (held.durationText.durationSeconds() * 1_000).toLong()
             val plan = transitionPlan(track, held, nextMs, positionMs, duration)
             publishTransitionWindow(track, plan, duration)
+            forkMarkSeam(plan, held, positionMs, duration) // fork
             armAddonUpcoming(held, plan, positionMs, duration)
             return
         }
@@ -1845,9 +1933,13 @@ class DesktopPlaybackEngine(
 
         val plan = transitionPlan(track, incoming.song, (incoming.decoder.durationUs ?: 0L) / 1_000, positionMs, duration)
         publishTransitionWindow(track, plan, duration)
+        forkMarkSeam(plan, incoming.song, positionMs, duration) // fork
         if (forkLoopConsider(track, incoming, positionMs, duration)) return // fork: a loop mix holds the blend (ForkDesktopLoopMix)
 
-        if (!plan.shouldStart || plan.blocked) return
+        if (plan.blocked) return
+        // fork (PC-Continued 18b6b3ae): a tail already gone silent starts the mix now (ForkSilentTail)
+        if (!plan.shouldStart && !ForkSilentTail.mustLeave(plan.fadeSeconds, positionMs, duration, forkSilence.silentFrames, sink.format.sampleRate)) return
+        if (!plan.shouldStart) DesktopTrackLog.log("'${track.song.title}' has gone silent ${(duration - positionMs) / 1000}s before its end; mixing now")
         armIncomingBlend(incoming, plan)
     }
 
@@ -1858,6 +1950,7 @@ class DesktopPlaybackEngine(
      */
     private fun armIncomingBlend(incoming: Track, plan: TransitionPlan) {
         val seconds = plan.fadeSeconds.takeIf { it > 0 } ?: return
+        forkMixEngaged = true // fork (PC-Continued be257dad)
         // A planned transition says where the incoming track should be entered, which is the whole
         // difference between Automix and a crossfade.
         if (plan.incomingCueTime > 0) {
@@ -1903,9 +1996,10 @@ class DesktopPlaybackEngine(
                 (if (textureActive) TEXTURE_TAIL_SECONDS else 0.0)
             ).let { (it * sink.format.sampleRate * sink.format.channels).toInt() }
         transitionTotal = fadeTotal + echoTail + fxTail
-        fadeRemaining = transitionTotal
-        incomingSourceFrames = 0.0
-        activePlan = plan
+        // fork (from PC-Continued be257dad): the incoming deck is armed before the blend is let loose.
+        // [fadeRemaining] going positive is what makes the audio thread read it, and a stretch buffer
+        // or a drained flag left from an earlier life of this deck would be mixed, and counted, as audio
+        // from the cue it has just been moved to.
         incoming.tempo = if (kotlin.math.abs(plan.incomingPlaybackRate - 1.0) > FORK_TEMPO_UNITY) { // fork: slowed too
             DesktopTempoBuffer(sink.format.channels, sink.format.sampleRate).also {
                 it.speed = plan.incomingPlaybackRate.toFloat()
@@ -1915,6 +2009,10 @@ class DesktopPlaybackEngine(
         // stretcher would never read as eased out and stay on its buffer for the whole song
         incoming.tempoRate = plan.incomingPlaybackRate.coerceIn(MIN_INCOMING_RATE, MAX_INCOMING_RATE)
             .let { if (kotlin.math.abs(it - 1.0) <= FORK_TEMPO_UNITY) 1.0 else it }
+        incoming.tempoDrained = false // fork
+        incomingSourceFrames = 0.0
+        activePlan = plan
+        fadeRemaining = transitionTotal
         transitionEcho = if (plan.echoSeconds > 0.0) {
             DesktopTransitionEcho(sink.format.sampleRate, sink.format.channels).also { it.configure(plan.echoSeconds) }
         } else null
@@ -2193,6 +2291,7 @@ class DesktopPlaybackEngine(
                 skipSilence = skipSilenceEnabled,
                 deckRate = deckRate(track),
                 swapping = forkSwap != null || forkArmedSwap != null || forkWaitingSwap != null,
+                phraseBars = automixPhraseBars,
             ),
         ) ?: return false
         forkLoopMarker(hold.startSec, hold.endSec, durationMs)
@@ -2247,6 +2346,7 @@ class DesktopPlaybackEngine(
             // keeps the next deck, and a party joined mid-song doesn't touch it, so neither ended the mix.
             val why = when {
                 !automixEnabled -> "Automix is off"
+                automixPhraseBars != 0 -> "a fixed $automixPhraseBars-bar overlap is chosen" // fork (Desktop Revived d150d26f)
                 DesktopListenTogether.state.value.inParty -> "in a Listen Together party"
                 playbackSpeed != 1f -> "playback speed is not 1x"
                 skipSilenceEnabled -> "skip silence is on"
@@ -2267,6 +2367,10 @@ class DesktopPlaybackEngine(
                 return false
             }
             val song = readCurrent(track)
+            if (song == null && track.decoder.forkState == ForkDecodeState.RUNNING) {
+                Thread.sleep(FORK_DECODE_POLL_SLEEP_MS) // fork: an underrun, not the end
+                return true
+            }
             if (song == null) {
                 forkLoopCancel("the song ended before its loop")
                 return false
@@ -2551,6 +2655,321 @@ class DesktopPlaybackEngine(
         forkUpgradeHold.drop()?.decoder?.close()
     }
 
+    // ---- fork: a stalled or dead decoder is reopened where it was heard (Desktop Revived 700e0d16) ----
+    //
+    // A decoder whose stream stalls for [FORK_STALL_RECOVERY_MS], or that fails mid-song (a dropped
+    // connection, an expired address: DesktopAudioDecoder reports a read error short of the end), used
+    // to hold the audio thread or end the song there. Now the song is resolved again, the way it was
+    // first opened (a kept or downloaded file, then the sources, a Navidrome song through its server),
+    // and reopened at the heard position, [FORK_RECOVERY_ATTEMPTS] tries, off the audio thread; the old
+    // deck stays installed meanwhile, so Pause, Seek and Next still answer. A station isn't reopened
+    // here: it ends, and ForkRadioReconnect opens it again as before. Out of tries, the song ends.
+
+    /**
+     * From [step] when the playing deck gave nothing: true when the step is spent (an underrun waited
+     * out, a reopen asked for), false when it really ended and the step carries on as before.
+     */
+    private fun forkUnderrunOrFailed(track: Track): Boolean {
+        val state = track.decoder.forkState
+        if (state == ForkDecodeState.RUNNING) {
+            val stalledMs = track.decoder.forkUnderrunMs
+            if (stalledMs >= FORK_STALL_RECOVERY_MS) {
+                when {
+                    // The outgoing side of a mix has stalled: the incoming song takes over now.
+                    fadeRemaining > 0 && upcoming != null -> {
+                        DesktopTrackLog.log("'${track.song.title}' stalled for ${stalledMs}ms mid-mix; the next song takes over")
+                        promoteUpcoming()
+                    }
+                    com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(track.song.videoId) -> {
+                        DesktopTrackLog.log("radio: '${track.song.title}' gave nothing for ${stalledMs}ms")
+                        finishTrack(track)
+                    }
+                    // Out of tries, a stalled deck ends as a dead one does, rather than staying silent for good.
+                    !track.forkRecoveryRequested && !forkRecoveryTriesLeft(track) -> {
+                        DesktopTrackLog.log("'${track.song.title}' stalled for ${stalledMs}ms with no reopen left; ending the song")
+                        track.decoder.close()
+                        finishTrack(track)
+                        return true
+                    }
+                    else -> forkRequestRecovery(track, "no audio for ${stalledMs}ms")
+                }
+            }
+            Thread.sleep(FORK_DECODE_POLL_SLEEP_MS)
+            return true
+        }
+        if (state != ForkDecodeState.FAILED) return false
+        // The mix's end padding, or a station's reconnect, take a dead deck as they take an ended one.
+        if (fadeRemaining > 0 && upcoming != null) return false
+        if (com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(track.song.videoId)) return false
+        if (!track.forkRecoveryRequested && !forkRecoveryTriesLeft(track)) return false
+        forkRequestRecovery(track, track.decoder.forkFailure?.message ?: "the decoder stopped")
+        Thread.sleep(FORK_DECODE_POLL_SLEEP_MS)
+        return true
+    }
+
+    /** Resolves [track]'s song again and opens it at the heard position (or [atMs]); the audio thread installs it. */
+    private fun forkRequestRecovery(track: Track, reason: String, atMs: Long? = null) {
+        if (current !== track || track.forkRecoveryRequested) return
+        if (!forkRecoveryTriesLeft(track)) return
+        val attempt = ++track.forkRecoveryAttempt
+        track.forkRecoveryRequested = true
+        val resumeMs = atMs ?: (playhead.at(sink.framesPlayed()) / 1_000).coerceAtLeast(0L)
+        val song = track.song
+        DesktopTrackLog.log("decoder recovery $attempt/$FORK_RECOVERY_ATTEMPTS for '${song.title}' at ${resumeMs}ms: $reason")
+        _state.update { if (it.song?.videoId == song.videoId) it.copy(awaitingAudio = true) else it }
+        // Never cancelled: a decoder that finished opening under a cancel would be lost with its
+        // thread. An answer nobody waits for any more is closed when it lands (the ticket).
+        val ticket = Any()
+        track.forkRecoveryTicket = ticket
+        scope.launch {
+            val replacement = runCatching {
+                val localUrl = DesktopDownloadManager.savedFile(song)?.toAbsolutePath()?.toString()
+                val live = localUrl?.let { DesktopLiveResolution(DesktopStream(it)) }
+                    ?: DesktopMusicSources.resolveLive(song, audioQuality, refusedSources[song.videoId]).getOrThrow()
+                live.pendingSubstitute?.cancel()
+                openTrack(song, live.stream, resumeMs).getOrThrow()
+            }
+            commands += Command.ForkRecovered(
+                failed = track,
+                replacement = replacement.getOrNull()?.also { it.forkRecoveryAttempt = attempt },
+                reason = replacement.exceptionOrNull()?.message ?: reason,
+                ticket = ticket,
+            )
+        }
+    }
+
+    /** Whether [track] may be reopened again; see [forkRecoveryAllowed]. A forgiven deck starts its count over. */
+    private fun forkRecoveryTriesLeft(track: Track): Boolean {
+        val allowed = forkRecoveryAllowed(
+            track.forkRecoveryAttempt, track.forkRecoveredAtNs, System.nanoTime(),
+            FORK_RECOVERY_ATTEMPTS, FORK_RECOVERY_FORGIVE_NS,
+        )
+        if (allowed && track.forkRecoveryAttempt >= FORK_RECOVERY_ATTEMPTS) track.forkRecoveryAttempt = 0
+        return allowed
+    }
+
+    /** On the audio thread: the reopened deck goes in as a cut at the heard position, or the next try. */
+    private fun forkInstallRecovered(command: Command.ForkRecovered) {
+        val failed = command.failed
+        val replacement = command.replacement
+        if (current !== failed || !failed.forkRecoveryRequested || failed.forkRecoveryTicket !== command.ticket) {
+            replacement?.decoder?.close()
+            return
+        }
+        // A mix, a loop mix or a skip that started meanwhile owns the decks: cutting the reopened deck
+        // in would drop the blend half-done (fadeRemaining zeroed, blendActive left up). The dead deck
+        // is then taken as an ended one (the mix's end padding, the skip's own deck).
+        if (fadeRemaining > 0 || displaySwitched || forkLoopRun != null || forkSkipTicket != null) {
+            DesktopTrackLog.log("decoder recovery for '${failed.song.title}' dropped: a mix or skip took over")
+            failed.forkRecoveryRequested = false
+            replacement?.decoder?.close()
+            return
+        }
+        failed.forkRecoveryRequested = false
+        if (replacement == null) {
+            DesktopTrackLog.log("decoder recovery for '${failed.song.title}' failed: ${command.reason}")
+            if (failed.forkRecoveryAttempt < FORK_RECOVERY_ATTEMPTS) {
+                forkRequestRecovery(failed, command.reason)
+            } else {
+                DesktopTrackLog.log("decoder recovery exhausted for '${failed.song.title}'; ending the song")
+                if (failed.decoder.forkState == ForkDecodeState.RUNNING) failed.decoder.close()
+                finishTrack(failed)
+            }
+            return
+        }
+        DesktopTrackLog.log("decoder recovery installed for '${replacement.song.title}' at ${replacement.startUs / 1_000}ms")
+        replacement.forkRecoveredAtNs = System.nanoTime()
+        forkDropSwap(keep = replacement)
+        forkDropHeldUpgrade()
+        sink.flush()
+        framesWritten = sink.framesPlayed()
+        activePlan = null
+        outgoingFilter.open()
+        incomingFilter.open()
+        startTrack(replacement, playWhenReady = !paused)
+    }
+
+    /** The stalled deck came back on its own while a reopen was on its way: the healthy stream stays. */
+    private fun forkKeepSelfRecovered(track: Track) {
+        DesktopTrackLog.log("'${track.song.title}' recovered before its reopen; keeping it")
+        track.forkRecoveryRequested = false
+        track.forkRecoveryTicket = null
+    }
+
+    /** From [performSeek]: a deck that is dead or being reopened is reopened at the seek instead. */
+    private fun forkSeekReopens(track: Track, millis: Long): Boolean {
+        val dead = track.decoder.forkState == ForkDecodeState.FAILED
+        if (!dead && !track.forkRecoveryRequested) return false
+        track.forkRecoveryRequested = false
+        if (track.forkRecoveryAttempt >= FORK_RECOVERY_ATTEMPTS) track.forkRecoveryAttempt = FORK_RECOVERY_ATTEMPTS - 1
+        forkRequestRecovery(track, "a seek on a dead deck", atMs = millis)
+        resetPlayhead(track, millis * 1_000)
+        _state.update { it.copy(positionMs = millis, positionSampledAtNanos = System.nanoTime(), seeks = it.seeks + 1, awaitingAudio = true) }
+        return true
+    }
+
+    // ---- fork: instant playback (Desktop Revived 88dcc5d0) --------------------------------------------
+    //
+    // The next song is opened ahead with no Crossfade or Automix too, so Next and the end of a song start
+    // it at once instead of resolving and opening it then. Not in a party (the party moves the queue),
+    // with the sleep timer set to stop after this song, or for a station.
+
+    /** Bumped by every [loadInternal]: a Start from an older load is closed, not played. */
+    private val forkLoadGeneration = java.util.concurrent.atomic.AtomicLong()
+
+    /** Whether [prepareNext] opens [song] ahead: for a transition, or for an instant start. */
+    private fun forkPreparesNext(song: Song): Boolean =
+        transitionSecondsFor(song) > 0 ||
+            (!DesktopListenTogether.state.value.inParty && !DesktopSleepTimer.afterTrack.value)
+
+    /**
+     * From [finishTrack] with a next deck open. With the sleep timer set to stop after this song, or in
+     * a party, the deck is dropped and the song ends as before. A deck opened only for an instant start
+     * (nothing blended) starts at the end: on the same output when the formats match, gapless, else the
+     * output reopened at its own rate after the old song has played out. True when handled here.
+     */
+    private fun forkPlainHandoff(track: Track): Boolean {
+        val incoming = upcoming ?: return false
+        // Never under a blend: the deck is audible then, and dropping it would cut the mix off.
+        if (fadeRemaining > 0 || displaySwitched) return false
+        // The sleep timer drops any deck (a crossfade's included, which would otherwise play on past
+        // "End of track"); a party only an instant one, a crossfade's still hands over as upstream's.
+        val instantOnly = transitionSecondsFor(incoming.song) == 0
+        if (DesktopSleepTimer.afterTrack.value || (instantOnly && DesktopListenTogether.state.value.inParty)) {
+            incoming.decoder.close()
+            upcoming = null
+            nextDeckOpenId = null
+            nextSong = null
+            return false
+        }
+        if (!instantOnly) return false
+        val decoded = incoming.decoder.outputFormat
+        val sameFormat = sink.format.sampleRate == decoded.sampleRate && sink.format.channels == decoded.channels
+        if (sameFormat) return false // promoteUpcoming: gapless on the open output
+        DesktopTrackLog.log("'${incoming.song.title}' starts at the end of '${track.song.title}' at its own rate")
+        sink.drain()
+        upcoming = null
+        nextSong = null
+        nextDeckOpenId = null
+        track.decoder.close()
+        if (current === track) current = null
+        startTrack(incoming, playWhenReady = !paused)
+        onCrossfaded(incoming.song)
+        return true
+    }
+
+    /**
+     * On the audio thread: Next onto the song whose deck is open. Used when it is still where it was
+     * opened (nothing of it heard, no cue, no stretch) and alive; otherwise the ordinary open runs.
+     */
+    private fun forkSelect(command: Command.ForkSelect) {
+        if (command.generation != forkLoadGeneration.get()) return
+        val prepared = upcoming?.takeIf {
+            it.song.videoId == command.song.videoId && it.startUs == 0L && it.tempo == null &&
+                it.decoder.forkState.let { state -> state == ForkDecodeState.RUNNING || state == ForkDecodeState.EOF } &&
+                fadeRemaining <= 0 && !displaySwitched && forkLoopRun == null &&
+                ForkInstantDeck.fresh(it.stream, it.forkOpenedAtNs, System.nanoTime(), System.currentTimeMillis())
+        }
+        // What Flush does, keeping the prepared deck.
+        forkLoopBail("a new song", settle = false)
+        forkLoop.forget()
+        forkDropSwap(keep = prepared)
+        forkDropHeldUpgrade()
+        current?.decoder?.close()
+        current = null
+        if (upcoming !== prepared) upcoming?.decoder?.close()
+        upcoming = null
+        nextDeckOpenId = null
+        nextSong = null
+        fadeRemaining = 0
+        blendActive = false
+        sink.flush()
+        framesWritten = sink.framesPlayed()
+        endBlend()
+        if (prepared == null) {
+            command.resolve()
+            return
+        }
+        DesktopTrackLog.log("'${command.song.title}' starts from its open next deck")
+        startTrack(prepared, command.playWhenReady)
+    }
+
+    // ---- fork: a prepared next song is kept when it is asked for again (Desktop Revived d77475ba) ----
+
+    /** The quality the next song was prepared at, so a changed ceiling still prepares it again. */
+    @Volatile private var forkNextQuality: String? = null
+
+    /** A next deck resolved and on its way to the audio thread (between the resolve's end and the drain). */
+    @Volatile private var forkUpcomingQueuedFor: String? = null
+
+    /**
+     * Whether [prepareNext] is asked for the song already prepared, or being prepared, at the same
+     * quality. The queue and autoplay nominate the same next song again on every recomposition and
+     * metadata change, and each time the healthy deck was closed and opened again: in a long queue
+     * the Automix plan and its analysis kept vanishing just before the seam.
+     */
+    private fun forkKeepsPreparedNext(song: Song?): Boolean {
+        if (song == null || nextSong?.videoId != song.videoId || forkNextQuality != audioQuality) return false
+        if (!forkPreparesNext(song)) return false
+        val id = song.videoId
+        return (nextDeckOpenId == id && forkDeckAlive(id)) || nextResolveJob?.isActive == true ||
+            forkUpcomingQueuedFor == id || awaitingArm.get()?.videoId == id
+    }
+
+    /** Whether the open next deck for [id] can still play; see the decoder's lifecycle. */
+    private fun forkDeckAlive(id: String): Boolean =
+        upcoming?.takeIf { it.song.videoId == id }?.decoder?.forkState.let { it == null || it == ForkDecodeState.RUNNING || it == ForkDecodeState.EOF }
+
+    // ---- fork: the quality searches keep off the decks around a mix (PC-Continued be257dad) ---------
+
+    /**
+     * Raised from the seam's lead ([ADDON_ARM_LEAD_MS] before the transition, the lead the incoming
+     * deck is armed on) through the mix, and lowered at [endBlend]. Written on the audio thread, read by
+     * the searches: opening a better copy is a network read, a demuxer and a deck swap, and landing it
+     * in a seam is the stutter it was blamed for. [ForkMixUpgradeHold] still installs a copy that got
+     * through anyway; this only keeps the searches from opening one there.
+     */
+    @Volatile private var forkMixEngaged = false
+        set(value) {
+            field = value
+            ForkAtmos.mixEngaged = value // fork: the Atmos wait keeps off a mix too
+        }
+
+    /** Fork: dead air metered on the playing song, for a mix out of a tail that has gone silent. */
+    private val forkSilence = ForkSilentTail()
+
+    /** Until when the hand-over out of the last mix is still settling; see [forkAwaitMixEnd]. */
+    @Volatile private var forkMixSettledAtNs = 0L
+
+    /** From [maybeStartCrossfade]: engaged while a mix runs or the seam into [next] is within the lead. */
+    private fun forkMarkSeam(plan: TransitionPlan, next: Song, positionMs: Long, durationMs: Long) {
+        val startMs = if (!plan.blocked && plan.fadeSeconds > 0) {
+            (plan.transitionStart * 1_000).toLong()
+        } else {
+            durationMs - transitionSecondsFor(next) * 1_000L
+        }
+        val due = transitionSecondsFor(next) > 0 && startMs - positionMs <= ADDON_ARM_LEAD_MS
+        forkMixEngaged = forkMixing() || forkLoopRun != null || due
+    }
+
+    private fun forkEndMixEngaged() {
+        if (forkMixEngaged || blendActive) {
+            forkMixSettledAtNs = System.nanoTime() + ForkMixUpgradeHold.SETTLE_MS * 1_000_000L
+        }
+        forkMixEngaged = false
+    }
+
+    /** Holds a quality search until the seam is behind it (up to a minute); the caller re-checks its song. */
+    private suspend fun forkAwaitMixEnd() {
+        var polls = 0
+        while ((forkMixEngaged || blendActive || displaySwitched || System.nanoTime() < forkMixSettledAtNs) &&
+            polls < BLEND_WAIT_POLLS
+        ) {
+            delay(BLEND_WAIT_POLL_MS)
+            polls++
+        }
+    }
+
     // ---- fork: Automix reported as on the phone, see ForkAutomixReport -------------------------
 
     private val forkReport = ForkAutomixReporter()
@@ -2776,6 +3195,16 @@ class DesktopPlaybackEngine(
 
         /** Avoid a decoder seek for sub-tick drift while an upgraded rendition is opening. */
         private const val UPGRADE_RESEEK_THRESHOLD_MS = 250L
+
+        /** Fork (Desktop Revived 418d328d / 700e0d16): the playing deck's read wait, the pump's pause on an underrun, the stall that reopens, the tries. */
+        private const val FORK_DECODE_POLL_MS = 100L
+        private const val FORK_DECODE_POLL_SLEEP_MS = 10L
+        private const val FORK_STALL_RECOVERY_MS = 22_000L
+        private const val FORK_RECOVERY_ATTEMPTS = 2
+        private const val FORK_RECOVERY_FORGIVE_NS = 60_000_000_000L
+
+        /** Fork (Desktop Revived 88dcc5d0): how long after the playing song is heard an instant-only next deck opens. */
+        private const val FORK_INSTANT_PREPARE_DELAY_MS = 1_000L
 
         /** Fork: a deck rate this close to 1 is 1 (from PC-Continued be257dad). */
         private const val FORK_TEMPO_UNITY = 0.0001
