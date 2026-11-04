@@ -20,6 +20,8 @@
         <exclude domain="file" path="fork_queues.json" />
         <exclude domain="sharedpref" path="bitchord_widget.xml" />
         <exclude domain="sharedpref" path="bitchord_radio_logos.xml" />
+        <exclude domain="sharedpref" path="bitchord_navidrome_artist_pictures.xml" />
+        <exclude domain="sharedpref" path="bitchord_handoff.xml" />
         <exclude domain="database" path="exoplayer_internal.db" />
         <exclude domain="database" path="exoplayer_internal.db-journal" />
     </cloud-backup>
@@ -39,6 +41,8 @@
         <exclude domain="file" path="fork_queues.json" />
         <exclude domain="sharedpref" path="bitchord_widget.xml" />
         <exclude domain="sharedpref" path="bitchord_radio_logos.xml" />
+        <exclude domain="sharedpref" path="bitchord_navidrome_artist_pictures.xml" />
+        <exclude domain="sharedpref" path="bitchord_handoff.xml" />
         <exclude domain="database" path="exoplayer_internal.db" />
         <exclude domain="database" path="exoplayer_internal.db-journal" />
     </device-transfer>

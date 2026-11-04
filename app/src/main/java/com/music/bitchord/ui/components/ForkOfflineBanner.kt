@@ -30,4 +30,7 @@ internal fun ForkOfflineBanner(modifier: Modifier = Modifier) {
         onAction = { ForkSettings.setOfflineMode(false) },
         modifier = modifier,
     )
+    // "Continue from PC": the other fork strip above the mini player, drawn here so both of the
+    // main screen's bar layouts (Liquid Glass and plain) carry it without a hook of their own.
+    ForkHandoffChip(modifier)
 }

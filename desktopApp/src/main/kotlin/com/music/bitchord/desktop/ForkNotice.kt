@@ -37,6 +37,9 @@ internal object ForkNotice {
         // "Keep playlists updated" asks before a big batch here too: this is the window's one
         // host for messages over the page, so its ask needs no hook of its own in the window.
         ForkPlaylistSync.AskHost()
+        // "Continue from phone": its banner and its watchers (pauses, song changes, the tray) live here
+        // for the same reason, the window's one host for fork things over the page.
+        ForkHandoffDesktop.Host()
         val text by message.collectAsState()
         val shown = text ?: return
         LaunchedEffect(shown) {

@@ -131,7 +131,7 @@ internal object DesktopAppleMusicCanvas {
     }
 
     fun search(title: String, artist: String, album: String?): DesktopCanvasArtwork? {
-        val bearer = token() ?: return null
+        val bearer = token() ?: return com.music.bitchord.data.canvas.ForkCanvasLookup.failed("Apple Music: no token") // fork: was `return null`
         // The catalog search is term-based, so fold everything known into the term: an artist name
         // alone pulls in their whole discography for the scoring to then reject.
         val term = buildString {
@@ -192,7 +192,7 @@ internal object DesktopAppleMusicCanvas {
     /** Motion artwork for a release. Albums carry `editorialVideo` inline, so there is no second
      * lookup to resolve an id first. */
     fun searchAlbum(album: String, artist: String): DesktopCanvasArtwork? {
-        val bearer = token() ?: return null
+        val bearer = token() ?: return com.music.bitchord.data.canvas.ForkCanvasLookup.failed("Apple Music: no token") // fork: was `return null`
         val term = if (album.contains(artist, ignoreCase = true)) album else "$artist $album"
         val url = query(
             "$AMP/$storefront/search",
@@ -363,6 +363,7 @@ internal object DesktopAppleMusicCanvas {
             ),
         )
         if (status == 401) synchronized(this) {
+            com.music.bitchord.data.canvas.ForkAppleTokenBackup.forget(bearer) // fork
             if (cachedToken == bearer) {
                 cachedToken = null
                 tokenExpiresAtMs = 0L
@@ -376,6 +377,7 @@ internal object DesktopAppleMusicCanvas {
             if (fresh != null && fresh != bearer) return get(url, fresh, retried = true)
         }
         if (body == null) DesktopTrackLog.log("canvas: Apple Music answered ${if (status < 0) "nothing" else "HTTP $status"}")
+        if (body == null && status != 404) com.music.bitchord.data.canvas.ForkCanvasLookup.fail("Apple Music: ${if (status < 0) "no answer" else "http $status"}") // fork: a 404 is an answer
         return body
     }
 
@@ -383,7 +385,7 @@ internal object DesktopAppleMusicCanvas {
     private fun token(): String? {
         val now = System.currentTimeMillis()
         cachedToken?.let { if (now < tokenExpiresAtMs - 60_000) return it }
-        if (now < retryTokenAfterMs) return null
+        if (now < retryTokenAfterMs) return forkBackupToken(now) // fork: the last good token while a scrape is backing off
 
         val html = canvasGet(WEB_PLAYER)
         val scripts = html?.let {
@@ -404,13 +406,23 @@ internal object DesktopAppleMusicCanvas {
             val (jwt, expiresAt) = candidates.firstOrNull { isWebPlayerToken(it.first) } ?: candidates.first()
             cachedToken = jwt
             tokenExpiresAtMs = expiresAt
+            com.music.bitchord.data.canvas.ForkAppleTokenBackup.save(jwt, expiresAt) // fork: kept on disk as the backup
             return jwt
         }
         // A failed scrape backs off rather than retrying per track: if Apple has changed the page
         // shape, hammering it on every skip fixes nothing.
         retryTokenAfterMs = now + TOKEN_RETRY_MS
         DesktopTrackLog.log("canvas: could not read Apple Music's web player token")
-        return null
+        return forkBackupToken(now) // fork: the last good token, when it is still valid
+    }
+
+    /** Fork: ForkAppleTokenBackup's saved token, made the current one; null when there is none. */
+    private fun forkBackupToken(now: Long): String? {
+        val (jwt, expiresAt) = com.music.bitchord.data.canvas.ForkAppleTokenBackup.load(now) ?: return null
+        cachedToken = jwt
+        tokenExpiresAtMs = expiresAt
+        DesktopTrackLog.log("canvas: using the saved Apple Music token")
+        return jwt
     }
 
     private fun payload(jwt: String): JsonObject? = runCatching {
@@ -510,7 +522,7 @@ internal object DesktopTidalCanvas {
                 ),
             ),
             mapOf("X-Tidal-Token" to EMBED_TOKEN),
-        ),
+        ) ?: com.music.bitchord.data.canvas.ForkCanvasLookup.failed("Tidal: no answer"), // fork: + the failure report
     )
 
     /**
@@ -584,6 +596,7 @@ internal object DesktopCommunityCanvas {
         val body = canvasGet(MANIFEST)
         if (body == null) {
             // Serve what we already have rather than losing canvas entirely for half an hour.
+            if (entries.isEmpty()) com.music.bitchord.data.canvas.ForkCanvasLookup.fail("Community: manifest unreachable") // fork: nothing to look in is not "no clip"
             fetchedAtMs = now
             return entries
         }

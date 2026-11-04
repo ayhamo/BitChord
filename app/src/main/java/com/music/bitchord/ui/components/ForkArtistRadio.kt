@@ -85,6 +85,16 @@ internal fun ForkArtistRadioRow(target: BrowseTarget, accent: Color) {
 @Composable
 fun forkWithSimilarArtists(browseId: String, sections: List<HomeShelf>): List<HomeShelf> {
     if (NavidromeArtistInfo.nameOf(browseId) == null) return sections
-    val similar = produceState<HomeShelf?>(null, browseId) { value = NavidromeArtistInfo.similarShelf(browseId) }.value
+    val similar = produceState<HomeShelf?>(null, browseId) {
+        val shelf = NavidromeArtistInfo.similarShelf(browseId) ?: return@produceState
+        value = ForkArtistPictures.withPictures(shelf)
+        // Each similar artist with no answer yet, one at a time (their server picture may be the placeholder).
+        shelf.items.forEach { item ->
+            if (!com.music.bitchord.data.navidrome.NavidromeArtistPictures.settled(item.title)) {
+                com.music.bitchord.data.navidrome.NavidromeArtistPictures.pictureFor(item.title)
+                value = ForkArtistPictures.withPictures(shelf)
+            }
+        }
+    }.value
     return if (similar == null) sections else sections + similar
 }

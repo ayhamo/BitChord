@@ -710,7 +710,7 @@ fun SettingsScreen(
                     )
                 }
             }
-            if (bitPerfectMode == BitPerfectMode.USB_DIRECT) {
+            forkDisabledWhen(bitPerfectMode != BitPerfectMode.USB_DIRECT) { // fork: greyed, not hidden, outside direct USB
                 val fixedVolumeTitle = stringResource(R.string.usb_allow_fixed_volume)
                 row(fixedVolumeTitle, "volume", "usb", "dac", divided = false) {
                     SettingsSubRow(
@@ -723,7 +723,7 @@ fun SettingsScreen(
                     )
                 }
             }
-            if (bitPerfectMode != BitPerfectMode.OFF && bitPerfectMode.isSupported) {
+            forkDisabledWhen(bitPerfectMode == BitPerfectMode.OFF || !bitPerfectMode.isSupported) { // fork: greyed, not hidden, while bit-perfect is off
                 val convertTitle = stringResource(R.string.convert_for_limited_dac)
                 row(convertTitle, "convert", "resample", "usb", "dac", "bitperfect", divided = false) {
                     SettingsSubRow(
@@ -764,7 +764,7 @@ fun SettingsScreen(
             // Automix decides its own length from each pair of tracks —
             // tempo, key, structure — so it replaces the manual slider rather
             // than needing it set to anything first.
-            if (!smartFade) {
+            forkDisabledWhen(smartFade && !bitPerfectReady) { // fork: greyed at its value while Automix is on, not hidden (BypassedByBitPerfect dims it already while bit-perfect is ready)
                 val crossfadeTitle = stringResource(R.string.crossfade)
                 row(crossfadeTitle, "fade", "gapless") {
                     BypassedByBitPerfect(bitPerfectReady) {
@@ -967,7 +967,7 @@ fun SettingsScreen(
             // Liquid Glass is on: it qualifies the glass rather than standing on
             // its own. Its own switch because it costs frames of its own. Reduce
             // dynamic blur turns it off.
-            if (liquidGlass && liquidGlassSupported) {
+            forkDisabledWhen(!(liquidGlass && liquidGlassSupported)) { // fork: greyed, not hidden, while Liquid Glass is off
                 val progressiveBlurTitle = stringResource(R.string.progressive_blur)
                 row(progressiveBlurTitle, "blur", "status bar", "top", divided = false) {
                     SettingsSubRow(
@@ -1037,7 +1037,7 @@ fun SettingsScreen(
             // is off. Defaults to off: a clip loops for as long as its track
             // plays, so on cellular this is not a one-time video cost but
             // that cost repeated on every loop — see AppSettings.canvasOverCellular.
-            if (animatedCanvas) {
+            forkDisabledWhen(!animatedCanvas) { // fork: greyed, not hidden, while Animated cover art is off
                 val coverCellularTitle = stringResource(R.string.animated_cover_cellular)
                 row(coverCellularTitle, "canvas", "cellular", divided = false) {
                     SettingsSubRow(
@@ -1082,7 +1082,7 @@ fun SettingsScreen(
                     onClick = { AppSettings.setSignatureApiEnabled(!signatureApiEnabled) },
                 )
             }
-            if (signatureApiEnabled) {
+            forkDisabledWhen(!signatureApiEnabled) { // fork: greyed, not hidden, while signatures are off
                 val signatureUrlTitle = stringResource(R.string.artist_signatures_url)
                 row(signatureUrlTitle, "signature", "api", "url", divided = false) {
                     Row(
@@ -1126,7 +1126,7 @@ fun SettingsScreen(
             // Nothing to choose between while the feature is off, and the
             // sources are third-party services being reached on the user's
             // connection — which is the part worth being able to narrow.
-            if (syncedLyrics) {
+            forkDisabledWhen(!syncedLyrics) { // fork: greyed, not hidden, while Synced lyrics is off
                 val lyricsBlurTitle = stringResource(R.string.blur_unfocused_lyrics)
                 row(lyricsBlurTitle, "lyrics", "blur") {
                     SettingsRow(
@@ -1207,7 +1207,7 @@ fun SettingsScreen(
                     },
                 )
             }
-            if (highPerformanceMode) {
+            forkDisabledWhen(!highPerformanceMode) { // fork: greyed, not hidden, while High performance mode is off
                 val refreshRateTitle = stringResource(R.string.refresh_rate)
                 row(refreshRateTitle, "hz", "frame rate") {
                     SettingsRow(
@@ -1241,7 +1241,7 @@ fun SettingsScreen(
                     onClick = { localMusicFolderPicker.launch(null) },
                 )
             }
-            if (localMusicFolderUri.isNotBlank()) {
+            forkDisabledWhen(localMusicFolderUri.isBlank()) { // fork: greyed, not hidden, while all folders are already used
                 val useAllAudioFoldersTitle = stringResource(R.string.use_all_audio_folders)
                 row(useAllAudioFoldersTitle, "folder") {
                     SettingsRow(

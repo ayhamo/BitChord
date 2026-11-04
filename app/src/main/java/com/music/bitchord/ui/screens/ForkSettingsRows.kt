@@ -15,6 +15,7 @@ import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.DeleteSweep
+import androidx.compose.material.icons.rounded.Devices
 import androidx.compose.material.icons.rounded.VideoLibrary
 import androidx.compose.material.icons.rounded.Wallpaper
 import androidx.compose.material3.AlertDialog
@@ -311,23 +312,40 @@ internal fun SettingsGroupScope.forkNavidromeRows() {
     row(stringResource(R.string.fork_offline_storage), "navidrome", "offline", "storage", "downloads") { ForkOfflineStorageRow() }
     row(stringResource(R.string.fork_download_mobile), "navidrome", "offline", "mobile", "metered", "download") { ForkDownloadOnMobileRow() }
     row(stringResource(R.string.fork_preload), "navidrome", "preload", "cache", "next") { ForkPreloadRow() }
+    // Rides on the server, so greyed (never hidden) while none is set up: the owner's rule for dependent rows.
+    val url by com.music.bitchord.data.navidrome.NavidromeSettings.url.collectAsStateWithLifecycle()
+    val user by com.music.bitchord.data.navidrome.NavidromeSettings.username.collectAsStateWithLifecycle()
+    forkDisabledWhen(url.isBlank() || user.isBlank()) {
+        row(stringResource(R.string.fork_handoff_setting), "navidrome", "continue", "handoff", "pc", "device") { ForkHandoffRow() }
+    }
 }
 
+/** "Continue on other devices": the queue left on the server for the PC ([com.music.bitchord.fork.ForkHandoffPhone]). */
+@Composable
+internal fun ForkHandoffRow() = ForkSwitchRow(
+    icon = Icons.Rounded.Devices,
+    title = stringResource(R.string.fork_handoff_setting),
+    subtitle = stringResource(R.string.fork_handoff_setting_subtitle),
+    state = com.music.bitchord.fork.ForkHandoffPhone.enabled,
+    onChange = com.music.bitchord.fork.ForkHandoffPhone::setEnabled,
+)
+
 /**
- * Next / Previous blend too, with a crossfade length or Automix's own fallback ([shown]); after the
- * Crossfade slider, which Automix hides. A full row with its own icon, not a sub-row: with Automix on
- * the slider it would hang from is gone (upstream's choice), and it read as part of whatever was above.
+ * Next / Previous blend too, with a crossfade length or Automix's own fallback ([enabled]); after the
+ * Crossfade slider. Greyed, never hidden, while neither is set (the owner's rule for dependent rows,
+ * [ForkDisabledWhen]). A full row with its own icon, not a sub-row: it read as part of whatever was above.
  */
 @Composable
-internal fun SettingsGroupScope.forkCrossfadeOnSkipRow(shown: Boolean) {
-    if (!shown) return
+internal fun SettingsGroupScope.forkCrossfadeOnSkipRow(enabled: Boolean) = forkDisabledWhen(!enabled) {
     row(stringResource(R.string.fork_crossfade_on_skip), "fade", "skip", "next", "previous") { ForkCrossfadeOnSkipRow() }
 }
 
-/** "Animated covers" and "Backdrop videos", which play through the canvas switched on ([shown]) above them; full rows with icons, as in the fork's own group. */
+/**
+ * "Animated covers" and "Backdrop videos", which play through the canvas switched on ([enabled]) above
+ * them; greyed, never hidden, while it is off. Full rows with icons, as in the fork's own group.
+ */
 @Composable
-internal fun SettingsGroupScope.forkCanvasRows(shown: Boolean) {
-    if (!shown) return
+internal fun SettingsGroupScope.forkCanvasRows(enabled: Boolean) = forkDisabledWhen(!enabled) {
     row(stringResource(R.string.fork_animated_covers), "canvas", "apple", "animated", "cover", "video") { ForkAnimatedCoversRow() }
     row(stringResource(R.string.fork_backdrop_clips), "canvas", "spotify", "backdrop", "video") { ForkBackdropClipsRow() }
 }

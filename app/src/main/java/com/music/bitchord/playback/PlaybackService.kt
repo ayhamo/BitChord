@@ -866,6 +866,7 @@ class PlaybackService : MediaLibraryService() {
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
+            com.music.bitchord.fork.ForkHandoffPhone.onPlayingChanged(isPlaying) // fork: a pause writes the handoff note
             // The only number that describes what a listener actually
             // waits through. Every other timing in this app measures one
             // leg of getting a track started — a resolve, a client walk, an
@@ -988,6 +989,7 @@ class PlaybackService : MediaLibraryService() {
             // session is currently pointed at.
             val exoPlayer = player ?: return
             if (com.music.bitchord.fork.ForkRadioReopen.onTransition(exoPlayer, reason)) return // fork: a station closed by its server opens again
+            com.music.bitchord.fork.ForkHandoffPhone.onSongChanged() // fork: a song change writes the handoff note
             // A quality swap replaces the playing item, which Media3
             // reports here as a playlist change — indistinguishable, from
             // this callback's point of view, from the queue moving on. It
@@ -1283,6 +1285,7 @@ class PlaybackService : MediaLibraryService() {
 
     override fun onCreate() {
         super.onCreate()
+        com.music.bitchord.fork.ForkHandoffPhone.attach(this) { player } // fork: continue on the other device reads the active player
 
         if (com.music.bitchord.data.innertube.Innertube.cookie == null) {
             com.music.bitchord.data.innertube.Innertube.cookie = com.music.bitchord.auth.AuthStore(this).cookie
@@ -7622,6 +7625,7 @@ class PlaybackService : MediaLibraryService() {
 
 
     override fun onDestroy() {
+        com.music.bitchord.fork.ForkHandoffPhone.detach() // fork
         WearBridge.attachStreams(null)
         WearBridge.releaseSpeaker()
         // Let go of the receiver's player but leave its session alone: a

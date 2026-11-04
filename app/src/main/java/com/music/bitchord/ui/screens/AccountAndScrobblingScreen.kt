@@ -169,7 +169,7 @@ fun AccountAndScrobblingScreen(
                     },
                     onClick = onOpenListenBrainzLogin,
                 )
-                if (listenBrainzEnabled && listenBrainzToken.isNotBlank()) {
+                if (listenBrainzToken.isNotBlank()) ForkDisabledWhen(!listenBrainzEnabled) { // fork: greyed while ListenBrainz is off, not hidden
                     RowDivider()
                     SettingsRow(
                         icon = SfIcons.GraphicEq,
@@ -217,7 +217,7 @@ fun AccountAndScrobblingScreen(
                         }
                     },
                 )
-                if (lastfmEnabled && lastfmSessionKey.isNotBlank()) {
+                if (lastfmSessionKey.isNotBlank()) ForkDisabledWhen(!lastfmEnabled) { // fork: greyed while Last.fm is off, not hidden
                     RowDivider()
                     SettingsRow(
                         icon = SfIcons.GraphicEq,
@@ -260,7 +260,7 @@ fun AccountAndScrobblingScreen(
                 }
             }
 
-            if (lastfmEnabled && lastfmSessionKey.isNotBlank()) {
+            if (lastfmSessionKey.isNotBlank()) ForkDisabledWhen(!lastfmEnabled) { // fork: greyed while Last.fm is off, not hidden
                 SettingsGroup(header = stringResource(R.string.scrobble_timing)) {
                     SliderRow(
                         icon = SfIcons.Tune,

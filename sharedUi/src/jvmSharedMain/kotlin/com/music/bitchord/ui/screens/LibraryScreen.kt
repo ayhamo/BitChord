@@ -370,7 +370,7 @@ internal fun LibraryGridShelf(
     val visibleItems = shelf.items.take((maxItems - leadingCount).coerceAtLeast(0))
     Column(Modifier.padding(bottom = 26.dp)) {
         SectionHeader(
-            title = shelf.title,
+            title = forkLibraryShelfTitle(shelf.title), // fork: YouTube's shelf reads "YouTube playlists"
             subtitle = shelf.subtitle,
             onShowAll = onShowAll.takeIf { shelf.items.size + leadingCount > maxItems },
         )

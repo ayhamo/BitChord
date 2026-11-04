@@ -45,6 +45,22 @@ object NavidromeAndroid {
         NavidromeLyrics.init(File(context.cacheDir, "navidrome_lyrics"))
         // Plain prefs: station logo addresses (or "none"), nothing secret.
         NavidromeRadio.init(PrefsStore(context.getSharedPreferences("bitchord_radio_logos", Context.MODE_PRIVATE)))
+        // Plain prefs: artist picture addresses (no login), "none", the placeholder's hashes. Not in Export data.
+        NavidromeArtistPictures.init(PrefsStore(context.getSharedPreferences("bitchord_navidrome_artist_pictures", Context.MODE_PRIVATE)))
+        // The Replay's photo of the name, so the artist page shows the same face without asking.
+        NavidromeArtistPictures.known = com.music.bitchord.data.stats.ArtistFacts::imageFor
+        NavidromeArtistPictures.passAllowed = { passAllowed(app) }
+    }
+
+    /**
+     * The background pass over the library's artists ([NavidromeArtistPictures.startPass]) is
+     * enrichment nobody asked for at that moment: never on a metered network, never in battery
+     * saver. Offline is checked by the pass itself.
+     */
+    private fun passAllowed(app: Context): Boolean {
+        val network = app.getSystemService(android.net.ConnectivityManager::class.java) ?: return false
+        val power = app.getSystemService(android.os.PowerManager::class.java)
+        return !network.isActiveNetworkMetered && power?.isPowerSaveMode != true
     }
 
     private class PrefsStore(private val prefs: SharedPreferences) : NavidromePlatform.Store {

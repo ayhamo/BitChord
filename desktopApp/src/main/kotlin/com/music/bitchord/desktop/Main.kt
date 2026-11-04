@@ -71,6 +71,11 @@ fun main() {
     ForkNavidrome.install() // fork
     ForkPlaylistSync.install() // fork: "Keep playlists updated"
     ForkPaxSenixKey.install() // fork: the PaxSenix API key, before any lyrics are asked for
+    // fork: the Apple Music token backup's store (ForkAppleTokenBackup); "token" in the key keeps it out of backups
+    com.music.bitchord.data.canvas.ForkAppleTokenBackup.store = object : com.music.bitchord.data.canvas.ForkAppleTokenBackup.Store {
+        override fun read(): String? = DesktopPersistence().string("fork_apple_token_backup").ifEmpty { null }
+        override fun write(line: String?) = DesktopPersistence().saveString("fork_apple_token_backup", line.orEmpty())
+    }
     ForkCopyLog.install() // fork: after TrackLog.echo and DebugLog.sink above (ForkCopyLog.kt)
     desktopMain()
 }

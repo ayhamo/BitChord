@@ -194,6 +194,7 @@ object SpotifyCanvas {
         val (code, body) = canvasGetWithStatus(url, authHeaders(token))
         if (body == null) {
             Log.w(TAG, "search request failed, http $code")
+            ForkCanvasLookup.fail("Spotify: search http $code") // fork
             return null
         }
         val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
@@ -236,7 +237,7 @@ object SpotifyCanvas {
             .build()
             .toString()
 
-        val body = canvasGet(url, authHeaders(token)) ?: return null
+        val body = canvasGet(url, authHeaders(token)) ?: return ForkCanvasLookup.failed("Spotify: album search gave no answer") // fork: was `return null`
         val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull() ?: return null
         val items = root["albums"]?.jsonObject?.get("items")?.jsonArray ?: return null
 
@@ -319,7 +320,7 @@ object SpotifyCanvas {
                 // Pathfinder's answer isn't the last word: a video canvas can come back there
                 // in a shape this can't play while canvaz-cache still hands out the plain .cnvs.mp4.
                 Log.d(TAG, "pathfinder: no playable canvas for $trackUri (${answer.detail}); trying canvaz-cache")
-                fetchCanvasViaCanvaz(trackUri, token)
+                ForkCanvasLookup.answered { fetchCanvasViaCanvaz(trackUri, token) } // fork: Pathfinder answered, so canvaz-cache failing is no failure
             }
             is SpotifyCanvasQuery.Answer.Failed -> {
                 Log.w(TAG, "pathfinder canvas query failed (${answer.reason}); trying canvaz-cache")
@@ -375,7 +376,8 @@ object SpotifyCanvas {
                 }
                 if (response.isSuccessful) response.body?.bytes() else null
             }
-        }.onFailure { Log.w(TAG, "canvaz-cache request threw: ${it.message}") }.getOrNull() ?: return null
+        }.onFailure { Log.w(TAG, "canvaz-cache request threw: ${it.message}") }.getOrNull()
+            ?: return ForkCanvasLookup.failed("Spotify: canvaz-cache gave no answer") // fork: was `?: return null` on the line above
 
         // The structured parse first — it can tell this track's own clip apart
         // from another one Spotify bundled in the same response. The regex is

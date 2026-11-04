@@ -291,6 +291,8 @@ internal fun ForkSavedQueuesRow(onOpen: () -> Unit) {
         value = saved.size.takeIf { it > 0 }?.toString().orEmpty(),
         onClick = onOpen,
     )
+    // "Continue from other device" right after it, so the song menu needs no line of its own.
+    ForkHandoffMenuRow()
 }
 
 /**

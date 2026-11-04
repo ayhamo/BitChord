@@ -168,8 +168,10 @@ object CanvasRepository {
         synchronized(cache) {
             cache[key]?.let { if (it.reusable(withAlbum)) return@withLock it.artwork }
         }
-        val found = withContext(Dispatchers.IO) { lookUp() }
-        synchronized(cache) { cache[key] = Entry(found, withAlbum) }
+        if (ForkCanvasLookup.skips(key, withAlbum)) return@withLock null // fork: a lookup that failed is not asked again within a minute
+        val forkScope = ForkCanvasLookup.Scope() // fork: where the providers report a failure
+        val found = withContext(Dispatchers.IO + forkScope.context) { lookUp() } // fork: + forkScope.context
+        if (ForkCanvasLookup.keeps(key, withAlbum, found != null, forkScope)) synchronized(cache) { cache[key] = Entry(found, withAlbum) } // fork: a failed lookup is not cached as "no clip"
         found
     }
 
@@ -197,7 +199,7 @@ object CanvasRepository {
     ): CanvasArtwork? {
         for (source in sources) {
             val found = runCatching { source() }
-                .onFailure { Log.d(TAG, "source failed: ${it.message}") }
+                .onFailure { Log.d(TAG, "source failed: ${it.message}"); ForkCanvasLookup.fail("a source threw: ${it.message}") } // fork: + the failure report
                 .getOrNull()
                 ?: continue
             if (!accept(found)) {

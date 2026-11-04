@@ -6103,7 +6103,7 @@ private fun DesktopSettingsScreen(
             if (section == DesktopSettingsSection.PLAYBACK) item {
                     SettingsGroup(DesktopStrings["playback", "Playback"]) {
                     ForkLoudnessRow() // fork: the phone's "Loudness normalization", above Crossfade as there
-                    if (!automix) {
+                    ForkDisabledWhen(automix) { // fork: greyed at its value while Automix is on, not hidden
                         if (settingsRowVisible(DesktopStrings["crossfade", "Crossfade"])) {
                         Column(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
                             Text(DesktopStrings["crossfade", "Crossfade"], style = MaterialTheme.typography.bodyLarge)
@@ -6140,11 +6140,11 @@ private fun DesktopSettingsScreen(
                         automixOnSkip,
                         onAutomixOnSkipChange,
                     )
-                    if (automix || crossfadeSeconds > 0) { // fork: nothing to blend with until one of them is set, as on the phone
+                    ForkDisabledWhen(!automix && crossfadeSeconds == 0) { // fork: greyed (not hidden) until a crossfade or Automix is set, as on the phone
                         val forkSkipFade by ForkCrossfadeOnSkip.enabled.collectAsState()
                         SettingsToggle(ForkCrossfadeOnSkip.TITLE, ForkCrossfadeOnSkip.SUBTITLE, forkSkipFade, ForkCrossfadeOnSkip::set)
                     }
-                    if (automix) {
+                    ForkDisabledWhen(!automix) { // fork: greyed while Automix is off, not hidden
                         val phraseTitle = DesktopStrings["automix_phrase_length", "Automix phrase length"]
                         val phraseSubtitle =
                             DesktopStrings["automix_phrase_length_subtitle", "Blend over a fixed number of bars, beat-aligned"]
@@ -6291,7 +6291,7 @@ private fun DesktopSettingsScreen(
                     )
                     // Nothing to choose between while the feature is off, and the sources are
                     // third-party services reached on the listener's connection.
-                    if (syncedLyrics) {
+                    ForkDisabledWhen(!syncedLyrics) { // fork: greyed while Synced lyrics is off, not hidden
                         SettingsToggle(
                             DesktopStrings["d_blur_unfocused_lyrics", "Blur unfocused lyrics"],
                             DesktopStrings["d_keeps_the_spotlight_on_the_current_line", "Keeps the spotlight on the current line"],
@@ -6405,7 +6405,7 @@ private fun DesktopSettingsScreen(
                     ) {
                         onChooseLocalMusicFolder { folderLabel = DesktopLocalMusic.folderLabel() }
                     }
-                    if (DesktopLocalMusic.folder() != null) {
+                    ForkDisabledWhen(DesktopLocalMusic.folder() == null) { // fork: greyed while all folders are already used, not hidden
                         SettingsRow(
                             BitChordIcons.Library,
                             DesktopStrings["use_all_audio_folders", "Use all audio folders"],
@@ -6534,7 +6534,7 @@ private fun DesktopSettingsScreen(
                         animatedCanvas,
                         onAnimatedCanvasChange,
                     )
-                    if (animatedCanvas) {
+                    ForkDisabledWhen(!animatedCanvas) { // fork: greyed while Animated canvas is off, not hidden
                         // fork: the player menu's two video switches
                         val forkBackdrops by com.music.bitchord.ui.player.ForkCanvasSwitch.backdrops.collectAsState()
                         val forkCovers by com.music.bitchord.ui.player.ForkCanvasSwitch.covers.collectAsState()
@@ -6573,7 +6573,7 @@ private fun DesktopSettingsScreen(
                         trayIconEnabled,
                         onTrayIconChange,
                     )
-                    if (trayIconEnabled) {
+                    ForkDisabledWhen(!trayIconEnabled) { // fork: greyed while the tray icon is off, not hidden
                         SettingsToggle(
                             DesktopStrings["d_keep_playing_when_closed", "Keep playing when closed"],
                             DesktopStrings[
@@ -7185,7 +7185,7 @@ private fun DesktopCollectionPage(
                     }
                     Box(Modifier.size(286.dp).clip(RoundedCornerShape(8.dp))) {
                         DesktopArtwork(
-                            collection.thumbnailUrl ?: songs.firstOrNull()?.thumbnailUrl,
+                            rememberForkArtistPicture(collection.browseId, songs) ?: collection.thumbnailUrl ?: songs.firstOrNull()?.thumbnailUrl, // fork: a Navidrome artist's picture first
                             Modifier.fillMaxSize(),
                         )
                         albumCanvas?.let {

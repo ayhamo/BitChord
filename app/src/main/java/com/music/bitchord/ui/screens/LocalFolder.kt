@@ -555,7 +555,7 @@ private fun SongGridCard(
 /** An artist's avatar: the first of their tracks that has a picture, in a circle. */
 @Composable
 private fun ArtistAvatar(group: LocalGroup, modifier: Modifier) {
-    val art = remember(group.songs) { group.songs.firstNotNullOfOrNull { it.thumbnailUrl } }
+    val art = com.music.bitchord.ui.components.forkArtistPicture(group.browseId, group.songs) ?: remember(group.songs) { group.songs.firstNotNullOfOrNull { it.thumbnailUrl } } // fork: a Navidrome artist's own picture first
     Box(modifier.clip(CircleShape).thumbnailBorder(CircleShape)) {
         CoverPlaceholder(Icons.Rounded.Person, Modifier.fillMaxSize(), iconFraction = 0.5f)
         if (art != null) {

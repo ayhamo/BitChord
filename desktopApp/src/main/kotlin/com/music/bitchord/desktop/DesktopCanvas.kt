@@ -169,8 +169,10 @@ object DesktopCanvasClient {
         synchronized(cache) {
             cache[key]?.let { if (it.reusable(withAlbum)) return@withLock it.artwork }
         }
-        val found = withContext(Dispatchers.IO) { lookUp() }
-        synchronized(cache) { cache[key] = Entry(found, withAlbum) }
+        if (com.music.bitchord.data.canvas.ForkCanvasLookup.skips(key, withAlbum)) return@withLock null // fork: a lookup that failed is not asked again within a minute
+        val forkScope = com.music.bitchord.data.canvas.ForkCanvasLookup.Scope() // fork: where the providers report a failure
+        val found = withContext(Dispatchers.IO + forkScope.context) { lookUp() } // fork: + forkScope.context
+        if (com.music.bitchord.data.canvas.ForkCanvasLookup.keeps(key, withAlbum, found != null, forkScope)) synchronized(cache) { cache[key] = Entry(found, withAlbum) } // fork: a failed lookup is not cached as "no clip"
         found
     }
 
@@ -186,7 +188,7 @@ object DesktopCanvasClient {
     ): DesktopCanvasArtwork? {
         for (source in sources) {
             val found = runCatching { source() }
-                .onFailure { DesktopTrackLog.log("canvas: a source failed: $it") } // fork: was silent
+                .onFailure { DesktopTrackLog.log("canvas: a source failed: $it"); com.music.bitchord.data.canvas.ForkCanvasLookup.fail("a source threw: $it") } // fork: was silent; + the failure report
                 .getOrNull() ?: continue
             if (!accept(found)) {
                 DesktopTrackLog.log("canvas: turned away '${found.title}' by ${found.artist} on '${found.album}'") // fork
@@ -282,20 +284,9 @@ fun DesktopCanvasView(
         while (isActive) {
             val decoder = DesktopCanvasDecoder()
             val opened = withContext(Dispatchers.IO) {
-                var last: Result<Unit> = Result.failure(IllegalStateException("the clip could not be fetched"))
-                for (candidate in listOfNotNull(url, fallbackUrl)) {
-                    // A manifest names its segments relative to the host it came from, so saving the
-                    // playlist to disk and opening that leaves FFmpeg with nothing it can resolve.
-                    // Apple's motion artwork is HLS, which is how "could not open the clip" happened.
-                    val source = if (isManifest(candidate)) {
-                        candidate
-                    } else {
-                        DesktopCanvasCache.fileFor(candidate)?.toAbsolutePath()?.toString() ?: continue
-                    }
-                    last = decoder.open(source)
-                    if (last.isSuccess) break
-                }
-                last
+                // fork: was a loop that streamed an HLS manifest from the network (a manifest can't be
+                // saved as one file); ForkClipSource saves the rendition's segments as one file instead.
+                ForkClipSource.open(decoder, listOfNotNull(url, fallbackUrl))
             }
             if (opened.isFailure) {
                 DesktopTrackLog.log("canvas: ${opened.exceptionOrNull()?.message}")

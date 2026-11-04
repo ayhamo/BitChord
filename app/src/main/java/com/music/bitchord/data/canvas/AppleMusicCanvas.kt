@@ -44,7 +44,7 @@ object AppleMusicCanvas {
     }
 
     fun search(title: String, artist: String, album: String?): CanvasArtwork? {
-        val bearer = token() ?: return null
+        val bearer = token() ?: return ForkCanvasLookup.failed("Apple Music: no token") // fork: was `return null`
 
         // The catalog search is term-based, so fold everything we know into
         // the term — an artist name alone pulls in their whole discography and
@@ -114,7 +114,7 @@ object AppleMusicCanvas {
      * search result, so there is no second lookup to resolve an id first.
      */
     fun searchAlbum(album: String, artist: String): CanvasArtwork? {
-        val bearer = token() ?: return null
+        val bearer = token() ?: return ForkCanvasLookup.failed("Apple Music: no token") // fork: was `return null`
         val term = if (album.contains(artist, ignoreCase = true)) album else "$artist $album"
 
         val url = "$AMP/$storefront/search".toHttpUrl().newBuilder()
@@ -357,7 +357,7 @@ object AppleMusicCanvas {
     private fun token(): String? {
         val now = System.currentTimeMillis()
         cachedToken?.let { if (now < tokenExpiresAtMs - 60_000) return it }
-        if (now < retryTokenAfterMs) return null
+        if (now < retryTokenAfterMs) return forkBackupToken(now) // fork: the last good token while a scrape is backing off
 
         val html = canvasGet(WEB_PLAYER, mapOf("User-Agent" to CANVAS_UA))
         val scripts = html?.let {
@@ -384,13 +384,23 @@ object AppleMusicCanvas {
                 ?: candidates.first()
             cachedToken = jwt
             tokenExpiresAtMs = expiresAt
+            ForkAppleTokenBackup.save(jwt, expiresAt) // fork: kept on disk as the backup
             Log.d(TAG, "web player token good until ${java.util.Date(expiresAt)}")
             return jwt
         }
 
         Log.w(TAG, "no usable web player token in ${scripts.size} bundle(s); backing off")
         retryTokenAfterMs = now + TOKEN_RETRY_MS
-        return null
+        return forkBackupToken(now) // fork: the last good token, when it is still valid
+    }
+
+    /** Fork: [ForkAppleTokenBackup]'s saved token, made the current one; null when there is none. */
+    private fun forkBackupToken(now: Long): String? {
+        val (jwt, expiresAt) = ForkAppleTokenBackup.load(now, rejected) ?: return null
+        cachedToken = jwt
+        tokenExpiresAtMs = expiresAt
+        Log.d(TAG, "using the saved web player token, good until ${java.util.Date(expiresAt)}")
+        return jwt
     }
 
     private const val TOKEN_RETRY_MS = 30L * 60 * 1000
@@ -411,8 +421,10 @@ object AppleMusicCanvas {
                     response.isSuccessful -> response.body?.string()
                     response.code == 401 -> {
                         Log.w(TAG, "token rejected by the catalog API; will re-scrape")
+                        ForkCanvasLookup.fail("Apple Music: token refused (401)") // fork
                         synchronized(this) {
                             rejected += bearer
+                            ForkAppleTokenBackup.forget(bearer) // fork
                             if (cachedToken == bearer) {
                                 cachedToken = null
                                 tokenExpiresAtMs = 0L
@@ -420,10 +432,10 @@ object AppleMusicCanvas {
                         }
                         null
                     }
-                    else -> null
+                    else -> null.also { if (response.code != 404) ForkCanvasLookup.fail("Apple Music: http ${response.code}") } // fork: a 404 is an answer
                 }
             }
-        }.getOrNull()
+        }.onFailure { ForkCanvasLookup.fail("Apple Music: ${it.message}") }.getOrNull() // fork: + onFailure
     }
 
     /** The web player's token names itself in the header `kid` and payload `iss`. */

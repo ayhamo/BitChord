@@ -236,7 +236,7 @@ private fun DiscordSection(
         )
     }
 
-    if (connected && rpcEnabled && advanced) {
+    ForkDisabledWhen(!(connected && rpcEnabled && advanced)) { // fork: greyed until "Customize the card" is on, not hidden
         PanelGroup(header = "Presence") {
             PanelValueRow("Status", DesktopDiscordSettings.statusLabel(status)) {
                 onChoose(
@@ -385,7 +385,7 @@ private fun ScrobblingSection(onOpenLastfm: () -> Unit, onOpenListenBrainz: () -
             },
             onClick = onOpenListenBrainz,
         )
-        if (lbEnabled && lbToken.isNotBlank()) {
+        if (lbToken.isNotBlank()) ForkDisabledWhen(!lbEnabled) { // fork: greyed while ListenBrainz is off, not hidden
             DesktopCardRule()
             val primaryOnly by DesktopScrobbleSettings.listenBrainzPrimaryArtistOnly.collectAsState()
             PanelSwitchRow(
@@ -410,7 +410,7 @@ private fun ScrobblingSection(onOpenLastfm: () -> Unit, onOpenListenBrainz: () -
             },
             onClick = { if (signedIn) DesktopScrobbleSettings.signOutOfLastfm() else onOpenLastfm() },
         )
-        if (lastfmEnabled && signedIn) {
+        if (signedIn) ForkDisabledWhen(!lastfmEnabled) { // fork: greyed while Last.fm is off, not hidden
             val scrobble by DesktopScrobbleSettings.lastfmScrobble.collectAsState()
             val nowPlaying by DesktopScrobbleSettings.lastfmNowPlaying.collectAsState()
             val primaryOnly by DesktopScrobbleSettings.lastfmPrimaryArtistOnly.collectAsState()
@@ -438,7 +438,7 @@ private fun ScrobblingSection(onOpenLastfm: () -> Unit, onOpenListenBrainz: () -
         }
     }
 
-    if (lastfmEnabled && signedIn) {
+    if (signedIn) ForkDisabledWhen(!lastfmEnabled) { // fork: greyed while Last.fm is off, not hidden
         val minDuration by DesktopScrobbleSettings.minDuration.collectAsState()
         val delayPercent by DesktopScrobbleSettings.delayPercent.collectAsState()
         val delaySeconds by DesktopScrobbleSettings.delaySeconds.collectAsState()

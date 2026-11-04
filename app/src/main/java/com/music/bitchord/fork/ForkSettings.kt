@@ -68,6 +68,13 @@ object ForkSettings {
 
     fun init(context: Context) {
         prefs = context.getSharedPreferences("bitchord_fork", Context.MODE_PRIVATE)
+        // The Apple Music token backup (ForkAppleTokenBackup) lives here; not in BACKED_UP, so never exported.
+        com.music.bitchord.data.canvas.ForkAppleTokenBackup.store = object : com.music.bitchord.data.canvas.ForkAppleTokenBackup.Store {
+            override fun read(): String? = prefs.getString(KEY_APPLE_TOKEN_BACKUP, null)
+            override fun write(line: String?) {
+                prefs.edit().apply { if (line == null) remove(KEY_APPLE_TOKEN_BACKUP) else putString(KEY_APPLE_TOKEN_BACKUP, line) }.apply()
+            }
+        }
         _crossfadeOnSkip.value = prefs.getBoolean(KEY_CROSSFADE_ON_SKIP, true)
         _backdropClips.value = prefs.getBoolean(KEY_BACKDROP_CLIPS, true)
         _animatedCovers.value = prefs.getBoolean(KEY_ANIMATED_COVERS, true)
@@ -164,6 +171,7 @@ object ForkSettings {
         }
 
     private const val KEY_CARRIED_SECTIONS = "backup_carried_sections"
+    private const val KEY_APPLE_TOKEN_BACKUP = "apple_token_backup"
 
     /** The stored values of [BACKED_UP], typed as the preference file holds them. */
     internal fun exportForBackup(): Map<String, Any?> =

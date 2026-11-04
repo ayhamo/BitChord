@@ -61,3 +61,13 @@ internal fun forkShelfKeys(items: List<ShelfItem>): List<String> {
         if (n == 0) base else "$base#$n"
     }
 }
+
+/**
+ * Fork: the name a Library shelf is shown under. YouTube's own "Playlists" shelf reads "YouTube
+ * playlists" (owner, 2026-11-04): with a Navidrome server the Library also has the server's
+ * playlists, and two rows both called "Playlists" couldn't be told apart. Only the shown name
+ * changes; the shelf's title stays YouTube's, since the code keys on it (the playlist shelf's
+ * New playlist / Import Spotify cards, pinning, the Show all page).
+ */
+fun forkLibraryShelfTitle(title: String): String =
+    if (title == com.music.bitchord.data.YtMusicRepository.PLAYLISTS_SHELF) "YouTube playlists" else title

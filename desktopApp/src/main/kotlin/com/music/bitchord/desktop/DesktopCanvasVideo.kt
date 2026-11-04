@@ -72,17 +72,7 @@ internal fun DesktopCanvasVideo(spec: CanvasVideoSpec, modifier: Modifier) {
         while (isActive) {
             val decoder = DesktopCanvasDecoder()
             val opened = withContext(Dispatchers.IO) {
-                var last: Result<Unit> = Result.failure(IllegalStateException("the clip could not be fetched"))
-                for (candidate in listOfNotNull(canvas.url, canvas.fallbackUrl)) {
-                    val source = if (isManifest(candidate)) {
-                        candidate
-                    } else {
-                        DesktopCanvasCache.fileFor(candidate)?.toAbsolutePath()?.toString() ?: continue
-                    }
-                    last = decoder.open(source)
-                    if (last.isSuccess) break
-                }
-                last
+                ForkClipSource.open(decoder, listOfNotNull(canvas.url, canvas.fallbackUrl)) // fork: was a loop streaming an HLS manifest from the network; now saved to the cache once, and a failed clip waits a minute (ForkClipSource)
             }
             if (opened.isFailure) {
                 DesktopTrackLog.log("canvas: ${opened.exceptionOrNull()?.message}")
@@ -127,6 +117,7 @@ internal fun DesktopCanvasVideo(spec: CanvasVideoSpec, modifier: Modifier) {
             // A pass that drew nothing would spin: reopening cannot fix a clip
             // with no frames in it.
             if (shown == 0) {
+                ForkClipSource.failures.failed(canvas.url) // fork: not reopened within a minute either
                 DesktopTrackLog.log("canvas: the clip decoded no frames; not looping it")
                 return@LaunchedEffect
             }

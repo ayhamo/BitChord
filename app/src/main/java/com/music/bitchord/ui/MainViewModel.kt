@@ -2749,6 +2749,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             songs = UiState.Loading,
             type = resolved,
         )
+        com.music.bitchord.ui.components.ForkArtistPictures.fill(viewModelScope, browseId, _detailStack) // fork: a Navidrome artist's picture
         viewModelScope.launch {
             var sections = emptyList<HomeShelf>()
             // Callers that open an artist from a track — the player, the
@@ -3001,6 +3002,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             songs = if (group.songs.isEmpty()) UiState.Error(text(R.string.no_tracks_here)) else UiState.Success(group.songs),
             type = group.type,
         )
+        com.music.bitchord.ui.components.ForkArtistPictures.fill(viewModelScope, group.browseId, _detailStack) // fork: a Navidrome artist's picture
     }
 
     /** Renames an open page in place — a device playlist, whose title is the store's. */

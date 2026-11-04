@@ -106,6 +106,7 @@ object CommunityCanvas {
         if (body == null) {
             // Serve whatever we already have rather than losing canvas
             // entirely for the next half hour because one fetch failed.
+            if (entries.isEmpty()) ForkCanvasLookup.fail("Community: manifest unreachable") // fork: nothing to look in is not "no clip"
             fetchedAtMs = now
             return entries
         }

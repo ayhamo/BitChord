@@ -50,6 +50,7 @@ object NavidromeRepository {
         NavidromeClips.reset()
         NavidromeAlbums.clear() // album ids belong to the old server or account
         NavidromeArtistInfo.clear() // so do artist ids and similar artists
+        NavidromeArtistPictures.stopPass() // its artist list is the old server's; the next library load starts it again
     }
 
     suspend fun getSongs(): List<Song> = lock.withLock {

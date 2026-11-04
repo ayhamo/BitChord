@@ -33,6 +33,10 @@ import kotlinx.serialization.json.putJsonArray
  * - `POST /notice?text=`: shows a [ForkNotice]
  * - `POST /pick?path=`: the next file dialog (Export / Import data) returns that path without
  *   opening, since the native dialog can't be driven from here
+ * - `POST /handoff-probe`: how long a playlist comment the Navidrome server keeps, measured through
+ *   the app's own client and login ([ForkHandoffStore.probe]: 4, 16, 64, 256 KB written to a
+ *   separate playlist, each read back, the playlist deleted); JSON, no login in it
+ * - `GET /handoff-note`: the "continue on the other device" note on the server, summarised
  */
 internal object ForkDebugBridge {
 
@@ -63,6 +67,8 @@ internal object ForkDebugBridge {
         server.createContext("/pick") { respond(it) { pick = java.nio.file.Path.of(it.query("path")); "next dialog: $pick" } }
         // Re-opens the playing song on a fresh resolve, through the same swap a quality upgrade takes.
         server.createContext("/reload") { respond(it) { engine?.reloadCurrent(); "ok" } }
+        server.createContext("/handoff-probe") { respond(it) { kotlinx.coroutines.runBlocking { com.music.bitchord.data.navidrome.ForkHandoffStore.probe() } } }
+        server.createContext("/handoff-note") { respond(it) { kotlinx.coroutines.runBlocking { ForkHandoffDesktop.describe() } } }
         server.start()
         DesktopTrackLog.log("debug bridge on 127.0.0.1:$port")
     }

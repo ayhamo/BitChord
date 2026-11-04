@@ -287,6 +287,7 @@ object SourceResolver {
         // explicitly converts the current item in the player. A module match
         // is another recording and can be a wrong song altogether.
         if (target.title.isBlank() || target.isVideo) return null
+        com.music.bitchord.fork.ForkHandoffPhone.preferredStream(target)?.let { return it } // fork: the copy the other device played this song as, once
         val active = SourceRegistry.activeForPlayback()
         val youtube = active.firstOrNull { it.kind == SourceKind.YOUTUBE } ?: return null
         val request = requestForNow()
@@ -1261,6 +1262,7 @@ object SourceResolver {
                 durationSec = TrackMatcher.secondsOf(match.durationText),
                 sourceConfigId = source.configId,
             )
+            com.music.bitchord.fork.ForkHandoffPhone.noteOpened(target, source.configId, trackId) // fork: which track id this source served, for the handoff note
             val served = stream.format
             if (!wantsLossless || served.isLossless == true || served.isDolbyAtmos || served.statesNothingLossy) {
                 TrackLog.d(

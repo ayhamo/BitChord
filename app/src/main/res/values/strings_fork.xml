@@ -90,4 +90,12 @@
     <string name="fork_start_instant_mix">Start radio (Instant Mix)</string>
     <string name="fork_no_similar_songs">No similar songs found</string>
     <string name="fork_fullscreen_cover_art">Fullscreen cover art</string>
+    <string name="fork_handoff_chip">Continue from %1$s: %2$s, %3$s</string>
+    <string name="fork_handoff_pc">PC</string>
+    <string name="fork_handoff_dismiss">Not now</string>
+    <string name="fork_handoff_failed">Could not continue that queue here</string>
+    <string name="fork_handoff_menu">Continue from other device</string>
+    <string name="fork_handoff_none">Nothing to continue from another device</string>
+    <string name="fork_handoff_setting">Continue on other devices</string>
+    <string name="fork_handoff_setting_subtitle">Leaves your queue on your Navidrome server when you pause or leave the app, so the PC can pick it up at the same song and second</string>
 </resources>

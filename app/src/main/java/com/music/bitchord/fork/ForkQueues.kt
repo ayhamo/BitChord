@@ -114,8 +114,20 @@ object ForkQueues {
         return true
     }
 
-    /** Replaces the queue with [queue] and resumes at its song and second. */
-    fun play(queue: Saved) {
+    /**
+     * [ForkHandoffPhone]'s restore: the other device's queue, played through the same path as a
+     * saved one (the seek waits for the new queue's entry), but named by its own origin instead of
+     * a saved name, so "Playing from …" and AutoPlay carry on as on the other device. False when the
+     * main screen isn't bound (nothing to play it with).
+     */
+    internal fun playHandoff(songs: List<Song>, index: Int, positionMs: Long, source: QueueSource): Boolean {
+        if (play == null || songs.isEmpty()) return false
+        play(Saved("handoff", source.title, songs, index.coerceIn(songs.indices), positionMs, System.currentTimeMillis()), source)
+        return true
+    }
+
+    /** Replaces the queue with [queue] and resumes at its song and second; [source] names it (a saved queue: by its name). */
+    fun play(queue: Saved, source: QueueSource = QueueSource(queue.name, PlaybackSourceType.QUEUE)) {
         val start = play ?: return
         if (queue.songs.isEmpty()) return
         // Starting only launches the swap. The song may already be playing in the queue being
@@ -132,7 +144,7 @@ object ForkQueues {
         // run still carried the ids of the queue it was saved from, the one being replaced).
         val replaced = player?.currentMediaItem?.queueEntryId
         val listening = player?.takeIf { queue.positionMs > 0L }?.also { it.addListener(swap) }
-        start(queue.songs.map { it.copy(queueEntryId = null) }, queue.index, QueueSource(queue.name, PlaybackSourceType.QUEUE))
+        start(queue.songs.map { it.copy(queueEntryId = null) }, queue.index, source)
         val target = queue.current?.videoId
         if (target == null || listening == null) {
             listening?.removeListener(swap)

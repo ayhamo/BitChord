@@ -60,7 +60,15 @@ internal fun rememberForkSimilarArtists(browseId: String): HomeShelf? {
     if (NavidromeArtistInfo.nameOf(browseId) == null) return null
     return produceState<HomeShelf?>(null, browseId) {
         value = null // not the previous artist's row while this one's is asked for
-        value = NavidromeArtistInfo.similarShelf(browseId)
+        val shelf = NavidromeArtistInfo.similarShelf(browseId) ?: return@produceState
+        value = ForkArtistPictures.withPictures(shelf)
+        // Each similar artist with no answer yet, one at a time (their server picture may be the placeholder).
+        shelf.items.forEach { item ->
+            if (!com.music.bitchord.data.navidrome.NavidromeArtistPictures.settled(item.title)) {
+                com.music.bitchord.data.navidrome.NavidromeArtistPictures.pictureFor(item.title)
+                value = ForkArtistPictures.withPictures(shelf)
+            }
+        }
     }.value
 }
 

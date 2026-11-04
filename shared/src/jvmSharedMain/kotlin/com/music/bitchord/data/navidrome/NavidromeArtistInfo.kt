@@ -40,6 +40,11 @@ object NavidromeArtistInfo {
     fun nameOf(browseId: String?): String? =
         browseId?.takeIf { it.startsWith(NavidromeArtists.PREFIX) }?.removePrefix(NavidromeArtists.PREFIX)?.takeIf { it.isNotBlank() }
 
+    /** Notes an artist's id from a listing of artists (`getArtists`, [NavidromeArtistPictures]' pass). */
+    fun noteId(name: String, id: String) {
+        ids.putIfAbsent(name, id)
+    }
+
     /** Notes the artist ids [row] carries, so its artists' pages need no search for them. */
     fun remember(row: NavidromeClient.SongRow) {
         idsOf(row).forEach { (name, id) -> ids.putIfAbsent(name, id) }
@@ -108,6 +113,7 @@ object NavidromeArtistInfo {
             val client = NavidromeRepository.client()
             val id = artistId(name, client)
             val rows = if (id == null) emptyList() else client.similarArtists(id)
+            rows.forEach { noteId(it.name, it.id) } // their pictures (NavidromeArtistPictures) need no search for the id
             shelfItems(name, rows) { client.coverUrl(it) }
         }.onFailure { if (it is kotlin.coroutines.cancellation.CancellationException) throw it }
             .getOrNull()?.also { similar[name] = it } ?: return null

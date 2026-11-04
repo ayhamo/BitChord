@@ -113,5 +113,12 @@ internal fun ForkNavidromeSettingsGroup() {
             "Loads the next Navidrome songs in the queue to disk while one plays, so they start at once and keep playing if the network drops: " +
                 if (preload == 0) "Off" else "next $preload",
         ) { ForkNavidromeSettings.setPreloadSongs(choices[(choices.indexOf(preload) + 1) % choices.size]) }
+        // Rides on the server: greyed (never hidden) while none is set up, the owner's rule for dependent rows.
+        val handoff by ForkHandoffDesktop.enabled.collectAsState()
+        val url by com.music.bitchord.data.navidrome.NavidromeSettings.url.collectAsState()
+        val user by com.music.bitchord.data.navidrome.NavidromeSettings.username.collectAsState()
+        ForkDisabledWhen(url.isBlank() || user.isBlank()) {
+            SettingsToggle(ForkHandoffDesktop.SETTING_TITLE, ForkHandoffDesktop.SETTING_SUBTITLE, handoff, ForkHandoffDesktop::setEnabled)
+        }
     }
 }

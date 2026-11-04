@@ -313,6 +313,7 @@ internal object DesktopSourceRegistry {
     ): Result<DesktopLiveResolution> = runCatching {
         ForkNavidrome.stream(song)?.let { return@runCatching DesktopLiveResolution(it) } // fork
         val available = playbackAdapters(quality)
+        ForkHandoffDesktop.takePreferred(song)?.let { (sourceId, key) -> available.firstOrNull { it.config.id == sourceId }?.let { a -> a.resolve(song.copy(videoId = key), quality).getOrNull()?.takeIf { playableHere(a, it) } } }?.let { return@runCatching DesktopLiveResolution(it) } // fork: the copy the other device played this song as, once
         val owned = available.any { it.owns(song) } ||
             DesktopModuleSource.parseTrack(song.videoId) != null ||
             song.videoId.startsWith("jiosaavn:")
@@ -545,6 +546,7 @@ internal object DesktopSourceRegistry {
         for (match in preferred(matches, song, wantsLossless).take(STREAM_ATTEMPTS)) {
             val stream = source.resolve(match, quality).getOrNull() ?: continue
             if (!playableHere(source, stream)) continue
+            ForkHandoffDesktop.noteOpened(song, source.config.id, match.videoId) // fork: which row this source served, for the handoff note
             val served = stream.format
             if (!wantsLossless || served.isLossless || served.isDolbyAtmos) {
                 DesktopTrackLog.log(

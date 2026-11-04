@@ -9,6 +9,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.Wallpaper
 import androidx.compose.material.icons.rounded.Animation
+import androidx.compose.material.icons.rounded.Devices
 import androidx.compose.material.icons.rounded.DownloadForOffline
 import androidx.compose.material.icons.rounded.Downloading
 import androidx.compose.material.icons.rounded.OfflinePin
@@ -249,4 +250,30 @@ internal fun ForkPlayerMenuRows(song: com.music.bitchord.data.model.Song, accent
         ForkAnimatedCoversMenuRow(accent)
     }
     ForkSavedQueuesRow(accent, onQueuePlayed)
+    ForkHandoffMenuRow(accent, onQueuePlayed)
+}
+
+/**
+ * Fork: "Continue from other device" in the player's menu: the queue the PC last left on the
+ * server, whatever its age (the chip above the mini player offers only a newer one). Shown while
+ * the setting is on and a server is set up; says so when there is nothing to continue.
+ */
+@Composable
+internal fun ForkHandoffMenuRow(accent: Color, onPlayed: () -> Unit = {}) {
+    val on by com.music.bitchord.fork.ForkHandoffPhone.enabled.collectAsStateWithLifecycle()
+    val url by com.music.bitchord.data.navidrome.NavidromeSettings.url.collectAsStateWithLifecycle()
+    val user by com.music.bitchord.data.navidrome.NavidromeSettings.username.collectAsStateWithLifecycle()
+    if (!on || url.isBlank() || user.isBlank()) return
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val none = stringResource(R.string.fork_handoff_none)
+    ActionRow(
+        icon = Icons.Rounded.Devices,
+        label = stringResource(R.string.fork_handoff_menu),
+        value = null,
+        accent = accent,
+    ) {
+        com.music.bitchord.fork.ForkHandoffPhone.restoreLatest { done ->
+            if (done) onPlayed() else android.widget.Toast.makeText(context, none, android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
 }

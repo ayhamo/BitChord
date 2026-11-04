@@ -114,6 +114,8 @@ internal object ForkNavidrome {
         ForkNavidromeGenres.install()
         ForkPreload.install()
         ForkRadio.install(PrefsStore("com/music/bitchord/navidrome_radio_logos", sealed = emptySet()))
+        // Artist picture addresses (no login), "none", the placeholder's hashes: not in Export data.
+        com.music.bitchord.data.navidrome.NavidromeArtistPictures.init(PrefsStore("com/music/bitchord/navidrome_artist_pictures", sealed = emptySet()))
     }
 
     fun owns(song: Song): Boolean = NavidromeSettings.isNavidromeId(song.videoId)
@@ -271,6 +273,8 @@ internal object ForkNavidrome {
                 val playlistShelf = playlists.await()
                 val albumShelf = allAlbums.await() ?: ForkLibraryPlaylists.shelves.value.firstOrNull { it.title == "Navidrome albums" }
                 ForkLibraryPlaylists.shelves.value = listOfNotNull(albumShelf, playlistShelf.copy(title = "Navidrome playlists"))
+                // The artists with no picture, in the background, now the server has answered (as the phone's Home load).
+                com.music.bitchord.data.navidrome.NavidromeArtistPictures.startPass()
                 // Playlists second: after what is new, before what is played most.
                 (listOf(loaded.first(), playlistShelf) + loaded.drop(1)).filter { it.items.isNotEmpty() }
             }
@@ -353,6 +357,7 @@ internal object ForkNavidrome {
  * The sidebar's "Navidrome" page: the login until there is one, then [page] with the
  * library's songs, or [radio] with the stations. [onStars] gets the stars the listing brought with it.
  */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class) // FlowRow, for the header row
 @Composable
 internal fun ForkNavidromeScreen(
     contentPadding: PaddingValues,
@@ -383,27 +388,40 @@ internal fun ForkNavidromeScreen(
             .onFailure { failure = it.message ?: "Couldn't read the library" }
     }
     Column(Modifier.fillMaxSize()) {
-        Row(
+        // A narrow window wraps the controls onto the next line instead of squeezing them: in one
+        // Row the last item ("Disconnect") was left a few pixels and drawn one letter per line.
+        // Each label stays with its switch; the address shortens with an ellipsis.
+        androidx.compose.foundation.layout.FlowRow(
             Modifier.fillMaxWidth().padding(contentPadding).padding(horizontal = 24.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Text("$username on $url", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.height(48.dp).widthIn(max = 420.dp), contentAlignment = Alignment.CenterStart) {
+                Text(
+                    "$username on $url",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                )
+            }
+            androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.End)) {
                 if (!offline) { // radio needs the network: the phone's Library drops the link too
-                    TextButton(onClick = { stations = !stations }) {
-                        Text(if (stations) "Library" else ForkRadio.TITLE, style = MaterialTheme.typography.bodySmall)
+                    Row(Modifier.height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(onClick = { stations = !stations }) {
+                            Text(if (stations) "Library" else ForkRadio.TITLE, style = MaterialTheme.typography.bodySmall, maxLines = 1, softWrap = false)
+                        }
                     }
-                    Spacer(Modifier.widthIn(min = 8.dp))
                 }
-                ForkOfflineControls(onOpenPage)
-                Spacer(Modifier.widthIn(min = 16.dp))
-                val history by ForkYouTubeHistory.enabled.collectAsState()
-                Text("Plays count on YouTube Music", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.widthIn(min = 8.dp))
-                Switch(checked = history, onCheckedChange = ForkNavidrome::setYouTubeHistory)
-                Spacer(Modifier.widthIn(min = 16.dp))
-                TextButton(onClick = { NavidromeSettings.clear() }) { Text("Disconnect") }
+                Row(Modifier.height(48.dp), verticalAlignment = Alignment.CenterVertically) { ForkOfflineControls(onOpenPage) }
+                Row(Modifier.height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+                    val history by ForkYouTubeHistory.enabled.collectAsState()
+                    Text("Plays count on YouTube Music", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, softWrap = false)
+                    Spacer(Modifier.widthIn(min = 8.dp))
+                    Switch(checked = history, onCheckedChange = ForkNavidrome::setYouTubeHistory)
+                }
+                Row(Modifier.height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { NavidromeSettings.clear() }) { Text("Disconnect", maxLines = 1, softWrap = false) }
+                }
             }
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {

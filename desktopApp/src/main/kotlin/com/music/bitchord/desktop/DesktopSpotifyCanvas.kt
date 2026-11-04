@@ -20,10 +20,7 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.nio.charset.StandardCharsets
 import java.time.Duration
-import java.util.Base64
 import java.util.UUID
-import javax.crypto.Mac
-import javax.crypto.spec.SecretKeySpec
 
 /**
  * Spotify's Canvas: the short looping clip shown behind a track in their own app.
@@ -76,7 +73,8 @@ internal object DesktopSpotifyCanvas {
         val items = get(
             url("$SEARCH_URL", listOf("q" to "$album $artist", "type" to "album", "limit" to "10")),
             token,
-        )?.get("albums")?.jsonObject?.get("items")?.jsonArray ?: return null
+        )?.get("albums")?.jsonObject?.get("items")?.jsonArray
+            ?: return com.music.bitchord.data.canvas.ForkCanvasLookup.failed("Spotify: album search gave no answer") // fork: was `?: return null` on the line above
 
         for (item in items) {
             val record = item as? JsonObject ?: continue
@@ -175,7 +173,7 @@ internal object DesktopSpotifyCanvas {
         val query = listOfNotNull(title, artist, album).joinToString(" ")
         val items = get(url(SEARCH_URL, listOf("q" to query, "type" to "track", "limit" to "10")), token)
             ?.get("tracks")?.jsonObject?.get("items")?.jsonArray
-            ?: return null
+            ?: return com.music.bitchord.data.canvas.ForkCanvasLookup.failed("Spotify: search gave no answer") // fork: was `return null`
         for (item in items) {
             val track = item as? JsonObject ?: continue
             val trackTitle = track.text("name") ?: continue
@@ -210,7 +208,7 @@ internal object DesktopSpotifyCanvas {
             is SpotifyCanvasQuery.Answer.Found -> answer.url
             is SpotifyCanvasQuery.Answer.NoCanvas -> {
                 DesktopTrackLog.log("canvas: Pathfinder has no playable canvas (${answer.detail}); trying canvaz-cache")
-                fetchCanvasViaCanvaz(trackUri, token)
+                com.music.bitchord.data.canvas.ForkCanvasLookup.answered { fetchCanvasViaCanvaz(trackUri, token) } // fork: Pathfinder answered, so canvaz-cache failing is no failure
             }
             is SpotifyCanvasQuery.Answer.Failed -> {
                 DesktopTrackLog.log("canvas: Spotify's canvas query failed (${answer.reason}); trying canvaz-cache")
@@ -262,7 +260,7 @@ internal object DesktopSpotifyCanvas {
                 HttpResponse.BodyHandlers.ofByteArray(),
             )
             if (response.statusCode() in 200..299) response.body() else null
-        }.getOrNull() ?: return null
+        }.getOrNull() ?: return com.music.bitchord.data.canvas.ForkCanvasLookup.failed("Spotify: canvaz-cache gave no answer") // fork: was `return null`
 
         // The structured parse first — it can tell this track's own clip apart from another one
         // bundled into the same response. The regex is the fallback, needing only a *.cnvs.mp4 URL
@@ -404,8 +402,6 @@ private fun ByteArrayOutputStream.writeVarint(value: Long) {
  */
 internal object DesktopSpotifyToken {
 
-    private const val TOKEN_URL = "https://open.spotify.com/api/token"
-
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     @Volatile private var cachedAccessToken: String? = null
@@ -431,7 +427,7 @@ internal object DesktopSpotifyToken {
         val cookie = cookie().ifBlank { return null }
         val now = System.currentTimeMillis()
         cachedAccessToken?.let { if (now < accessTokenExpiresAtMs - 30_000) return it }
-        if (now < retryAfterMs) return null
+        if (now < retryAfterMs) return com.music.bitchord.data.canvas.ForkCanvasLookup.failed("Spotify: token backing off") // fork: was `return null`
 
         // fork: the page's own token first, as on the phone; signing below is what's left without a browser
         ForkSpotifyToken.mint(cookie)?.let { minted ->
@@ -441,40 +437,20 @@ internal object DesktopSpotifyToken {
             return minted.token
         }
 
-        val secret = TOTP_SECRETS.maxByOrNull { it.key }
-        val code = secret?.let { totp(it.value, now / 1000) }
-        val query = buildList {
-            add("reason" to "init")
-            add("productType" to "web-player")
-            if (code != null && secret != null) {
-                add("totp" to code)
-                add("totpServer" to code)
-                add("totpVer" to secret.key.toString())
-            }
-        }.joinToString("&") { (name, value) -> "$name=${URLEncoder.encode(value, StandardCharsets.UTF_8)}" }
-
-        val body = canvasGet(
-            "$TOKEN_URL?$query",
-            mapOf(
-                "Cookie" to "sp_dc=$cookie",
-                "Referer" to "https://open.spotify.com/",
-                "App-Platform" to "WebPlayer",
-            ),
-        )
-        val root = body?.let { runCatching { json.parseToJsonElement(it).jsonObject }.getOrNull() }
-        val token = root?.get("accessToken")?.jsonPrimitive?.contentOrNull
-        if (token.isNullOrBlank()) {
+        // fork: upstream's own signing (one secret, v12, `reason=init`, no server time) stopped minting;
+        // the YT Music Extension's route in shared ForkSpotifyTotpToken replaces it, as on the phone
+        val signed = com.music.bitchord.data.canvas.ForkSpotifyTotpToken.mint(cookie)
+        if (signed == null) {
             // Backed off rather than retried per track: if Spotify has changed the shape, asking on
             // every skip fixes nothing and makes every canvas lookup pay for the round trip.
             retryAfterMs = now + RETRY_MS
             DesktopTrackLog.log("canvas: Spotify would not mint an access token")
-            return null
+            return com.music.bitchord.data.canvas.ForkCanvasLookup.failed("Spotify: no token") // fork: was `return null`
         }
-        cachedAccessToken = token
-        accessTokenExpiresAtMs = root["accessTokenExpirationTimestampMs"]
-            ?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: (now + 3_600_000)
-        cachedClientId = root["clientId"]?.jsonPrimitive?.contentOrNull
-        return token
+        cachedAccessToken = signed.accessToken // fork: the three lines read `signed` (were the parsed answer)
+        accessTokenExpiresAtMs = signed.expiresAtMs
+        cachedClientId = signed.clientId
+        return signed.accessToken
     }
 
     /**
@@ -531,47 +507,12 @@ internal object DesktopSpotifyToken {
     /** The web player's build version, read off its own page, plus a device id to call ourselves. */
     private fun session(): Pair<String, String>? {
         session?.let { return it }
-        val html = canvasGet("https://open.spotify.com") ?: return null
-        val configB64 = Regex("""<script id="appServerConfig" type="text/plain">([^<]+)</script>""")
-            .find(html)?.groupValues?.get(1) ?: return null
-        val clientVersion = runCatching {
-            val decoded = String(Base64.getDecoder().decode(configB64), StandardCharsets.UTF_8)
-            json.parseToJsonElement(decoded).jsonObject["clientVersion"]?.jsonPrimitive?.contentOrNull
-        }.getOrNull() ?: return null
-        return (clientVersion to UUID.randomUUID().toString()).also { session = it }
+        // fork: the page's config and its own `sp_t` device id through shared ForkSpotifyTotpToken (the
+        // phone's way); upstream parsed the page here and sent a random device id
+        val page = com.music.bitchord.data.canvas.ForkSpotifyTotpToken.webPlayerConfig(cookie().ifBlank { null }) ?: return null
+        val clientVersion = page.clientVersion ?: return null
+        return (clientVersion to (page.deviceId ?: UUID.randomUUID().toString())).also { session = it }
     }
-
-    /**
-     * The six digits the web player sends with a token request.
-     *
-     * Standard TOTP over SHA-1, thirty-second steps, from a secret the bundle carries obfuscated as
-     * a byte array XORed against its own index.
-     */
-    internal fun totp(secret: IntArray, epochSeconds: Long): String? = runCatching {
-        val cleaned = secret.mapIndexed { index, value -> value xor (index % 33 + 9) }
-            .joinToString("")
-            .toByteArray(StandardCharsets.UTF_8)
-        val counter = epochSeconds / 30
-        val message = ByteArray(8) { index -> (counter ushr (56 - index * 8)).toByte() }
-        val mac = Mac.getInstance("HmacSHA1").apply { init(SecretKeySpec(cleaned, "HmacSHA1")) }
-        val hash = mac.doFinal(message)
-        val offset = hash[hash.size - 1].toInt() and 0x0F
-        val binary = ((hash[offset].toInt() and 0x7F) shl 24) or
-            ((hash[offset + 1].toInt() and 0xFF) shl 16) or
-            ((hash[offset + 2].toInt() and 0xFF) shl 8) or
-            (hash[offset + 3].toInt() and 0xFF)
-        "%06d".format(binary % 1_000_000)
-    }.getOrNull()
-
-    /**
-     * The secrets the web player has shipped, newest last.
-     *
-     * Kept as a table rather than scraped: the bundle's shape changes more often than the secret
-     * does, and an unknown version simply means the request goes out unsigned.
-     */
-    private val TOTP_SECRETS: Map<Int, IntArray> = mapOf(
-        12 to intArrayOf(107, 81, 49, 57, 67, 93, 87, 81, 69, 67, 40, 93, 48, 50, 46, 91, 94, 113, 41, 47),
-    )
 
     private const val RETRY_MS = 30L * 60 * 1000
 

@@ -33,6 +33,7 @@ internal fun DesktopAudioPipelineDialog(
     pipeline: DesktopAudioPipeline,
     onDismiss: () -> Unit,
 ) {
+    if (FORK_PIPELINE_FLOW) return ForkAudioPipelineDialog(format, sourceName, pipeline, onDismiss) // fork: the phone's signal-flow layout (ForkAudioPipelineFlow)
     DesktopDialogPanel(onDismiss = onDismiss, maxWidth = 460) {
         Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
             Text(

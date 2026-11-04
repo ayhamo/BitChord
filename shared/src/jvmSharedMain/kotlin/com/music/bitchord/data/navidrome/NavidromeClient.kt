@@ -114,6 +114,36 @@ class NavidromeClient(
      */
     suspend fun similarArtists(id: String): List<ArtistRow> = parseSimilarArtists(call("getArtistInfo2", "id" to id))
 
+    /** Every artist of the library (`getArtists`, one request), for [NavidromeArtistPictures]' pass over them. */
+    suspend fun artists(): List<ArtistRow> = parseArtistIndex(call("getArtists"))
+
+    /**
+     * The md5 of the picture [coverArt] at [size] px, or null when the server answers with a
+     * Subsonic error document instead of an image ("Artwork not found": it has none).
+     *
+     * For [NavidromeArtistPictures], which needs to know whether an artist's `ar-` picture is a real
+     * one or Navidrome's generic placeholder. No field of the Subsonic answers says so: `getArtists`,
+     * `search3` and `getArtistInfo2` hand every artist the same kind of `coverArt` id and `/share/img`
+     * image links, picture or not. The placeholder is the same file for every artist that has none,
+     * so at one size its bytes are identical across artists, and a real photograph's never are. A
+     * tiny size keeps this to a few kilobytes per artist, asked once per artist and kept.
+     * Throws [IOException] on an HTTP failure (not "no picture": nothing may be remembered then).
+     */
+    suspend fun coverHash(coverArt: String, size: Int): String? = withContext(Dispatchers.IO) {
+        val request = Request.Builder().url(endpoint("getCoverArt", "id" to coverArt, "size" to size.toString())).get().build()
+        Http.client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+            val type = response.header("Content-Type").orEmpty().lowercase(java.util.Locale.ROOT)
+            if ("json" in type || "xml" in type) return@use null
+            val source = response.body.source()
+            // A picture this small is a few kilobytes; anything past the cap is not one.
+            if (source.request(COVER_HASH_LIMIT + 1L)) throw IOException("cover larger than $COVER_HASH_LIMIT bytes")
+            val bytes = source.buffer.readByteArray()
+            if (isErrorDocument(bytes)) return@use null
+            MessageDigest.getInstance("MD5").digest(bytes).toHex()
+        }
+    }
+
     suspend fun randomSongs(count: Int): List<SongRow> {
         val result = call("getRandomSongs", "size" to count.toString())
         return songRows(result["randomSongs"]?.jsonObject?.get("song"))
@@ -146,18 +176,89 @@ class NavidromeClient(
         }
     }
 
-    suspend fun playlists(): List<PlaylistRow> {
+    /**
+     * The playlists to show. [ForkHandoff]'s mailbox playlists are left out here, the one call every
+     * playlist list of both apps reads (Home and Library rows, the Navidrome page, "Available
+     * offline"), so none of them can show it; [handoffPlaylists] is the only way to see them.
+     */
+    suspend fun playlists(): List<PlaylistRow> = allPlaylists().filterNot { ForkHandoff.isHiddenPlaylist(it.name) }.map { it.row }
+
+    /** A playlist as `getPlaylists` lists it, with what [ForkHandoff] needs: its owner and comment. */
+    data class PlaylistEntry(val row: PlaylistRow, val owner: String?, val comment: String?, val public: Boolean?) {
+        val name: String get() = row.name
+    }
+
+    private suspend fun allPlaylists(): List<PlaylistEntry> {
         val result = call("getPlaylists")
         return asList(result["playlists"]?.jsonObject?.get("playlist")).mapNotNull { element ->
             val o = element as? JsonObject ?: return@mapNotNull null
-            PlaylistRow(
-                id = o.string("id") ?: return@mapNotNull null,
-                name = o.string("name") ?: return@mapNotNull null,
-                songCount = o.int("songCount"),
-                coverArt = o.string("coverArt"),
+            PlaylistEntry(
+                row = PlaylistRow(
+                    id = o.string("id") ?: return@mapNotNull null,
+                    name = o.string("name") ?: return@mapNotNull null,
+                    songCount = o.int("songCount"),
+                    coverArt = o.string("coverArt"),
+                ),
+                owner = o.string("owner"),
+                comment = (o["comment"] as? JsonPrimitive)?.contentOrNull,
+                public = (o["public"] as? JsonPrimitive)?.booleanOrNull,
             )
         }
     }
+
+    // ── fork: ForkHandoff's mailbox (Subsonic /rest only) ──
+
+    /** This user's own playlists named [name] (others' public ones of that name are not ours). */
+    suspend fun handoffPlaylists(name: String): List<PlaylistEntry> =
+        allPlaylists().filter { it.name == name && (it.owner == null || it.owner == username) }
+
+    /** `createPlaylist` with no songs; the new playlist's id, or null when the server's answer names none. */
+    suspend fun createPlaylist(name: String): String? {
+        val result = call("createPlaylist", "name" to name)
+        return (result["playlist"] as? JsonObject)?.string("id")
+    }
+
+    /**
+     * `getPlaylist`'s comment, exactly as kept. Read raw (not [string], which blanks a blank one),
+     * so a probe can compare it byte for byte.
+     */
+    suspend fun playlistComment(id: String): String? =
+        ((call("getPlaylist", "id" to id)["playlist"] as? JsonObject)?.get("comment") as? JsonPrimitive)?.contentOrNull
+
+    /**
+     * Sets a playlist's comment (and keeps it private). A long comment can't ride in an address, so
+     * it goes as a form body ([post]: OpenSubsonic's `formPost`, the login staying in the address);
+     * a server that doesn't read the body answers with an error, and then the comment is sent in
+     * the address once, when that is short enough ([GET_LIMIT]). Says which way worked.
+     */
+    suspend fun setPlaylistComment(id: String, comment: String, allowGet: Boolean = true): String {
+        val params = arrayOf("playlistId" to id, "comment" to comment, "public" to "false")
+        val posted = runCatching { post("updatePlaylist", *params) }
+        if (posted.isSuccess) return "post"
+        posted.exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it }
+        val url = endpoint("updatePlaylist", *params).toString()
+        if (!allowGet || url.length > GET_LIMIT) throw posted.exceptionOrNull() ?: IOException("update refused")
+        call("updatePlaylist", *params)
+        return "get"
+    }
+
+    suspend fun deletePlaylist(id: String) {
+        call("deletePlaylist", "id" to id)
+    }
+
+    /** [call] with [params] in an `application/x-www-form-urlencoded` body instead of the address. */
+    private suspend fun post(method: String, vararg params: Pair<String, String>): JsonObject =
+        withContext(Dispatchers.IO) {
+            val form = okhttp3.FormBody.Builder().apply { params.forEach { (k, v) -> add(k, v) } }.build()
+            val request = Request.Builder().url(endpoint(method)).post(form).build()
+            Http.client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+                val root = json.parseToJsonElement(response.body.string()).jsonObject["subsonic-response"]?.jsonObject
+                    ?: throw IOException("Not a Subsonic server")
+                if (root.string("status") != "ok") throw IOException(root["error"]?.jsonObject?.string("message") ?: "Server refused the request")
+                root
+            }
+        }
 
     /** A playlist's songs, in its own order. */
     suspend fun playlistSongs(id: String): List<SongRow> {
@@ -410,6 +511,28 @@ class NavidromeClient(
         /** `getArtistInfo2`'s answer (the `subsonic-response` object): its `similarArtist` list, in the server's order. */
         fun parseSimilarArtists(result: JsonObject): List<ArtistRow> =
             parseArtists((result["artistInfo2"] as? JsonObject)?.get("similarArtist"))
+
+        /** `getArtists`' answer (the `subsonic-response` object): every artist of every index letter, in the server's order. */
+        fun parseArtistIndex(result: JsonObject): List<ArtistRow> {
+            val index = (result["artists"] as? JsonObject)?.get("index") ?: return emptyList()
+            return (index as? JsonArray ?: JsonArray(listOf(index))).flatMap { letter -> parseArtists((letter as? JsonObject)?.get("artist")) }
+        }
+
+        /** The longest address [setPlaylistComment] falls back to: what a proxy in front of the server commonly allows (nginx's 8 KB line, with room for headers). */
+        const val GET_LIMIT = 7_000
+
+        /** Largest picture [coverHash] reads: its size is a few kilobytes. */
+        const val COVER_HASH_LIMIT = 2 * 1024 * 1024
+
+        /**
+         * Whether [bytes] are a Subsonic error document rather than a picture, for a server that sends
+         * no content type: JSON (`{…`) or XML naming `subsonic-response`. Empty counts as no picture.
+         */
+        fun isErrorDocument(bytes: ByteArray): Boolean {
+            if (bytes.isEmpty()) return true
+            val head = String(bytes, 0, minOf(bytes.size, 256), Charsets.ISO_8859_1).trimStart()
+            return head.startsWith("{") || "subsonic-response" in head
+        }
 
         /** A list of artist objects (or the bare one Subsonic JSON writes for one): each with an id and a name. */
         fun parseArtists(element: JsonElement?): List<ArtistRow> = when (element) {

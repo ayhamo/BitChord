@@ -150,6 +150,7 @@ object NavidromeHome {
             Log.d(TAG, "genres: ${e.message}")
         }
         NavidromeOffline.syncPlaylists() // kept playlists follow the server
+        NavidromeArtistPictures.startPass() // pictures for the artists that have none, in the background (unmetered, no battery saver)
     }
 
     /**

@@ -591,9 +591,9 @@ internal fun LazyListScope.forkNavidromeArtistSignature(browseId: String, songs:
 
 /**
  * The phone's two rows (Settings, after the animated-cover rows): the "Artist signatures"
- * switch, and while on, the "Signature API URL" row (the address, or "Not configured…"). Its
- * editor opens in place, as the PaxSenix key's does: Test, Save (only once `/v1/health`
- * answers), Remove (when one is stored).
+ * switch, and the "Signature API URL" row (the address, or "Not configured…"), greyed and closed
+ * while the switch is off ([ForkDisabledWhen]; never hidden). Its editor opens in place, as the
+ * PaxSenix key's does: Test, Save (only once `/v1/health` answers), Remove (when one is stored).
  */
 @Composable
 internal fun ForkArtistSignatureRows() {
@@ -605,7 +605,6 @@ internal fun ForkArtistSignatureRows() {
         enabled,
         ForkArtistSignatures::setEnabled,
     )
-    if (!enabled) return
     var editing by remember { mutableStateOf(false) }
     // A draft of the stored address, seeded when the editor opens.
     var input by remember(editing) { mutableStateOf(stored) }
@@ -629,7 +628,8 @@ internal fun ForkArtistSignatureRows() {
             }
         }
     }
-    Column(Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
+    // Now always drawn, so it answers the settings search like the switch above it.
+    if (settingsRowVisible(DesktopStrings["artist_signatures_url", "Signature API URL"], stored)) ForkDisabledWhen(!enabled) { Column(Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
         Row(
             Modifier.fillMaxWidth().desktopRowClickable { editing = !editing }.padding(vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -645,7 +645,7 @@ internal fun ForkArtistSignatureRows() {
                 )
             }
         }
-        if (editing) {
+        if (editing && enabled) {
             OutlinedTextField(
                 input,
                 {
@@ -689,5 +689,5 @@ internal fun ForkArtistSignatureRows() {
                 }) { Text(DesktopStrings["save", "Save"], color = DesktopAccent) }
             }
         }
-    }
+    } }
 }

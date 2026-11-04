@@ -307,7 +307,7 @@ fun DiscordScreen(
             )
         }
 
-        AnimatedVisibility(visible = connected && rpcEnabled && advancedMode) {
+        ForkDisabledWhen(!(connected && rpcEnabled && advancedMode)) { // fork: greyed until "Customize the card" is on, not hidden
             Column(Modifier.fillMaxWidth()) {
                 SettingsGroup(header = stringResource(R.string.presence)) {
                     SettingsRow(

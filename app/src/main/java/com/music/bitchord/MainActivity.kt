@@ -2966,7 +2966,7 @@ private fun BitChordApp(
                                 },
                                 // Pushed over Replay, so back returns to it.
                                 onOpenArtist = { id, name ->
-                                    openByName(id, name, null, BrowseType.ARTIST)
+                                    openByName(id, name, null, BrowseType.ARTIST, com.music.bitchord.data.stats.ArtistFacts.imageFor(name)) // fork: the row's photo as the page's first picture (never its fallback sleeve)
                                 },
                                 onOpenAlbum = { id, title, artist, art ->
                                     openByName(id, title, artist, BrowseType.ALBUM, art)
@@ -3750,7 +3750,7 @@ private fun BitChordApp(
                         AppRoute.Downloads -> stringResource(R.string.downloads)
                         AppRoute.Discord -> "Discord"
                         AppRoute.History -> stringResource(R.string.history)
-                        is AppRoute.LibraryShowAll -> route.shelf.title
+                        is AppRoute.LibraryShowAll -> com.music.bitchord.ui.screens.forkLibraryShelfTitle(route.shelf.title) // fork
                         is AppRoute.ArtistShelf -> route.shelf.title
                         AppRoute.Moods -> stringResource(R.string.find_your_mood)
                         AppRoute.AccountScrobbling -> stringResource(R.string.account_scrobbling)

@@ -46,7 +46,7 @@ object TidalCanvas {
             .toString()
 
         val body = canvasGet(url, mapOf("X-Tidal-Token" to EMBED_TOKEN, "User-Agent" to CANVAS_UA))
-            ?: return null
+            ?: return ForkCanvasLookup.failed("Tidal: no answer") // fork: was `return null`
         val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull() ?: return null
 
         // The response carries a section per result type even when only one
@@ -104,7 +104,7 @@ object TidalCanvas {
             .toString()
 
         val body = canvasGet(url, mapOf("X-Tidal-Token" to EMBED_TOKEN, "User-Agent" to CANVAS_UA))
-            ?: return null
+            ?: return ForkCanvasLookup.failed("Tidal: no answer") // fork: was `return null`
         val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull() ?: return null
         val items = root["albums"]?.jsonObject?.get("items")?.jsonArray ?: return null
 
