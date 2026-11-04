@@ -77,9 +77,20 @@ import kotlin.coroutines.cancellation.CancellationException
  * rows and the pass all queue on the same lock, and a row scrolled away cancels its wait. The
  * server is only asked through `/rest/…` with the existing client ([NavidromeClient]), never retried.
  * [startPass] works through the library's artists in the background after the library loads, one
- * every [PASS_SPACING_MS], and stops when [passAllowed] says no (phone: offline, metered, battery
+ * every [PASS_SPACING_MS] (every [MIN_GAP_MS] when the server's own picture answered, which asks no
+ * one else), and stops when [passAllowed] says no (phone: offline, metered, battery
  * saver), on three failures in a row, or on [stopPass]; what it found is kept, so the next library
  * load carries on where it stopped.
+ *
+ * ## Which artists
+ *
+ * `getArtists` lists only album artists: on a library whose albums are collections ("Youtube
+ * Topic", "Youtube FLAC") that is about a dozen of the hundreds of artists the songs credit, though
+ * the server knows them all and has a picture for most (its agents fetch one per artist row, album
+ * artist or not). Every song carries its artists' ids (OpenSubsonic `artists`, else `artistId`), the
+ * same ids `getCoverArt ar-<id>` answers for, so the pass reads them off the songs ([songArtists],
+ * `search3` a page at a time, as the library itself loads) and asks for those too. No server change,
+ * no retagging (Navidrome Songs Work, 2026-11-04).
  */
 object NavidromeArtistPictures {
 
@@ -91,6 +102,10 @@ object NavidromeArtistPictures {
     private const val MIN_GAP_MS = 1_000L
     private const val PASS_SPACING_MS = 5_000L
     private const val PASS_FAILURES_TO_STOP = 3
+
+    /** Songs read per `search3` page when collecting the songs' artists, and the most pages read. */
+    private const val SONG_PAGE = 500
+    private const val SONG_PAGES_MAX = 40
 
     /** The size the server's picture is read at to tell a photograph from the placeholder. */
     const val PROBE_SIZE = 48
@@ -273,7 +288,11 @@ object NavidromeArtistPictures {
     private suspend fun bootstrap(client: NavidromeClient, learned: PlaceholderLearner, wanted: String) {
         if (bootstrapped) return
         bootstrapped = true
-        val others = artists(client).filter { nameKey(it.name) != wanted }
+        // The full list when the pass has read it; else `getArtists` alone (one request): a page
+        // header waits on this under the lookup lock, and three samples don't need every song artist.
+        val server = serverKey()
+        val rows = artistList?.takeIf { it.first == server }?.second ?: client.artists()
+        val others = rows.filter { nameKey(it.name) != wanted }
         if (others.isEmpty()) return
         val picks = (1..BOOTSTRAP_SAMPLES).map { others[(others.size * it / (BOOTSTRAP_SAMPLES + 1)).coerceAtMost(others.size - 1)] }.distinct()
         for (row in picks) {
@@ -282,12 +301,48 @@ object NavidromeArtistPictures {
         }
     }
 
-    /** The library's artists, read once per server and session. */
-    private suspend fun artists(client: NavidromeClient): List<NavidromeClient.ArtistRow> {
+    /**
+     * The library's artists, read once per server and session: `getArtists`' album artists first,
+     * then every other artist the songs credit ([songArtists]), each name once. When the songs could
+     * not be read, the album artists alone are used and not kept, so the next call reads them again.
+     */
+    private suspend fun artists(client: NavidromeClient): List<NavidromeClient.ArtistRow> = artistsLock.withLock {
         val server = serverKey()
-        artistList?.takeIf { it.first == server }?.let { return it.second }
-        return client.artists().also { artistList = server to it }
+        artistList?.takeIf { it.first == server }?.let { return@withLock it.second }
+        val listed = client.artists()
+        val fromSongs = try {
+            songArtists(client)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.d(TAG, "songs' artists not read: ${e.message}")
+            null
+        }
+        val merged = mergeArtists(listed, fromSongs.orEmpty())
+        if (fromSongs != null) artistList = server to merged
+        merged
     }
+
+    /** One reading of the library's artists at a time, so two callers never page the songs twice. */
+    private val artistsLock = Mutex()
+
+    /** Every artist the library's songs credit, as (id, name), read a `search3` page at a time. */
+    private suspend fun songArtists(client: NavidromeClient): List<NavidromeClient.ArtistRow> {
+        val found = ArrayList<NavidromeClient.ArtistRow>()
+        for (pageIndex in 0 until SONG_PAGES_MAX) {
+            if (pageIndex > 0) delay(MIN_GAP_MS / 2)
+            val page = client.songs(pageIndex * SONG_PAGE, SONG_PAGE)
+            for (row in page) {
+                for ((name, id) in NavidromeArtistInfo.idsOf(row)) {
+                    NavidromeArtistInfo.noteId(name, id)
+                    found += NavidromeClient.ArtistRow(id, name, coverArt = null)
+                }
+            }
+            if (page.size < SONG_PAGE) break
+        }
+        return found
+    }
+
 
     /** The learner for the saved server, seeded with its placeholders and the real pictures kept so far. */
     private fun learnerFor(): PlaceholderLearner {
@@ -387,7 +442,8 @@ object NavidromeArtistPictures {
                 Log.d(TAG, "pass: $failures failures in a row, stopped; carries on next time")
                 return
             }
-            delay(PASS_SPACING_MS)
+            // Only our own server was asked when its picture is the answer: no need to space it like YouTube's and Apple's.
+            delay(if (entryFor(row.name) is Entry.Server) MIN_GAP_MS else PASS_SPACING_MS)
         }
         Log.d(TAG, "pass: done, $found pictures found")
     }
@@ -459,6 +515,18 @@ object NavidromeArtistPictures {
     }
 
     // ── Rules (public for the tests) ────────────────────────────────────────
+
+    /**
+     * [listed] (`getArtists`, with their pictures' ids) then [fromSongs], each artist once by its
+     * folded name, the first seen kept; nameless rows dropped.
+     */
+    fun mergeArtists(
+        listed: List<NavidromeClient.ArtistRow>,
+        fromSongs: List<NavidromeClient.ArtistRow>,
+    ): List<NavidromeClient.ArtistRow> {
+        val seen = HashSet<String>()
+        return (listed + fromSongs).filter { row -> nameKey(row.name).let { it.isNotEmpty() && seen.add(it) } }
+    }
 
     /** An artist's name as compared: case, accents and punctuation folded away ("Beyoncé" = "beyonce"). */
     fun nameKey(name: String): String = name.normalizeForMatch()

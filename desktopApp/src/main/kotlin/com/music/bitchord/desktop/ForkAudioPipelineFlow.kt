@@ -159,7 +159,12 @@ internal fun ForkAudioPipelineDialog(
                 // The engine's own copy, so Source and Decoder cannot disagree while an upgrade lands.
                 val source = pipeline.sourceFormat ?: format
                 ForkPipelineSection(0, Icons.AutoMirrored.Rounded.InsertDriveFile, DesktopStrings["pipeline_track_info", "Track info"], columnCoordinates, stageActivation, onStageIconPositioned) {
-                    ForkPipelineRow(DesktopStrings["pipeline_source", "Source"], sourceName)
+                    // A source addon's name; a Navidrome song has none, so the server is named instead.
+                    val songId = ForkDebugBridge.engine?.state?.value?.song?.videoId
+                    ForkPipelineRow(
+                        DesktopStrings["pipeline_source", "Source"],
+                        sourceName ?: "Navidrome".takeIf { songId != null && com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(songId) },
+                    )
                     ForkPipelineRow(DesktopStrings["pipeline_format", "Format"], source?.codecLabel)
                     // A lossy codec has no bit depth of its own (the phone's rule too).
                     ForkPipelineRow(

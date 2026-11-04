@@ -73,6 +73,7 @@ internal object SpotifyToken {
         cachedClientToken = null
         clientTokenExpiresAtMs = 0L
         forkHarvestRetryAfterMs = 0L // fork: a new sign-in is harvested at once
+        ForkCanvasLookup.clearNotes() // fork: songs held back by the old sign-in's backoff are asked again
     }
 
     /**
@@ -128,7 +129,10 @@ internal object SpotifyToken {
      */
     private suspend fun forkSignedToken(cookie: String): String? {
         val signed = withContext(Dispatchers.IO) { ForkSpotifyTotpToken.mint(cookie) }
-            ?: return ForkCanvasLookup.failed("Spotify: no token (page harvest and signed request both failed)")
+            ?: return ForkCanvasLookup.coolingDown( // both routes back off; the harvest's ends first
+                "Spotify: no token (page harvest and signed request both failed)",
+                if (forkHarvestBackingOff(cookie, System.currentTimeMillis())) forkHarvestRetryAfterMs else 0L,
+            )
         cachedAccessToken = signed.accessToken
         accessTokenExpiresAtMs = signed.expiresAtMs
         signed.clientId?.let { cachedClientId = it }

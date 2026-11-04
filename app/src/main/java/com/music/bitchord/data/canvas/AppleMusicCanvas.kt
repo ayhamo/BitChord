@@ -44,7 +44,7 @@ object AppleMusicCanvas {
     }
 
     fun search(title: String, artist: String, album: String?): CanvasArtwork? {
-        val bearer = token() ?: return ForkCanvasLookup.failed("Apple Music: no token") // fork: was `return null`
+        val bearer = token() ?: return ForkCanvasLookup.coolingDown("Apple Music: no token", retryTokenAfterMs) // fork: was `return null`; no token means the scrape is backing off until then
 
         // The catalog search is term-based, so fold everything we know into
         // the term — an artist name alone pulls in their whole discography and
@@ -114,7 +114,7 @@ object AppleMusicCanvas {
      * search result, so there is no second lookup to resolve an id first.
      */
     fun searchAlbum(album: String, artist: String): CanvasArtwork? {
-        val bearer = token() ?: return ForkCanvasLookup.failed("Apple Music: no token") // fork: was `return null`
+        val bearer = token() ?: return ForkCanvasLookup.coolingDown("Apple Music: no token", retryTokenAfterMs) // fork: was `return null`; no token means the scrape is backing off until then
         val term = if (album.contains(artist, ignoreCase = true)) album else "$artist $album"
 
         val url = "$AMP/$storefront/search".toHttpUrl().newBuilder()

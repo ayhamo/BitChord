@@ -224,6 +224,10 @@ class DesktopPlaybackEngine(
         data object Flush : Command
     }
 
+    // fork: before [thread], which starts in this initializer and reads it on its first step; declared
+    // further down it was still null then ("audio thread recovered from: … forkReport is null" at startup)
+    private val forkReport = ForkAutomixReporter()
+
     private val thread = Thread(::pump, "BitChord-Audio").apply {
         isDaemon = true
         priority = Thread.NORM_PRIORITY + 2
@@ -3115,7 +3119,7 @@ class DesktopPlaybackEngine(
 
     // ---- fork: Automix reported as on the phone, see ForkAutomixReport -------------------------
 
-    private val forkReport = ForkAutomixReporter()
+    // fork: forkReport is declared up by `thread` (the audio thread reads it from its first step)
 
     /** The newest plan [publishTransitionWindow] was handed, for the stats line (the phone's `lastSmartPlan`). */
     private var forkLastPlan: TransitionPlan? = null
@@ -3311,8 +3315,11 @@ class DesktopPlaybackEngine(
         val decoded = track?.decoder?.outputFormat
         val out = sink.format
         return DesktopAudioPipeline(
-            sourceFormat = track?.stream?.format,
-            decoderName = track?.stream?.format?.codec,
+            // fork: the decoder's measured format first (was the stream's only): a song reached by a plain
+            // address (every Navidrome song) carries a blank DesktopStreamFormat(), so the pipeline panel
+            // read "—" for the source and the decoder while the decoder knew both
+            sourceFormat = track?.decoder?.measuredFormat ?: track?.stream?.format,
+            decoderName = track?.decoder?.measuredFormat?.codec ?: track?.stream?.format?.codec,
             decodedSampleRateHz = decoded?.sampleRate,
             decodedChannels = decoded?.channels,
             outputSampleRateHz = out.sampleRate.takeIf { sink.isOpen },

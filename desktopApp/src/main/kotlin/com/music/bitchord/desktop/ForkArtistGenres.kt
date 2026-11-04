@@ -376,18 +376,25 @@ internal object ForkArtistGenres {
     )
 }
 
-/** Settings > Your data: the phone's "Work out genres" switch. */
+/**
+ * Settings > Your data: the phone's "Work out genres" switch. Greyed (not hidden, owner rule) with
+ * a note while there is no Last.fm API key, since the chart cannot be drawn without one.
+ */
 @Composable
 internal fun ForkReplayGenresToggle() {
     val on by ForkArtistGenres.enabled.collectAsState()
-    SettingsToggle(
+    val typedKey by DesktopScrobbleSettings.lastfmApiKey.collectAsState() // read so a key typed in Integrations ungreys it
+    val noKey = typedKey.isBlank() && DesktopScrobbling.apiKey.isNullOrBlank()
+    ForkDisabledWhen(noKey) { SettingsToggle(
         DesktopStrings["work_out_genres", "Work out genres"],
-        if (on) {
+        if (noKey) {
+            DesktopStrings["replay_genres_no_key_subtitle", "Needs a Last.fm API key (Settings > Integrations > Last.fm)"]
+        } else if (on) {
             DesktopStrings["replay_genres_enabled_subtitle", "Asks Last.fm for an artist’s genres. Only the artist name is sent."]
         } else {
             DesktopStrings["replay_genres_disabled_subtitle", "The Replay genre chart stays hidden while this is off"]
         },
         on,
         ForkArtistGenres::setEnabled,
-    )
+    ) }
 }

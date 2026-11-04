@@ -143,4 +143,18 @@ class NavidromeArtistPicturesTest {
         assertFalse(NavidromeClient.isErrorDocument(byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte())))
         assertFalse(NavidromeClient.isErrorDocument("RIFF....WEBPVP8 ".toByteArray()))
     }
+
+    @Test
+    fun songArtistsJoinTheAlbumArtistsOnce() {
+        val listed = listOf(NavidromeClient.ArtistRow("a1", "Youtube Topic", "ar-a1"), NavidromeClient.ArtistRow("a2", "Beyoncé", "ar-a2"))
+        val fromSongs = listOf(
+            NavidromeClient.ArtistRow("a3", "Levent Geiger", null),
+            NavidromeClient.ArtistRow("a2", "beyonce", null),
+            NavidromeClient.ArtistRow("a3", "Levent Geiger", null),
+            NavidromeClient.ArtistRow("a4", "  ", null),
+        )
+        val merged = NavidromeArtistPictures.mergeArtists(listed, fromSongs)
+        assertEquals(listOf("a1", "a2", "a3"), merged.map { it.id })
+        assertEquals("ar-a2", merged[1].coverArt) // the listed row, with its picture's id, wins
+    }
 }

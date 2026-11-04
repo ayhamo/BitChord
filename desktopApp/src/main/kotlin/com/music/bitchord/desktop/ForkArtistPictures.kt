@@ -49,3 +49,21 @@ internal fun rememberForkArtistPicture(browseId: String, songs: List<Song>): Str
     }
     return remember(name, updates) { NavidromeArtistPictures.cached(name) }
 }
+
+/**
+ * The Navidrome library page's Artists tab: each artist's kept picture by name, read again when an
+ * answer lands (a joint credit: its first artist's); null (the first song's cover shows) while none is known. Reads only: the pictures
+ * come from the background pass and the artist pages.
+ */
+@Composable
+internal fun rememberForkArtistPictures(): (String) -> String? {
+    val updates by NavidromeArtistPictures.updates.collectAsState()
+    // The tab groups by the songs' display credit ("A feat. B"), the pictures are kept per credited
+    // artist: a credit with none of its own takes its first artist's.
+    return remember(updates) {
+        { name: String ->
+            NavidromeArtistPictures.cached(name)
+                ?: com.music.bitchord.data.canvas.splitArtists(name).firstOrNull()?.let(NavidromeArtistPictures::cached)
+        }
+    }
+}

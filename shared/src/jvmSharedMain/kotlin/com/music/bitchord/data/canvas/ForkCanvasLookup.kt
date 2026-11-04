@@ -29,6 +29,13 @@ import kotlin.coroutines.CoroutineContext
  * once ([skips]). Found wins: a later provider's clip is used and cached even when an earlier one
  * failed, exactly as before. The providers' own backoffs (Apple's 30 min token retry, Spotify's)
  * are untouched; this only decides what the song-level cache remembers.
+ *
+ * A provider sitting out its own backoff reports with [coolingDown] instead, naming when it will
+ * try again. The song's note then lasts until then rather than a minute: with Apple's token
+ * refused for 30 minutes, or a Spotify sign-in that no longer mints, a minute-long note meant every
+ * song with no clip was asked of every other provider again on each play, though the one that
+ * failed could not have answered yet. It is still not cached as "no clip", so the song is asked
+ * once more when the provider is back.
  */
 object ForkCanvasLookup {
 
@@ -67,6 +74,10 @@ object ForkCanvasLookup {
         @Volatile var failure: String? = null
             internal set
 
+        /** The latest time a provider in its own backoff ([coolingDown]) will try again; 0 for none. */
+        @Volatile var retryAtMs: Long = 0L
+            internal set
+
         val context: CoroutineContext = current.asContextElement(this)
     }
 
@@ -86,6 +97,19 @@ object ForkCanvasLookup {
     }
 
     /**
+     * A provider is in its own cool-down and will not try again before [untilMs]: a failure (not
+     * "no clip") whose song is left alone until then instead of for [RETRY_AFTER_MS]. Returns null,
+     * for `?: return ForkCanvasLookup.coolingDown("…", retryAfterMs)`. An [untilMs] already past
+     * is a plain [failed].
+     */
+    fun coolingDown(reason: String, untilMs: Long): Nothing? {
+        val scope = current.get() ?: return null
+        if (scope.failure == null) scope.failure = reason
+        if (untilMs > scope.retryAtMs) scope.retryAtMs = untilMs
+        return null
+    }
+
+    /**
      * Runs [block] with its failures not counted: for a second opinion asked after a service has
      * already answered. Spotify's Pathfinder saying "no canvas" is that answer; `canvaz-cache`
      * failing after it (it is old and often refuses) must not turn the song's settled miss into a
@@ -94,15 +118,23 @@ object ForkCanvasLookup {
     fun <T> answered(block: () -> T): T {
         val scope = current.get() ?: return block()
         val before = scope.failure
+        val retryBefore = scope.retryAtMs
         return try {
             block()
         } finally {
             scope.failure = before
+            scope.retryAtMs = retryBefore
         }
     }
 
     /** Failed lookups, by the repository's own cache key. One per process, both platforms. */
     val notes = FailedNotes()
+
+    /**
+     * Forgets every failed lookup: a new Spotify sign-in ends that provider's backoff, so songs held
+     * back by it ([coolingDown], up to 30 min) are asked again on their next play.
+     */
+    fun clearNotes() = notes.clear()
 
     /** Whether the lookup for [key] failed less than [RETRY_AFTER_MS] ago and is to be answered null unasked. */
     fun skips(key: String, withAlbum: Boolean): Boolean = notes.recentlyFailed(key, withAlbum)
@@ -114,7 +146,7 @@ object ForkCanvasLookup {
     fun keeps(key: String, withAlbum: Boolean, found: Boolean, scope: Scope): Boolean {
         val outcome = outcome(found, scope.failure)
         if (outcome == Outcome.FAILED) Log.d(TAG, "not caching '$key': ${scope.failure}")
-        return notes.record(key, withAlbum, outcome)
+        return notes.record(key, withAlbum, outcome, scope.retryAtMs)
     }
 
     /**
@@ -126,7 +158,8 @@ object ForkCanvasLookup {
         private val now: () -> Long = System::currentTimeMillis,
         private val maxEntries: Int = 64,
     ) {
-        private class Note(val atMs: Long, val withAlbum: Boolean)
+        /** [untilMs]: when the song may be asked again, at least [windowMs] after the failure. */
+        private class Note(val untilMs: Long, val withAlbum: Boolean)
 
         private val notes = object : LinkedHashMap<String, Note>(maxEntries, 0.75f, true) {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Note>) = size > maxEntries
@@ -140,18 +173,24 @@ object ForkCanvasLookup {
         @Synchronized
         fun recentlyFailed(key: String, withAlbum: Boolean): Boolean {
             val note = notes[key] ?: return false
-            if (now() - note.atMs >= windowMs) {
+            if (now() >= note.untilMs) {
                 notes.remove(key)
                 return false
             }
             return note.withAlbum || !withAlbum
         }
 
-        /** Notes a failure (returns false: don't cache) or clears the note (returns true: cache). */
         @Synchronized
-        fun record(key: String, withAlbum: Boolean, outcome: Outcome): Boolean {
+        fun clear() = notes.clear()
+
+        /**
+         * Notes a failure (returns false: don't cache) or clears the note (returns true: cache).
+         * [retryAtMs] is a cooling-down provider's own retry time, which outlasts the window.
+         */
+        @Synchronized
+        fun record(key: String, withAlbum: Boolean, outcome: Outcome, retryAtMs: Long = 0L): Boolean {
             if (outcome == Outcome.FAILED) {
-                notes[key] = Note(now(), withAlbum)
+                notes[key] = Note(maxOf(now() + windowMs, retryAtMs), withAlbum)
                 return false
             }
             notes.remove(key)

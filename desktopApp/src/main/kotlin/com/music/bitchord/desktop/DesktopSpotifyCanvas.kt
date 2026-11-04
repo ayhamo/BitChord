@@ -420,6 +420,7 @@ internal object DesktopSpotifyToken {
         cachedAccessToken = null
         accessTokenExpiresAtMs = 0L
         retryAfterMs = 0L
+        com.music.bitchord.data.canvas.ForkCanvasLookup.clearNotes() // fork: songs held back by the old sign-in's backoff are asked again
     }
 
     @Synchronized
@@ -427,7 +428,7 @@ internal object DesktopSpotifyToken {
         val cookie = cookie().ifBlank { return null }
         val now = System.currentTimeMillis()
         cachedAccessToken?.let { if (now < accessTokenExpiresAtMs - 30_000) return it }
-        if (now < retryAfterMs) return com.music.bitchord.data.canvas.ForkCanvasLookup.failed("Spotify: token backing off") // fork: was `return null`
+        if (now < retryAfterMs) return com.music.bitchord.data.canvas.ForkCanvasLookup.coolingDown("Spotify: token backing off", retryAfterMs) // fork: was `return null`
 
         // fork: the page's own token first, as on the phone; signing below is what's left without a browser
         ForkSpotifyToken.mint(cookie)?.let { minted ->
@@ -445,7 +446,7 @@ internal object DesktopSpotifyToken {
             // every skip fixes nothing and makes every canvas lookup pay for the round trip.
             retryAfterMs = now + RETRY_MS
             DesktopTrackLog.log("canvas: Spotify would not mint an access token")
-            return com.music.bitchord.data.canvas.ForkCanvasLookup.failed("Spotify: no token") // fork: was `return null`
+            return com.music.bitchord.data.canvas.ForkCanvasLookup.coolingDown("Spotify: no token", retryAfterMs) // fork: was `return null`; backing off until then
         }
         cachedAccessToken = signed.accessToken // fork: the three lines read `signed` (were the parsed answer)
         accessTokenExpiresAtMs = signed.expiresAtMs

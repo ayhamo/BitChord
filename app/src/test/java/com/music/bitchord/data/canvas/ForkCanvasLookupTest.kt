@@ -120,4 +120,40 @@ class ForkCanvasLookupTest {
         assertNull(url)
         assertNull(scope.failure)
     }
+
+    @Test
+    fun `a provider in its cool-down holds the song back until it can answer again`() = runBlocking {
+        val scope = ForkCanvasLookup.Scope()
+        withContext(Dispatchers.IO + scope.context) {
+            ForkCanvasLookup.failed("Tidal: no answer")
+            ForkCanvasLookup.coolingDown("Apple Music: no token", untilMs = 1_800_000L)
+            ForkCanvasLookup.coolingDown("Spotify: token backing off", untilMs = 600_000L)
+        }
+        assertEquals("Tidal: no answer", scope.failure)
+        assertEquals(1_800_000L, scope.retryAtMs)
+
+        var now = 0L
+        val notes = ForkCanvasLookup.FailedNotes(windowMs = 60_000, now = { now })
+        assertFalse(notes.record("song|e", withAlbum = true, outcome = Outcome.FAILED, retryAtMs = scope.retryAtMs))
+        now = 1_799_999L
+        assertTrue(notes.recentlyFailed("song|e", withAlbum = true))
+        now = 1_800_000L
+        assertFalse(notes.recentlyFailed("song|e", withAlbum = true))
+
+        // A cool-down already over (or shorter than the window) never shortens the minute.
+        now = 0L
+        notes.record("song|f", withAlbum = true, outcome = Outcome.FAILED, retryAtMs = 5_000L)
+        now = 59_999L
+        assertTrue(notes.recentlyFailed("song|f", withAlbum = true))
+    }
+
+    @Test
+    fun `a cool-down inside a second opinion is not kept`() = runBlocking {
+        val scope = ForkCanvasLookup.Scope()
+        withContext(Dispatchers.IO + scope.context) {
+            ForkCanvasLookup.answered { ForkCanvasLookup.coolingDown("Spotify: token backing off", 600_000L) }
+        }
+        assertNull(scope.failure)
+        assertEquals(0L, scope.retryAtMs)
+    }
 }

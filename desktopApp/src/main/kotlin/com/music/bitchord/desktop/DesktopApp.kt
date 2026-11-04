@@ -5833,7 +5833,7 @@ private fun DesktopLocalMusicPage(
                 DesktopLibrarySongContent(forkShown, view, { song -> forkPlayFrom?.invoke(forkShown, song) ?: onSongClick(song) }, menu) // fork: was onSongClick
             } else when (selectedTab) {
                 0 -> DesktopLibrarySongContent(filteredSongs, view, { song -> forkPlayFrom?.invoke(filteredSongs, song) ?: onSongClick(song) }, menu) // fork: was onSongClick
-                1 -> DesktopLibraryGroupingContent(artists, view, onGroupClick = { drillDown = it })
+                1 -> DesktopLibraryGroupingContent(artists, view, onGroupClick = { drillDown = it }, forkPicture = if (forkPlayFrom != null) rememberForkArtistPictures() else null) // fork: + forkPicture (Navidrome artists' own pictures)
                 else -> DesktopLibraryGroupingContent(albums, view, onGroupClick = { drillDown = it })
             }
         }
@@ -5904,6 +5904,7 @@ private fun DesktopLibraryGroupingContent(
     groups: List<Map.Entry<String, List<Song>>>,
     view: DesktopLibraryView,
     onGroupClick: (Pair<String, List<Song>>) -> Unit,
+    forkPicture: ((String) -> String?)? = null, // fork
 ) {
     if (groups.isEmpty()) {
         DesktopEmptyPage(BitChordIcons.Search, "Nothing here yet", "Music will be grouped as it is added.")
@@ -5919,7 +5920,7 @@ private fun DesktopLibraryGroupingContent(
         ) {
             gridItems(groups, key = { it.key }) { group ->
                 Column(Modifier.fillMaxWidth().clickable { onGroupClick(group.key to group.value) }) {
-                    DesktopArtwork(group.value.firstOrNull()?.thumbnailUrl, Modifier.fillMaxWidth().height(150.dp).clip(CircleShape))
+                    DesktopArtwork(forkPicture?.invoke(group.key) ?: group.value.firstOrNull()?.thumbnailUrl, Modifier.fillMaxWidth().height(150.dp).clip(CircleShape)) // fork: + forkPicture
                     Spacer(Modifier.height(7.dp))
                     Text(group.key, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
                     Text("${group.value.size} songs", color = DesktopSecondary, style = MaterialTheme.typography.bodySmall)
@@ -5939,7 +5940,7 @@ private fun DesktopLibraryGroupingContent(
                     Modifier.fillMaxWidth().clickable { onGroupClick(group.key to group.value) }.padding(vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    DesktopArtwork(group.value.firstOrNull()?.thumbnailUrl, Modifier.size(54.dp).clip(CircleShape))
+                    DesktopArtwork(forkPicture?.invoke(group.key) ?: group.value.firstOrNull()?.thumbnailUrl, Modifier.size(54.dp).clip(CircleShape)) // fork: + forkPicture
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(group.key, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)

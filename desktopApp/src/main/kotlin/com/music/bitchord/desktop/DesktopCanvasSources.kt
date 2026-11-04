@@ -131,7 +131,7 @@ internal object DesktopAppleMusicCanvas {
     }
 
     fun search(title: String, artist: String, album: String?): DesktopCanvasArtwork? {
-        val bearer = token() ?: return com.music.bitchord.data.canvas.ForkCanvasLookup.failed("Apple Music: no token") // fork: was `return null`
+        val bearer = token() ?: return com.music.bitchord.data.canvas.ForkCanvasLookup.coolingDown("Apple Music: no token", retryTokenAfterMs) // fork: was `return null`; no token means the scrape is backing off until then
         // The catalog search is term-based, so fold everything known into the term: an artist name
         // alone pulls in their whole discography for the scoring to then reject.
         val term = buildString {
@@ -192,7 +192,7 @@ internal object DesktopAppleMusicCanvas {
     /** Motion artwork for a release. Albums carry `editorialVideo` inline, so there is no second
      * lookup to resolve an id first. */
     fun searchAlbum(album: String, artist: String): DesktopCanvasArtwork? {
-        val bearer = token() ?: return com.music.bitchord.data.canvas.ForkCanvasLookup.failed("Apple Music: no token") // fork: was `return null`
+        val bearer = token() ?: return com.music.bitchord.data.canvas.ForkCanvasLookup.coolingDown("Apple Music: no token", retryTokenAfterMs) // fork: was `return null`; no token means the scrape is backing off until then
         val term = if (album.contains(artist, ignoreCase = true)) album else "$artist $album"
         val url = query(
             "$AMP/$storefront/search",
