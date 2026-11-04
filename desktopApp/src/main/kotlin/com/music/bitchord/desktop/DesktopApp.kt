@@ -1,5 +1,7 @@
 package com.music.bitchord.desktop
 
+import com.music.bitchord.ui.components.ForkScrollbarBox // fork
+import com.music.bitchord.ui.components.ForkScrollbar // fork
 import androidx.compose.foundation.lazy.LazyListState
 import com.music.bitchord.ui.components.LocalShelfRowChrome
 import com.music.bitchord.ui.components.ShelfRowChrome
@@ -1636,6 +1638,15 @@ fun BitChordDesktopApp() {
     }
     ForkDebugBridge.engine = playbackEngine // fork
     ForkMusicVideo.attach(playbackEngine.state) // fork: a music video's picture follows the audio clock
+    ForkVersionSwitch.engine = playbackEngine // fork: Convert to video / audio (ForkVersionSwitch)
+    ForkVersionSwitch.onSwitched = { from, to -> // fork: the switch takes the queue row's place, the selection and the history entry
+        liveQueue = forkQueueWithVersion(liveQueue, from, to)
+        if (selectedSong?.videoId == from.videoId) selectedSong = to
+        history = forkHistoryWithVersion(history, from, to)
+        if (from.videoId in statsCountedSongs) statsCountedSongs = statsCountedSongs + to.videoId
+        saveQueue()
+        persistence.saveHistory(history)
+    }
     val partySync = remember(playbackEngine) {
         DesktopPartySync(
             scope = scope,
@@ -2051,8 +2062,9 @@ fun BitChordDesktopApp() {
     }
     // The account's own history on YouTube Music, which is what the home feed is built out of.
     DisposableEffect(playback.song?.videoId) {
+        val forkLeaving = playback.song?.videoId // fork (Desktop Revived 465c39c4): a version switch renamed the session
         val previous = playbackEngine.state.value.positionMs / 1_000
-        onDispose { DesktopPlaybackTracker.onTrackChanged(previous) }
+        onDispose { DesktopPlaybackTracker.onTrackChanged(previous, forkLeaving) }
     }
     LaunchedEffect(playback.song?.videoId, playback.isPlaying) {
         val songId = playback.song?.videoId ?: return@LaunchedEffect
@@ -2079,7 +2091,7 @@ fun BitChordDesktopApp() {
             if (delta > 0L) {
                 val threshold = snapshot.durationMs.takeIf { it > 0L }?.let { minOf(it / 2L, SCROBBLE_THRESHOLD_MS) }
                     ?: SCROBBLE_THRESHOLD_MS
-                val reachedThreshold = !countedAsPlay && position >= threshold
+                val reachedThreshold = !countedAsPlay && songId !in statsCountedSongs && position >= threshold // fork: songId !in, a version switch's new id is marked a beat after its loop starts (ForkVersionSwitch)
                 DesktopListeningStats.record(snapshot.song, delta, reachedThreshold)
                 if (reachedThreshold) {
                     countedAsPlay = true
@@ -3052,6 +3064,7 @@ fun BitChordDesktopApp() {
         DesktopPlayerSettings.animatedCanvas.value = animatedCanvas
         DesktopPlayerSettings.fullBleedArtwork.value = fullBleedArtwork
         ForkPlayerMenu.onFullBleedChange = { fullBleedArtwork = it; persistence.saveBoolean("full_bleed_artwork", it) } // fork: the menu's row
+        ForkPlayerSettings.sync(audioQuality, playback) // fork: the stream ceiling and the quality-upgrade mark (ForkPlayerSettings.kt)
         DesktopPlayerSettings.legacyMeshGradient.value = legacyMeshGradient
         DesktopPlayerSettings.lyricsBlur.value = lyricsBlur
         DesktopPlayerSettings.syncedLyrics.value = syncedLyrics
@@ -3245,6 +3258,11 @@ fun BitChordDesktopApp() {
                             // The player's own layers first — the lyrics, the queue, a
                             // drawer — in the order Android's back reaches them.
                             overlays.nowPlaying && PlayerBack.dispatch() -> true
+                            // fork: full screen is left first, the player kept (Desktop Revived 8892ec00); this path skipped the sheet's onDismiss that leaves it
+                            DesktopWindowMode.fullScreen.value -> {
+                                DesktopWindowMode.exit()
+                                true
+                            }
                             overlays.nowPlaying -> {
                                 overlays.nowPlaying = false
                                 true
@@ -3411,8 +3429,8 @@ fun BitChordDesktopApp() {
                             isLoading = playback.isLoading,
                             position = playerPosition,
                             durationMs = playback.durationMs,
-                            audioVersionSwitching = false,
-                            qualityUpgraded = false,
+                            audioVersionSwitching = forkVersionSwitching(), // fork: was false (ForkVersionSwitch)
+                            qualityUpgraded = ForkQualityUpgrade.upgraded(playback), // fork: was false
                             queue = liveQueue.songs,
                             queueIndex = liveQueue.index,
                             hasPrevious = liveQueue.hasPrevious,
@@ -4151,7 +4169,7 @@ fun BitChordDesktopApp() {
                             contentPadding = contentPadding,
                             forkOpenArtist = ::openArtist, // fork
                         )
-                        destination == DesktopDestination.LISTEN_NOW -> HomeScreen(
+                        destination == DesktopDestination.LISTEN_NOW -> ForkScrollbarBox(homeListState, Modifier.fillMaxSize(), sharedPagePadding) { HomeScreen( // fork: the overlay scrollbar (PC-Continued e16ed1f8)
                             state = ForkDesktopHome.present(homeState), // fork: was homeState; the Navidrome / YouTube / Spotify sections
                             listState = homeListState,
                             onItemClick = { item, shelfTitle -> openShelfItem(item, shelfTitle) },
@@ -4168,9 +4186,9 @@ fun BitChordDesktopApp() {
                             loadingMore = homeLoadingMore,
                             recentlyPlayedLoading = homeRecentsLoading,
                             leadHero = false,
-                        )
+                        ) } // fork
                         destination == DesktopDestination.EXPLORE && selectedMoodGenre != null -> Column(Modifier.fillMaxSize()) {
-                            MoodGenrePlaylistsScreen(
+                            ForkScrollbarBox(moodGenreListState, Modifier.weight(1f), sharedPagePadding) { MoodGenrePlaylistsScreen( // fork: the overlay scrollbar
                                 title = selectedMoodGenre!!.title,
                                 state = moodGenreShelves,
                                 listState = moodGenreListState,
@@ -4181,9 +4199,9 @@ fun BitChordDesktopApp() {
                                 },
                                 contentPadding = PaddingValues(bottom = sharedPagePadding.calculateBottomPadding()),
                                 modifier = Modifier.weight(1f),
-                            )
+                            ) } // fork
                         }
-                        destination == DesktopDestination.EXPLORE -> ExploreScreen(
+                        destination == DesktopDestination.EXPLORE -> ForkScrollbarBox(exploreListState, Modifier.fillMaxSize(), sharedPagePadding) { ExploreScreen( // fork: the overlay scrollbar
                             state = exploreState,
                             listState = exploreListState,
                             onCategoryClick = ::openMoodGenre,
@@ -4193,8 +4211,8 @@ fun BitChordDesktopApp() {
                             pullState = rememberPullToRefreshState(),
                             contentPadding = sharedPagePadding,
                             showTitle = false,
-                        )
-                        destination == DesktopDestination.SEARCH -> SearchScreen(
+                        ) } // fork
+                        destination == DesktopDestination.SEARCH -> ForkScrollbarBox(searchListState, Modifier.fillMaxSize(), sharedPagePadding) { SearchScreen( // fork: the overlay scrollbar
                             query = query,
                             onQueryChange = ::editQuery,
                             filter = searchFilter,
@@ -4288,7 +4306,7 @@ fun BitChordDesktopApp() {
                             contentPadding = sharedPagePadding,
                             topPadding = 0.dp,
                             showField = false,
-                        )
+                        ) } // fork
                         destination == DesktopDestination.LIBRARY && libraryShowAll != null -> Column(Modifier.fillMaxSize()) {
                             // The phone keeps the grid's sort beside it, in the bar above; here it sits
                             // at the end of the row the way back is on.
@@ -4304,7 +4322,7 @@ fun BitChordDesktopApp() {
                                     modifier = Modifier.padding(horizontal = PAGE_GUTTER, vertical = 12.dp),
                                 )
                             }
-                            LibraryGridPage(
+                            ForkScrollbarBox(libraryGridState, Modifier.weight(1f), sharedPagePadding) { LibraryGridPage( // fork: the overlay scrollbar
                                 shelf = libraryShowAll!!,
                                 gridState = libraryGridState,
                                 onItemClick = ::openLibraryItem,
@@ -4313,9 +4331,9 @@ fun BitChordDesktopApp() {
                                 modifier = Modifier.weight(1f),
                                 onNewPlaylist = { overlays.playlistDialog = true }
                                     .takeIf { libraryShowAll?.title == PLAYLISTS_SHELF },
-                            )
+                            ) } // fork
                         }
-                        destination == DesktopDestination.LIBRARY -> LibraryScreen(
+                        destination == DesktopDestination.LIBRARY -> ForkScrollbarBox(libraryListState, Modifier.fillMaxSize(), sharedPagePadding) { LibraryScreen( // fork: the overlay scrollbar
                             signedIn = youtubeSignedIn,
                             state = libraryState,
                             listState = libraryListState,
@@ -4358,18 +4376,18 @@ fun BitChordDesktopApp() {
                             links = libraryLinks,
                             deviceItems = libraryDeviceItems,
                             showTitle = false,
-                        )
+                        ) } // fork
                         destination == DesktopDestination.HISTORY -> DesktopHistoryPage(
                             // The account's history when there is one, and what
                             // this computer played when there is not.
-                            history = remoteHistory.ifEmpty { history },
+                            history = ForkHistoryRemoval.visible(remoteHistory.ifEmpty { history }), // fork: rows removed from the account's history
                             onSongClick = { playSong(it, source = DesktopQueueSource(DesktopStrings["history", "History"], PlaybackSourceType.HISTORY)) },
                             onDownload = ::downloadSong,
                             onAddToPlaylist = { playlistTarget = it },
                             downloadedIds = downloads.map(Song::videoId).toSet(),
                             downloadInProgress = downloadInProgress,
                             contentPadding = contentPadding,
-                            menu = { song -> songMenu(song) },
+                            menu = { song -> ForkFromHistory { songMenu(song) } }, // fork: ForkFromHistory, for "Remove from history"
                         )
                         destination == DesktopDestination.DOWNLOADS -> Box(Modifier.fillMaxSize()) {
                             DesktopDownloadsPage(
@@ -5398,14 +5416,17 @@ private fun DesktopArtistPage(
                 // not buried under a hundred rows.
                 val top = artist.songs.take(MAX_ARTIST_SONGS)
                 val forkApple = rememberForkAppleArt(forkBrowseId.ifBlank { name }, name, artist) { com.music.bitchord.data.AppleCatalogue.titlesOf(artist) } // fork: Apple Music's header
+                val forkSignature = rememberForkArtistSignature(forkBrowseId.ifBlank { name }, name) // fork: the phone's artist signature
                 Box(Modifier.fillMaxSize().forkAppleTint(forkApple)) { // fork: forkAppleTint
-                    LazyColumn(
+                    val forkBar = rememberLazyListState() // fork
+                    ForkScrollbarBox(forkBar, Modifier.fillMaxSize(), PaddingValues(bottom = LocalDesktopBottomInset.current)) { LazyColumn( // fork: the overlay scrollbar (PC-Continued e16ed1f8)
+                        state = forkBar, // fork
                         contentPadding = pagePadding(bottom = 32.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         item(key = "artist-header") {
-                            if (forkApple != null) ForkAppleArtistBanner(forkApple, name, ARTIST_BANNER_HEIGHT, artist.thumbnailUrl) else // fork
-                            DesktopArtistBanner(artist.thumbnailUrl, name, palette)
+                            if (forkApple != null) ForkAppleArtistBanner(forkApple, name, ARTIST_BANNER_HEIGHT, artist.thumbnailUrl, signature = forkSignature) else // fork
+                            DesktopArtistBanner(artist.thumbnailUrl, name, palette, forkSignature) // fork: forkSignature
                         }
                         if (artist.subscriberCountText != null || artist.monthlyListenerCount != null) {
                             item(key = "artist-stats") {
@@ -5467,6 +5488,7 @@ private fun DesktopArtistPage(
                                 }
                             }
                         }
+                        forkAboutSignature(forkSignature, forkApple, name, artist.description) // fork: the signature at the About foot when Apple's logo has the header
                         if (top.isNotEmpty()) {
                             // Paged sideways four to a column, the way Home lists Recents.
                             item(key = "artist-top-songs") {
@@ -5513,7 +5535,7 @@ private fun DesktopArtistPage(
                                 )
                             }
                         }
-                    }
+                    } } // fork
                 }
             }
         }
@@ -5522,7 +5544,7 @@ private fun DesktopArtistPage(
 
 /** The photograph, and the name across the foot of it. */
 @Composable
-private fun DesktopArtistBanner(url: String?, name: String, palette: DesktopArtworkPalette) {
+private fun DesktopArtistBanner(url: String?, name: String, palette: DesktopArtworkPalette, forkSignature: ForkArtistSignature? = null) { // fork: forkSignature
     Box(Modifier.fillMaxWidth().height(ARTIST_BANNER_HEIGHT)) {
         DesktopArtwork(url, Modifier.matchParentSize(), px = HEADER_ART_PX)
         // Two washes rather than one.
@@ -5544,6 +5566,7 @@ private fun DesktopArtistBanner(url: String?, name: String, palette: DesktopArtw
                 ),
             ),
         )
+        ForkSignedName(forkSignature, name, ARTIST_BANNER_HEIGHT) { // fork: the signature in the name's place once drawn
         Text(
             name,
             style = MaterialTheme.typography.displaySmall,
@@ -5555,6 +5578,7 @@ private fun DesktopArtistBanner(url: String?, name: String, palette: DesktopArtw
                 .align(Alignment.BottomStart)
                 .padding(start = DesktopPageGutter, end = DesktopPageGutter, bottom = 18.dp),
         )
+        } // fork
     }
 }
 
@@ -5647,7 +5671,9 @@ private fun DesktopHistoryPage(
 ) {
     DesktopPageScaffold(contentPadding) {
         val isCurrentRow = rememberPlayingRowMatcher(history)
-        LazyColumn(
+        val forkBar = rememberLazyListState() // fork
+        ForkScrollbarBox(forkBar, Modifier.fillMaxSize(), PaddingValues(bottom = LocalDesktopBottomInset.current)) { LazyColumn( // fork: the overlay scrollbar (PC-Continued e16ed1f8)
+            state = forkBar, // fork
             contentPadding = pagePadding(start = DesktopPageGutter, end = DesktopPageGutter, bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
@@ -5666,7 +5692,7 @@ private fun DesktopHistoryPage(
                     menu = menu,
                 )
             }
-        }
+        } } // fork
     }
 }
 
@@ -5818,7 +5844,9 @@ private fun DesktopLibrarySongContent(
     if (songs.isEmpty()) {
         DesktopEmptyPage(BitChordIcons.Search, "No matching music", "Try a different search.")
     } else if (view == DesktopLibraryView.GRID) {
-        LazyVerticalGrid(
+        val forkBar = rememberLazyGridState() // fork
+        ForkScrollbarBox(forkBar, Modifier.fillMaxSize(), PaddingValues(bottom = LocalDesktopBottomInset.current)) { LazyVerticalGrid( // fork: the overlay scrollbar (PC-Continued e16ed1f8)
+            state = forkBar, // fork
             columns = GridCells.Adaptive(minSize = 150.dp),
             modifier = Modifier.fillMaxSize(),
             contentPadding = pagePadding(bottom = 32.dp),
@@ -5833,10 +5861,12 @@ private fun DesktopLibrarySongContent(
                     Text(song.artist, color = DesktopSecondary, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
-        }
+        } } // fork
     } else {
         val isCurrentRow = rememberPlayingRowMatcher(songs)
-        LazyColumn(
+        val forkBar = rememberLazyListState() // fork
+        ForkScrollbarBox(forkBar, Modifier.fillMaxSize(), PaddingValues(bottom = LocalDesktopBottomInset.current)) { LazyColumn( // fork: the overlay scrollbar (PC-Continued e16ed1f8)
+            state = forkBar, // fork
             modifier = Modifier.fillMaxSize(),
             contentPadding = pagePadding(bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -5852,7 +5882,7 @@ private fun DesktopLibrarySongContent(
                     menu = menu,
                 )
             }
-        }
+        } } // fork
     }
 }
 
@@ -5865,7 +5895,9 @@ private fun DesktopLibraryGroupingContent(
     if (groups.isEmpty()) {
         DesktopEmptyPage(BitChordIcons.Search, "Nothing here yet", "Music will be grouped as it is added.")
     } else if (view == DesktopLibraryView.GRID) {
-        LazyVerticalGrid(
+        val forkBar = rememberLazyGridState() // fork
+        ForkScrollbarBox(forkBar, Modifier.fillMaxSize(), PaddingValues(bottom = LocalDesktopBottomInset.current)) { LazyVerticalGrid( // fork: the overlay scrollbar (PC-Continued e16ed1f8)
+            state = forkBar, // fork
             columns = GridCells.Adaptive(minSize = 150.dp),
             modifier = Modifier.fillMaxSize(),
             contentPadding = pagePadding(bottom = 32.dp),
@@ -5880,9 +5912,11 @@ private fun DesktopLibraryGroupingContent(
                     Text("${group.value.size} songs", color = DesktopSecondary, style = MaterialTheme.typography.bodySmall)
                 }
             }
-        }
+        } } // fork
     } else {
-        LazyColumn(
+        val forkBar = rememberLazyListState() // fork
+        ForkScrollbarBox(forkBar, Modifier.fillMaxSize(), PaddingValues(bottom = LocalDesktopBottomInset.current)) { LazyColumn( // fork: the overlay scrollbar (PC-Continued e16ed1f8)
+            state = forkBar, // fork
             modifier = Modifier.fillMaxSize(),
             contentPadding = pagePadding(bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -5901,7 +5935,7 @@ private fun DesktopLibraryGroupingContent(
                     Icon(BitChordIcons.Play, DesktopStrings["open", "Open"], tint = DesktopSecondary)
                 }
             }
-        }
+        } } // fork
     }
 }
 
@@ -6055,6 +6089,7 @@ private fun DesktopSettingsScreen(
             if (section == DesktopSettingsSection.NAVIDROME) item { ForkNavidromeSettingsGroup() } // fork
             if (section == DesktopSettingsSection.PLAYBACK) item {
                     SettingsGroup(DesktopStrings["playback", "Playback"]) {
+                    ForkLoudnessRow() // fork: the phone's "Loudness normalization", above Crossfade as there
                     if (!automix) {
                         if (settingsRowVisible(DesktopStrings["crossfade", "Crossfade"])) {
                         Column(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
@@ -6345,6 +6380,7 @@ private fun DesktopSettingsScreen(
                     ForkClipCacheRows() // fork
                 }
             }
+            if (section == DesktopSettingsSection.STORAGE) item { ForkBackupGroup() } // fork: the phone's "Your data", after Storage
             if (section == DesktopSettingsSection.LOCAL_MUSIC) item {
                 SettingsGroup(DesktopStrings["local_music", "Local Music"]) {
                     var folderLabel by remember { mutableStateOf(DesktopLocalMusic.folderLabel()) }
@@ -6379,6 +6415,8 @@ private fun DesktopSettingsScreen(
             }
             if (section == DesktopSettingsSection.APPEARANCE) item {
                 SettingsGroup(DesktopStrings["appearance", "Appearance"]) {
+                    ForkUiScaleRow() // fork: UI scale (Desktop Revived 8782585b)
+                    ForkReduceAnimationRow() // fork
                     val reduceDynamicBlur by DesktopAppearanceSettings.reduceDynamicBlur.collectAsState()
                     SettingsToggle(
                         DesktopStrings["reduce_dynamic_blur", "Reduce dynamic blur"],
@@ -6487,6 +6525,7 @@ private fun DesktopSettingsScreen(
                         val forkCovers by com.music.bitchord.ui.player.ForkCanvasSwitch.covers.collectAsState()
                         SettingsToggle(ForkPlayerMenu.BACKDROPS_TITLE, ForkPlayerMenu.BACKDROPS_SUBTITLE, forkBackdrops, ForkNavidrome::setBackdrops)
                         SettingsToggle(ForkPlayerMenu.COVERS_TITLE, ForkPlayerMenu.COVERS_SUBTITLE, forkCovers, ForkNavidrome::setCovers)
+                        ForkCanvasAutoHideRow() // fork
                         SettingsNavigationRow(
                             title = DesktopStrings["spotify_canvas_setup", "Spotify Canvas setup"],
                             subtitle = if (spotifyCanvasReady) {
@@ -6498,6 +6537,7 @@ private fun DesktopSettingsScreen(
                         )
                     }
                     ForkArtistArtSwitch() // fork: "Artist Art", the web's Apple Music switch
+                    ForkArtistSignatureRows() // fork: the phone's "Artist signatures" and its API URL
                     ForkMusicVideoSwitch() // fork: "Music videos (beta)", off by default
                 }
             }
@@ -6536,6 +6576,7 @@ private fun DesktopSettingsScreen(
                         hideVolumeBar,
                         DesktopAppearanceSettings::setHideVolumeBar,
                     )
+                    ForkPlayerMiscRows() // fork: Listen Together button, queue history, song status
                 }
             }
             if (section == DesktopSettingsSection.AUDIO_QUALITY) item {
@@ -6668,6 +6709,7 @@ private fun DesktopSettingsScreen(
                             kind = DesktopSourceKind.ADDON,
                         )
                     }
+                    ForkDirectSourceRow() // fork: the phone's Direct Source Stream, under Sources
                 }
             }
             if (section == DesktopSettingsSection.ACCOUNT) item {
@@ -6691,6 +6733,7 @@ private fun DesktopSettingsScreen(
                         showNerdStats,
                         onShowNerdStatsChange,
                     )
+                    ForkSmartAlignmentRow() // fork: the phone's Smart audio alignment (ForkVersionSwitch)
                 }
             }
             }
@@ -7090,7 +7133,9 @@ private fun DesktopCollectionPage(
     }.joinToString(" • ").uppercase()
     DesktopPageScaffold(contentPadding) {
         val isCurrentRow = rememberPlayingRowMatcher(songs)
-        LazyColumn(
+        val forkBar = rememberLazyListState() // fork
+        ForkScrollbarBox(forkBar, Modifier.fillMaxSize(), PaddingValues(bottom = LocalDesktopBottomInset.current)) { LazyColumn( // fork: the overlay scrollbar (PC-Continued e16ed1f8)
+            state = forkBar, // fork
             contentPadding = pagePadding(
                 start = DesktopPageGutter,
                 top = DesktopPageGutter,
@@ -7175,6 +7220,7 @@ private fun DesktopCollectionPage(
                                 onClick = { if (songs.isNotEmpty()) onPlaySongs(songs, 0) },
                                 iconOnly = true,
                             )
+                            if (collection.type == BrowseType.ALBUM || collection.type == BrowseType.PLAYLIST) ForkLibrarySaveButton(collection.browseId) // fork: the phone's library circle beside Play
                             DesktopCircleButton(
                                 if (searching) Icons.Rounded.Close else BitChordIcons.Search,
                                 if (searching) DesktopStrings["close_search", "Close search"] else DesktopStrings["search_this_list", "Search this list"],
@@ -7206,6 +7252,7 @@ private fun DesktopCollectionPage(
                                             },
                                         )
                                     }
+                                    ForkPinMenuItem(collection.browseId, collection.type) { moreOpen = false } // fork: the phone's Pin / Unpin
                                     onRename?.let { rename ->
                                         DropdownMenuItem(
                                             text = { Text(DesktopStrings["rename", "Rename"]) },
@@ -7273,6 +7320,7 @@ private fun DesktopCollectionPage(
                 )
             }
             forkSimilarArtists(forkSimilar, forkOpenArtist) // fork
+            forkNavidromeArtistSignature(collection.browseId, songs) // fork: a Navidrome artist's signature, the phone's About foot
             if (collection.continuation != null) {
                 // Reaching this row is what asks for the next page, the way the home feed pages.
                 item(key = "collection-more") {
@@ -7291,7 +7339,7 @@ private fun DesktopCollectionPage(
                     }
                 }
             }
-        }
+        } } // fork
     }
 }
 
@@ -8002,7 +8050,7 @@ private val LocalSettingsMatches = compositionLocalOf<MutableList<String>?> { nu
  * Rows call this first and return early when it is false.
  */
 @Composable
-private fun settingsRowVisible(title: String, subtitle: String = ""): Boolean {
+internal fun settingsRowVisible(title: String, subtitle: String = ""): Boolean { // fork: internal, for ForkUiScaleRow
     val query = LocalSettingsQuery.current
     if (query.isBlank()) return true
     val hit = title.contains(query, ignoreCase = true) || subtitle.contains(query, ignoreCase = true)

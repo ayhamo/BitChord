@@ -98,6 +98,7 @@ internal class DesktopRangeStream(
         // fork: an answered range is kept for next time (only a range answer, never a whole file)
         if (forkKey != null && stated != null && windowStart == start && body.isNotEmpty() && length >= start + body.size) {
             ForkAudioRangeCache.shared.write(forkKey, start, body, length, System.currentTimeMillis() + ForkAudioRangeCache.KEEP_MS)
+            ForkSongCache.noteSpan(url, forkKey) // fork: for the song menu's "Remove from cache"
         }
         return body.isNotEmpty()
     }

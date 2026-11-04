@@ -141,6 +141,7 @@ internal fun ForkClipCacheRows() {
     }
     ForkClearClipsRow(ForkClipCache.Kind.BACKDROPS, "Clear backdrop videos")
     ForkClearClipsRow(ForkClipCache.Kind.COVER_CLIPS, "Clear animated covers")
+    ForkClearLyricsRow() // the phone's "Clear lyrics cache", after its clip rows (ForkPlayerSettings.kt)
 }
 
 /** Drops one kind of clip, showing what it holds now. */

@@ -170,6 +170,13 @@ internal class ForkLoopMixSession private constructor(
 ) {
     private val sr = sampleRate.toDouble()
 
+    /**
+     * The incoming deck's loudness against the outgoing one's ([ForkLoudness.ratio]): the rendered incoming loop
+     * carries it, and so does its own decoder's audio added after the handover, so the two cross at one level.
+     */
+    var inLevel: Float = 1f
+        private set
+
     /** The element <-> deck crossings: 25 ms, as on the phone. */
     val fadeFrames: Long = (LoopMix.HANDOVER_SEC * sr).roundToLong().coerceAtLeast(1L)
 
@@ -450,7 +457,8 @@ internal class ForkLoopMixSession private constructor(
         /**
          * The renderer for [plan] at [sampleRate] from the two decoded regions, laid out as the phone's
          * `LoopMixSession.build` lays its decks out; null when either region doesn't hold what its deck
-         * plays. [inLevel] scales the incoming deck (the PC has no loudness matching, so 1).
+         * plays. [inLevel] scales the incoming deck: its loudness against the outgoing song's, since the mix goes
+         * out through the outgoing song's loudness stage ([ForkLoudness.ratio], the phone's `inLevel`).
          */
         fun build(
             plan: LoopMix.Plan,
@@ -530,6 +538,7 @@ internal class ForkLoopMixSession private constructor(
                 exponential = true,
             )
             val session = ForkLoopMixSession(plan, clock, sampleRate, renderer, outId, inId, outUrl, inUrl)
+            session.inLevel = inLevel
             // The incoming deck hands over to its own song's decoder, crossing on identical audio.
             inDeck.fadeOutFrame = session.handoverFrame
             inDeck.fadeFrames = session.fadeFrames
@@ -674,7 +683,10 @@ internal class ForkDesktopLoopMix(private val scope: CoroutineScope) {
                 val alive = { isActive && buildGeneration == generation }
                 val outRegion = decodeRegion(outStream, outFrom, outTo, sampleRate, alive) ?: return@runCatching null
                 val inRegion = decodeRegion(inStream, inFrom, inTo, sampleRate, alive) ?: return@runCatching null
-                ForkLoopMixSession.build(plan, sampleRate, outRegion, inRegion, outId, inId, outStream.url, inStream.url)
+                ForkLoopMixSession.build(
+                    plan, sampleRate, outRegion, inRegion, outId, inId, outStream.url, inStream.url,
+                    inLevel = ForkLoudness.ratio(p.inSong, inStream.url, p.outSong, outStream.url),
+                )
             }.onFailure { DesktopTrackLog.log("loop mix: building the decks failed: ${it.message}") }.getOrNull()
             val handedOver = synchronized(buildLock) {
                 if (buildGeneration != generation) return@launch

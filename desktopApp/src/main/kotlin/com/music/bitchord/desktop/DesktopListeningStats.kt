@@ -119,6 +119,9 @@ object DesktopListeningStats {
         DesktopPreferenceChunks.write(preferences, KEY_ENTRIES, "")
     }
 
+    internal fun forkBuckets(): List<Bucket> = synchronized(lock) { read() } // fork: ForkBackup's export
+    internal fun forkReplace(buckets: List<Bucket>) = synchronized(lock) { clear(); write(buckets) } // fork: ForkBackup's import
+
     /**
      * The aggregation, apart from where the buckets came from.
      *

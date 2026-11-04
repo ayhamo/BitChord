@@ -34,7 +34,7 @@ internal object DesktopPlaybackTracker {
     private const val OPEN_RETRY_DELAY_MS = 2_000L
 
     private class Session(
-        val videoId: String,
+        @Volatile var videoId: String, // fork (Desktop Revived 465c39c4): renamed by onVersionSwapped, from the audio thread
         val cpn: String,
         val tracking: Tracking,
     ) {
@@ -81,9 +81,20 @@ internal object DesktopPlaybackTracker {
         }
     }
 
-    /** Call when the queue moves on. */
-    fun onTrackChanged(positionSeconds: Long) {
+    /**
+     * Fork (Desktop Revived 465c39c4): the song's video and audio versions are one listen (upstream
+     * v1.8.2 on the phone), so the switch renames the session instead of closing it; one still being
+     * opened for the old id is left for the next [onPlaying] to open under the new one.
+     */
+    fun onVersionSwapped(fromVideoId: String, toVideoId: String) {
+        session?.takeIf { it.videoId == fromVideoId }?.videoId = toVideoId
+        if (opening == fromVideoId) opening = null
+    }
+
+    /** Call when the queue moves on (not when only the version changes: [leavingVideoId], fork Desktop Revived 465c39c4). */
+    fun onTrackChanged(positionSeconds: Long, leavingVideoId: String? = null) {
         val closing = session ?: return
+        if (leavingVideoId != null && closing.videoId != leavingVideoId) return // fork: renamed by a version switch
         session = null
         scope.launch {
             runCatching { flush(closing, positionSeconds, final = true) }
@@ -165,6 +176,7 @@ internal object DesktopPlaybackTracker {
         }
         val fresh = Session(videoId, Innertube.newCpn(), tracking)
         val status = Innertube.pingPlayback(tracking.playbackUrl, fresh.cpn)
+        if (opening != videoId) return@withLock true // fork (Desktop Revived 465c39c4): a version switch came in meanwhile
         session = fresh
         DesktopTrackLog.log("history: entry created for '$videoId' (HTTP $status)")
         true

@@ -63,6 +63,8 @@ class NavidromeClient(
         val artistId: String? = null,
         /** Every credited artist as (id, name) (OpenSubsonic `artists`), so an artist page can find its own id. */
         val artists: List<Pair<String, String>> = emptyList(),
+        /** The server's ReplayGain in dB (OpenSubsonic `replayGain`, track else album), see [NavidromeReplayGain]. */
+        val replayGainDb: Double? = null,
     )
 
     suspend fun ping() {
@@ -392,6 +394,7 @@ class NavidromeClient(
             comment = o.string("comment"),
             artistId = o.string("artistId"),
             artists = parseArtists(o["artists"]).map { it.id to it.name },
+            replayGainDb = NavidromeReplayGain.parse(o["replayGain"]).also { NavidromeReplayGain.remember(id, it) },
         )
     }
 

@@ -62,6 +62,8 @@ internal object DesktopTrayMenu {
 
     fun onLayoutChanged(listener: (Int) -> Unit) = synchronized(lock) { onLayoutChanged = listener }
 
+    internal fun forkQuit() = synchronized(lock) { quit }() // fork: ForkBackup closes the app after an import
+
     /** Keeps the menu's text in step with playback; silent when nothing moved. */
     fun publish(title: String?, playing: Boolean) {
         val next = synchronized(lock) {

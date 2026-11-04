@@ -356,7 +356,7 @@ internal object DesktopSourceRegistry {
         }
         val fallback = scope.async { youtube.resolve(song, quality).getOrNull() }
 
-        val quick: DesktopStream? = select {
+        val quick: DesktopStream? = if (ForkDirectSource.active()) ForkDirectSource.awaitAddon(lookup) else select { // fork: Direct Source Stream waits for the addons
             lookup.onAwait { it }
             // A YouTube leg that finished without a URL has not won anything.
             fallback.onAwait { stream -> if (stream != null) null else lookup.await() }
@@ -369,7 +369,7 @@ internal object DesktopSourceRegistry {
                     " at ${quick.format.summary.ifBlank { "an unstated format" }}",
             )
             // Winning the race is not the same as being the best copy.
-            return@runCatching DesktopLiveResolution(quick, betterThan(quick, higher, song, quality))
+            return@runCatching DesktopLiveResolution(quick, if (ForkDirectSource.active()) null else betterThan(quick, higher, song, quality)) // fork: Direct Source Stream keeps an addon's answer
         }
 
         val youtubeStream = fallback.await()

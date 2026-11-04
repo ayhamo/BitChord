@@ -11,6 +11,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight // fork
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
@@ -388,6 +389,7 @@ internal fun InlineQueue(
                     )
                 }
             }
+            Box(Modifier.matchParentSize()) { com.music.bitchord.ui.components.ForkScrollbar(listState, Modifier.align(Alignment.CenterEnd).fillMaxHeight()) } // fork: the PC's overlay scrollbar (PC-Continued e16ed1f8); nothing on the phone
         }
     }
 }

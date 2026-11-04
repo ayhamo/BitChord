@@ -100,6 +100,16 @@ internal object ForkPreload {
             ?.takeIf { it.isFile && it.length() > 0 }
     }
 
+    /** Whether a server song's id (no prefix) is read ahead here, for the song menu's "Remove from cache". */
+    fun holds(id: String): Boolean = File(dir, fileName(id)).isFile
+
+    /** That one song's file thrown away; the bytes freed. */
+    fun remove(id: String): Long {
+        val file = File(dir, fileName(id))
+        val size = file.length()
+        return if (file.isFile && file.delete()) size else 0L
+    }
+
     /** Thrown away with "Clear song cache". Returns the bytes freed. */
     fun clear(): Long {
         clears++ // a read finishing after this is not kept (see download)

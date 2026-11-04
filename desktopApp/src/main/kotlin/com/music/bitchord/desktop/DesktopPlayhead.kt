@@ -54,6 +54,23 @@ internal class DesktopPlayhead {
         return (segment.sourceUs + (frame - segment.frame).coerceAtLeast(0L) * segment.usPerFrame).toLong()
     }
 
+    /**
+     * Fork: from [frame] on, every frame plays [deltaUs] further into the source — the other version of
+     * the song taken over (ForkVersionSwitch), whose timeline is the old one's shifted. Later segments
+     * move with it, so the rate changes already recorded for frames still queued keep their place.
+     */
+    fun forkShift(frame: Long, deltaUs: Long) {
+        if (deltaUs == 0L || segments.isEmpty()) return
+        val base = segments.lastOrNull { it.frame <= frame } ?: segments.first()
+        val shifted = Segment(frame, peek(frame) + deltaUs.toDouble(), base.usPerFrame)
+        val before = segments.filter { it.frame < frame }
+        val after = segments.filter { it.frame > frame }.map { Segment(it.frame, it.sourceUs + deltaUs, it.usPerFrame) }
+        segments.clear()
+        segments.addAll(before)
+        segments.addLast(shifted)
+        segments.addAll(after)
+    }
+
     private companion object {
         const val MAX_SEGMENTS = 1_024
     }

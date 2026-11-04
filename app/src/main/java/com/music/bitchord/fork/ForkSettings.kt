@@ -141,6 +141,58 @@ object ForkSettings {
         prefs.edit().putBoolean(KEY_CROSSFADE_ON_SKIP, value).apply()
     }
 
+    /**
+     * What a backup carries ([ForkBackup]): the switches, not the device's state. Offline mode is
+     * left out (it describes this phone's network right now), and so is the one-off canvas flag.
+     */
+    private val BACKED_UP = listOf(
+        KEY_CROSSFADE_ON_SKIP, KEY_BACKDROP_CLIPS, KEY_ANIMATED_COVERS, KEY_NAVIDROME_SCROBBLE,
+        KEY_NAVIDROME_HOME_SHELVES, KEY_CLIP_CACHE_MB, KEY_NAVIDROME_YT_HISTORY, KEY_DOWNLOAD_ON_MOBILE,
+        KEY_PRELOAD_SONGS,
+    )
+
+    /** The stored values of [BACKED_UP], typed as the preference file holds them. */
+    internal fun exportForBackup(): Map<String, Any?> =
+        if (!this::prefs.isInitialized) emptyMap() else prefs.all.filterKeys { it in BACKED_UP }
+
+    /** Replaces [BACKED_UP] with [values] (a key left out goes back to its default) and re-reads them. */
+    internal fun importFromBackup(values: Map<String, Any?>) {
+        if (!this::prefs.isInitialized) return
+        prefs.edit().apply {
+            BACKED_UP.forEach { key ->
+                when (val value = backupValue(key, values[key])) {
+                    is Boolean -> putBoolean(key, value)
+                    is Int -> putInt(key, value)
+                    else -> remove(key)
+                }
+            }
+        }.commit()
+        _crossfadeOnSkip.value = prefs.getBoolean(KEY_CROSSFADE_ON_SKIP, true)
+        _backdropClips.value = prefs.getBoolean(KEY_BACKDROP_CLIPS, true)
+        _animatedCovers.value = prefs.getBoolean(KEY_ANIMATED_COVERS, true)
+        _navidromeScrobble.value = prefs.getBoolean(KEY_NAVIDROME_SCROBBLE, true)
+        _navidromeHomeShelves.value = prefs.getBoolean(KEY_NAVIDROME_HOME_SHELVES, true)
+        _clipCacheMb.value = prefs.getInt(KEY_CLIP_CACHE_MB, DEFAULT_CLIP_CACHE_MB)
+        _navidromeYouTubeHistory.value = prefs.getBoolean(KEY_NAVIDROME_YT_HISTORY, false)
+        _downloadOnMobile.value = prefs.getBoolean(KEY_DOWNLOAD_ON_MOBILE, false)
+        _preloadSongs.value = prefs.getInt(KEY_PRELOAD_SONGS, 0)
+        ForkClipCache.applyLimit(_clipCacheMb.value)
+    }
+
+    /**
+     * [value] from a backup if it is what [key] holds here, else null (the key goes back to its
+     * default). A backup is a file that is copied and edited: an Int under a switch's key, stored as
+     * is, made every later `getBoolean` throw, in `init` too, so the app crashed on each start; and
+     * a count outside the Settings choices (a 10 000-song pre-load, a negative cache) has no row to
+     * set it back.
+     */
+    internal fun backupValue(key: String, value: Any?): Any? = when (key) {
+        KEY_CLIP_CACHE_MB -> (value as? Int)?.takeIf { it in CLIP_CACHE_CHOICES_MB }
+        KEY_PRELOAD_SONGS -> (value as? Int)?.takeIf { it in PRELOAD_CHOICES }
+        in BACKED_UP -> value as? Boolean
+        else -> null
+    }
+
     private const val KEY_CROSSFADE_ON_SKIP = "crossfade_on_skip"
     private const val KEY_BACKDROP_CLIPS = "backdrop_clips"
     private const val KEY_ANIMATED_COVERS = "animated_covers"

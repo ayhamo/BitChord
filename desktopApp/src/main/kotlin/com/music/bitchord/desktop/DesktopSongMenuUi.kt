@@ -377,6 +377,7 @@ internal fun DesktopSongMenu(
             )
             DesktopMenuDivider()
         }
+        ForkVersionRow(song, onDismiss) // fork: Convert to video / audio, under the quality row as on the phone
 
         if (signedIn && !isOffline) {
             DesktopMenuRow(
@@ -420,6 +421,7 @@ internal fun DesktopSongMenu(
                 onClick = onDownload,
             )
         }
+        ForkRemoveRows(song, onDismiss) // fork: Remove from cache / Remove from history, after Download as on the phone
         if (!com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(song.videoId)) DesktopMenuRow(Icons.Rounded.Radio, if (com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(song.videoId)) "Start radio (Instant Mix)" else DesktopStrings["start_radio", "Start radio"], onClick = onStartRadio)
         DesktopMenuRow(Icons.AutoMirrored.Rounded.PlaylistPlay, DesktopStrings["play_next", "Play next"], onClick = onPlayNext)
         DesktopMenuRow(Icons.AutoMirrored.Rounded.QueueMusic, DesktopStrings["add_to_queue", "Add to queue"], onClick = onAddToQueue)
@@ -697,7 +699,7 @@ private fun DesktopMenuHeader(title: String, onBack: () -> Unit) {
 }
 
 @Composable
-private fun DesktopMenuDivider() {
+internal fun DesktopMenuDivider() { // fork: was private, ForkVersionRow uses it
     HorizontalDivider(
         Modifier.padding(vertical = 5.dp),
         thickness = 0.5.dp,

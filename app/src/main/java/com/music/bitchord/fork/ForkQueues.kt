@@ -186,16 +186,36 @@ object ForkQueues {
         }
     }
 
+    /** The saved queues as their file holds them, for [ForkBackup]. */
+    internal fun exportForBackup(): JsonArray = buildJsonArray { _saved.value.forEach { add(it.toJson()) } }
+
+    /** Replaces the saved queues with [queues] (a backup's), in the file's own shape. */
+    internal fun importFromBackup(queues: JsonArray) {
+        if (!this::file.isInitialized) return
+        // distinctBy: the sheet's list is keyed by id, and a repeated id (an edited file) crashed it.
+        _saved.value = parse(queues).distinctBy { it.id }.take(MAX)
+        persist()
+    }
+
     private fun read(): List<Saved> = runCatching {
         if (!file.isFile) return emptyList()
-        json.parseToJsonElement(file.readText()).jsonArray.mapNotNull { element ->
+        parse(json.parseToJsonElement(file.readText()).jsonArray)
+    }.getOrElse {
+        Log.d(TAG, "saved queues: ${it.message}")
+        emptyList()
+    }
+
+    internal fun parse(array: JsonArray): List<Saved> = runCatching {
+        array.mapNotNull { element ->
             val o = element as? JsonObject ?: return@mapNotNull null
+            val songs = (o["songs"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonObject)?.toSong() }
             Saved(
                 id = o.str("id") ?: return@mapNotNull null,
                 name = o.str("name").orEmpty(),
-                songs = (o["songs"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonObject)?.toSong() },
-                index = (o["index"] as? JsonPrimitive)?.intOrNull ?: 0,
-                positionMs = (o["positionMs"] as? JsonPrimitive)?.longOrNull ?: 0L,
+                songs = songs,
+                // Within the songs: a backup's index past them (or a song dropped above) started the queue nowhere.
+                index = ((o["index"] as? JsonPrimitive)?.intOrNull ?: 0).coerceIn(0, (songs.size - 1).coerceAtLeast(0)),
+                positionMs = ((o["positionMs"] as? JsonPrimitive)?.longOrNull ?: 0L).coerceAtLeast(0L),
                 savedAt = (o["savedAt"] as? JsonPrimitive)?.longOrNull ?: 0L,
             )
         }

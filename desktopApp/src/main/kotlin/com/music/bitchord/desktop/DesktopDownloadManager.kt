@@ -43,6 +43,7 @@ object DesktopDownloadManager {
             if (Files.isRegularFile(target) && Files.size(target) > 0L) {
                 return Result.success(song.copy(localUri = target.toUri().toString(), localPath = target.toString()))
             }
+            val forkTags = ForkDownloadTags.start(song) // fork: cover and lyrics looked up while the audio downloads
 
             if (manifest) {
                 // Segments are fetched and joined whole, so there is no partial file to resume.
@@ -57,6 +58,7 @@ object DesktopDownloadManager {
                     ) { done, total -> onProgress(done, total) }
                 }
                 check(Files.size(temporary) > 0L) { "Download failed: nothing was sent" }
+                ForkDownloadTags.write(forkTags, temporary, song) // fork: the phone's tags
                 Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING)
                 return Result.success(song.copy(localUri = target.toUri().toString(), localPath = target.toString()))
             }
@@ -102,6 +104,7 @@ object DesktopDownloadManager {
                 }
             }
             check(Files.size(temporary) > 0L) { "Download failed: nothing was sent" }
+            ForkDownloadTags.write(forkTags, temporary, song) // fork: the phone's tags
             runCatching {
                 Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
             }.getOrElse {

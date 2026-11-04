@@ -14,6 +14,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.platform.LocalDensity // fork
+import androidx.compose.ui.unit.DpSize // fork
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
@@ -27,6 +29,7 @@ import kotlin.math.roundToInt
 import org.jetbrains.compose.resources.painterResource
 
 fun main() {
+    ForkSingleInstance.claimOrExit() // fork: a second start shows the running window and exits
     ForkPortable.install() // fork: the portable folder's own settings store, before anything reads one
     // Before any WebView exists, so the sign-in window can start over with an empty jar.
     DesktopWebCookies.install()
@@ -66,6 +69,7 @@ fun main() {
     DesktopPresence.install()
     ForkDebugBridge.install() // fork: test door, off unless asked for
     ForkNavidrome.install() // fork
+    ForkPaxSenixKey.install() // fork: the PaxSenix API key, before any lyrics are asked for
     desktopMain()
 }
 
@@ -73,7 +77,7 @@ private fun desktopMain() = application {
     // Closing puts the window away rather than ending the process, while there is a tray icon to
     // bring it back from — see [DesktopWindowVisibility].
     val visible by DesktopWindowVisibility.visible.collectAsState()
-    val state = rememberWindowState(width = 1_220.dp, height = 780.dp)
+    val state = ForkWindowState.rememberState(DpSize(1_220.dp, 780.dp), MIN_WINDOW_WIDTH_DP.toInt(), MIN_WINDOW_HEIGHT_DP.toInt()) // fork: was rememberWindowState(width = 1_220.dp, height = 780.dp); the last size and place
     LaunchedEffect(visible) {
         if (visible && state.isMinimized) {
             state.isMinimized = false
@@ -115,6 +119,7 @@ private fun desktopMain() = application {
         LaunchedEffect(composeWindow) {
             DesktopWindowVisibility.attachWindow(composeWindow)
             ForkDebugBridge.attach(composeWindow) // fork
+            ForkWindowState.track(composeWindow) // fork: remembers the size, place and maximized state
             // AWT's default is white, and it is what shows for the frame or two a moved or resized
             // window takes to repaint: a white band along its edges.
             // Not over a transparent window, whose clear background is what the material shows
@@ -130,7 +135,7 @@ private fun desktopMain() = application {
             }
             // AWT measures this in device pixels while Compose's window state is in dp. Keeping
             // the scale in the conversion makes the usable minimum consistent on every display.
-            val transform = composeWindow.graphicsConfiguration.defaultTransform
+            val transform = if (DesktopPlatform.isWindows) java.awt.geom.AffineTransform() else composeWindow.graphicsConfiguration.defaultTransform // fork: Windows' AWT is in logical units already (Desktop Revived 17ecaedb); scaled, a 150% screen opened the window 1.5x too big and a remembered size grew each start
             composeWindow.minimumSize = Dimension(
                 (MIN_WINDOW_WIDTH_DP * transform.scaleX).roundToInt(),
                 (MIN_WINDOW_HEIGHT_DP * transform.scaleY).roundToInt(),
@@ -149,6 +154,7 @@ private fun desktopMain() = application {
             } else if (DesktopPlatform.isMac && DesktopMacFrame.install(composeWindow)) {
                 DesktopWindowBackdrop.apply()
             }
+            if (ForkWindowState.startMaximized && !DesktopWindowsFrame.toggleMaximize()) DesktopWindowMode.toggleMaximized() // fork: maximized again, as it was left
         }
         val actions = remember {
             DesktopWindowActions(
@@ -183,6 +189,7 @@ private fun desktopMain() = application {
         CompositionLocalProvider(
             LocalDesktopWindowActions provides actions,
             LocalDesktopWindowScope provides this,
+            LocalDensity provides ForkUiScale.density(), // fork: the UI scale setting (Desktop Revived 8782585b)
         ) {
             BitChordDesktopApp()
         }

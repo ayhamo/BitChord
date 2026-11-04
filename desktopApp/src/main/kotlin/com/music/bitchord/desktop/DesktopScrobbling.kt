@@ -130,6 +130,18 @@ object DesktopScrobbling {
         if (listenBrainzConfigured) submitListenBrainz(song, "single", activeStartedAtMs, song.durationMillis(), timestamp)
     }
 
+    /**
+     * Fork (Desktop Revived 465c39c4): a video and its catalogue audio are one listened-to song, so a
+     * version switch keeps the Last.fm threshold and reports nothing twice. The timer is paused here and
+     * resumes with the next state, now under the new id.
+     */
+    @Synchronized
+    fun onVersionSwapped(fromVideoId: String, toVideoId: String) {
+        if (activeSongId != fromVideoId) return
+        pauseTimerLocked()
+        activeSongId = toVideoId
+    }
+
     /** Mirrors Android's thresholded scrobble timer and pause/resume semantics. */
     @Synchronized
     fun onPlaybackStateChanged(state: DesktopPlaybackState) {

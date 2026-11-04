@@ -70,6 +70,7 @@ object Backup {
                     PrefValue.of(value)?.let { key to it }
                 }.toMap(),
                 listening = buckets,
+                fork = com.music.bitchord.fork.ForkBackup.export(), // fork: saved queues and the fork's switches
             )
             val text = json.encodeToString(BackupFile.serializer(), file)
             context.contentResolver.openOutputStream(target, "wt")
@@ -104,6 +105,7 @@ object Backup {
             // Shares AppSettings' preference file, so it has already been
             // overwritten by the line above — it just doesn't know yet.
             SearchHistory.reload()
+            com.music.bitchord.fork.ForkBackup.import(file.fork) // fork
             Summary(
                 months = file.listening.size,
                 settings = file.settings.size,
@@ -139,6 +141,7 @@ object Backup {
         val exportedAt: String = "",
         val settings: Map<String, PrefValue> = emptyMap(),
         val listening: List<StoredBucket> = emptyList(),
+        val fork: kotlinx.serialization.json.JsonElement? = null, // fork: ForkBackup's section (ForkBackupFormat); any JSON, so a bad one never refuses the file
     )
 
     /** One preference, with the type it has to be restored as. */

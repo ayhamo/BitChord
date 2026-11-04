@@ -217,6 +217,7 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
         }
 
         val stream = opened.streams(streamIndex)
+        ForkLoudnessTags.read(url, opened, stream) // fork: the file's ReplayGain / R128 tags (ForkLoudness)
         val timeBase = stream.time_base()
         streamTimeBase = timeBase.num().toDouble() / timeBase.den().toDouble()
         streamStartUs = stream.start_time()

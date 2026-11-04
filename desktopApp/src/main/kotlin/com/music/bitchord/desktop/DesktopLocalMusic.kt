@@ -45,6 +45,7 @@ object DesktopLocalMusic {
 
     fun setFolder(path: Path?) {
         DesktopPersistence().saveString(KEY_LOCAL_MUSIC_FOLDER, path?.toAbsolutePath()?.toString().orEmpty())
+        ForkLocalArtwork.clearCache() // fork: the old folder's covers
     }
 
     /** What the Local Music settings row says underneath its title. */
@@ -127,7 +128,7 @@ object DesktopLocalMusic {
             videoId = "local:$identity",
             title = parsed.title,
             artist = parsed.artist,
-            thumbnailUrl = null,
+            thumbnailUrl = ForkLocalArtwork.artworkUri(absolutePath), // fork: was null; embedded or folder cover (Desktop Revived 9a8d8445)
             localUri = absolutePath.toUri().toString(),
             localPath = absolutePath.toString(),
             localDateAddedSeconds = added.epochSecond,

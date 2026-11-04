@@ -190,19 +190,40 @@ internal object ForkQueues {
         }
     }
 
+    /** The saved queues as their file holds them, for [ForkBackup] (the phone's section shape). */
+    internal fun exportForBackup(): JsonArray = buildJsonArray { _saved.value.forEach { add(it.toJson()) } }
+
+    /** Replaces the saved queues with [queues] (a backup's, the phone's or this PC's). */
+    internal fun importFromBackup(queues: JsonArray) {
+        _saved.value = parse(queues).take(MAX)
+        persist()
+    }
+
+    /** The folder the PC keeps its own data files in ([ForkBackup]'s file sits beside this one). */
+    internal val dataFolder: File get() = file.parentFile
+
     private fun read(): List<Saved> = runCatching {
         if (!file.isFile) return emptyList()
-        json.parseToJsonElement(file.readText()).jsonArray.mapNotNull { element ->
+        parse(json.parseToJsonElement(file.readText()).jsonArray)
+    }.getOrElse {
+        DesktopTrackLog.log("saved queues: ${it.message}")
+        emptyList()
+    }
+
+    private fun parse(array: JsonArray): List<Saved> = runCatching {
+        array.mapNotNull { element ->
             val o = element as? JsonObject ?: return@mapNotNull null
+            val songs = (o["songs"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonObject)?.toSong() }
             Saved(
                 id = o.str("id") ?: return@mapNotNull null,
                 name = o.str("name").orEmpty(),
-                songs = (o["songs"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonObject)?.toSong() },
-                index = (o["index"] as? JsonPrimitive)?.intOrNull ?: 0,
-                positionMs = (o["positionMs"] as? JsonPrimitive)?.longOrNull ?: 0L,
+                songs = songs,
+                // A backup's (or a hand-edited file's) index past the end or a negative position: clamped.
+                index = ((o["index"] as? JsonPrimitive)?.intOrNull ?: 0).coerceIn(0, (songs.size - 1).coerceAtLeast(0)),
+                positionMs = ((o["positionMs"] as? JsonPrimitive)?.longOrNull ?: 0L).coerceAtLeast(0L),
                 savedAt = (o["savedAt"] as? JsonPrimitive)?.longOrNull ?: 0L,
             )
-        }
+        }.distinctBy { it.id } // the list is keyed by id: a repeated one crashed it
     }.getOrElse {
         DesktopTrackLog.log("saved queues: ${it.message}")
         emptyList()

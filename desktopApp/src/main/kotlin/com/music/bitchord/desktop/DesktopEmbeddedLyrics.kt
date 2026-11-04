@@ -77,7 +77,7 @@ internal object DesktopEmbeddedLyrics {
             head.startsWith(FLAC_MAGIC) -> flac(head)
             head.startsWith(MATROSKA_MAGIC) -> matroska(head)
             head.isMp4() -> mp4(head)
-            else -> null
+            else -> ForkId3Tagger.lyrics(head) ?: ForkOggTagger.lyrics(head) // fork: the PC's MP3 and Ogg downloads (was null)
         }
         return found?.takeIf(String::isNotBlank)
     }

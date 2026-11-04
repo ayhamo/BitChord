@@ -107,6 +107,8 @@ internal fun DesktopLyricsSourcesDialog(
             onClick = { onPrioritizeSyllables(!prioritizeSyllables) },
         )
         DesktopCardRule()
+        ForkPaxSenixKeyRow() // fork: the phone's PaxSenix API key row
+        DesktopCardRule() // fork
         Row(Modifier.fillMaxWidth().padding(horizontal = panelInset(12.dp), vertical = 6.dp)) {
             TextButton(onClick = onReset) { Text(DesktopStrings["reset_to_default", "Reset to default"], color = DesktopSecondary) }
             Spacer(Modifier.weight(1f))

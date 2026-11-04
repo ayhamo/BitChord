@@ -156,6 +156,8 @@ internal fun ForkAppleArtistBanner(
     height: Dp,
     fallbackUrl: String?,
     modifier: Modifier = Modifier,
+    /** The artist's handwritten signature (ForkArtistSignatures): in the name's place when Apple has no title logo. */
+    signature: ForkArtistSignature? = null,
 ) {
     val tint = ForkArtistHeader.pageTint(art)
     BoxWithConstraints(modifier.fillMaxWidth().height(height)) {
@@ -172,6 +174,8 @@ internal fun ForkAppleArtistBanner(
                 ),
             ),
         )
+        // The phone's order: Apple's logo, else the signature, else the name.
+        ForkSignedName(signature.takeIf { art.logoUrl == null }, name, height) {
         Box(
             Modifier
                 .align(Alignment.BottomStart)
@@ -200,6 +204,7 @@ internal fun ForkAppleArtistBanner(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+        }
         }
     }
 }
@@ -237,12 +242,14 @@ internal fun LazyListScope.forkNavidromeArtistBanner(browseId: String, songs: Li
     val name = NavidromeArtistInfo.nameOf(browseId) ?: return
     item(key = "fork-apple-artist-banner") {
         val art = rememberForkAppleArt(browseId, name, songs.size) { songs.map(Song::title) } ?: return@item
+        val signature = rememberForkArtistSignature(browseId, name)
         ForkAppleArtistBanner(
             art,
             name,
             height = 300.dp,
             fallbackUrl = null,
             modifier = Modifier.padding(bottom = 28.dp).clip(RoundedCornerShape(12.dp)),
+            signature = signature,
         )
     }
 }

@@ -175,6 +175,9 @@ internal object DesktopPlayerHost : PlayerHost {
     override fun AudioPipelineDialog(hazeState: HazeState, isPlaying: Boolean, onDismiss: () -> Unit) {
         pipelineDialog?.invoke(onDismiss)
     }
+
+    override val lyricsShareAvailable: Boolean get() = true // fork: the phone's lyrics card (ForkLyricsShare)
+    @Composable override fun LyricsShareSheet(hazeState: HazeState, request: com.music.bitchord.ui.player.LyricsShareRequest, onDismiss: () -> Unit) = ForkLyricsShareSheet(hazeState, request, onDismiss) // fork
 }
 
 /**
@@ -189,9 +192,9 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
     override val audioQualityWifi = MutableStateFlow(AudioQuality.LOSSLESS)
     override val canvasOverCellular = MutableStateFlow(true)
     override val fullBleedArtwork = MutableStateFlow(false)
-    override val hideSongStatus = MutableStateFlow(false)
-    override val showQueueHistory = MutableStateFlow(false)
-    override val hideVolumeBar = MutableStateFlow(false)
+    override val hideSongStatus: StateFlow<Boolean> get() = ForkPlayerSettings.hideSongStatus // fork: was MutableStateFlow(false); its Settings row
+    override val showQueueHistory: StateFlow<Boolean> get() = ForkPlayerSettings.showQueueHistory // fork: was MutableStateFlow(false); its Settings row
+    override val hideVolumeBar: StateFlow<Boolean> get() = DesktopAppearanceSettings.hideVolumeBar // fork: was MutableStateFlow(false), so the row did nothing
     // A desktop window has no status bar to hide.
     override val hideStatusBar = MutableStateFlow(false)
     override val lastPlayerScreen = MutableStateFlow(
@@ -209,8 +212,8 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
     override val meteredConnection = MutableStateFlow<Boolean?>(false)
     override val preferUsbDac = MutableStateFlow(false)
     override val prioritizeSpotifyCanvas = MutableStateFlow(false)
-    override val reduceAnimation = MutableStateFlow(false)
-    override val reduceDynamicBlur = MutableStateFlow(false)
+    override val reduceAnimation: StateFlow<Boolean> get() = DesktopAppearanceSettings.reduceAnimation // fork: was MutableStateFlow(false)
+    override val reduceDynamicBlur: StateFlow<Boolean> get() = DesktopAppearanceSettings.reduceDynamicBlur // fork: was MutableStateFlow(false), so the row did nothing
     override val showNerdStats = MutableStateFlow(false)
     override val smartAnalysis = MutableStateFlow(SmartAnalysis())
     override val smartFadeEnabled = MutableStateFlow(false)
@@ -221,14 +224,14 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
     // progress are written by the engine's audio thread as the phone's CrossfadeController writes
     // them (ForkAutomixReporter, ForkAutomixReport.kt).
     override val streamCeilingOverride = MutableStateFlow<AudioQuality?>(null)
-    override val showListenTogetherButton = MutableStateFlow(true)
+    override val showListenTogetherButton: StateFlow<Boolean> get() = ForkPlayerSettings.showListenTogetherButton // fork: was MutableStateFlow(true); its row, the phone's default (off)
     override val automixDetail = MutableStateFlow<String?>(null)
     override val smartMixView = MutableStateFlow<com.music.bitchord.data.settings.MixTransitionView?>(null)
     override val smartMixProgress = MutableStateFlow(0f)
     override val smartTransitionWindow = MutableStateFlow<TransitionWindow?>(null)
-    override val spotifyCanvasAutoHide = MutableStateFlow(false) // fork: was true; the controls stay until tapped away, the phone's default
+    override val spotifyCanvasAutoHide: StateFlow<Boolean> get() = ForkPlayerSettings.spotifyCanvasAutoHide // fork: was true, then false; its row, off by default as the phone's fork has it
     override val syncedLyrics = MutableStateFlow(true)
-    override val translationLanguage = MutableStateFlow("")
+    override val translationLanguage: StateFlow<String> get() = ForkPlayerSettings.translationLanguage // fork: was MutableStateFlow(""), so the row did nothing
     override val versionAlignmentInProgress = MutableStateFlow(false)
 
     override fun setLastPlayerScreen(value: LastPlayerScreen) {

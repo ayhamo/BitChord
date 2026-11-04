@@ -96,6 +96,14 @@ internal fun ForkNavidromeSettingsGroup() {
             homeShelves,
             ForkNavidromeSettings::setHomeShelves,
         )
+        // The phone's row, after "Navidrome on Home"; the same switch as the Navidrome page's.
+        val history by ForkYouTubeHistory.enabled.collectAsState()
+        SettingsToggle(
+            "Navidrome plays in YouTube history",
+            "Songs you play from your server count on YouTube Music too (signed in), so its recommendations learn from them",
+            history,
+            ForkNavidrome::setYouTubeHistory,
+        )
         // The phone's row: a click moves to the next count offered.
         val preload by ForkNavidromeSettings.preloadSongs.collectAsState()
         val choices = ForkNavidromeSettings.PRELOAD_CHOICES

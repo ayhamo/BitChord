@@ -107,7 +107,7 @@ internal object ForkNavidrome {
         NavidromeLyrics.init(DesktopMediaCache.directory.resolve("navidrome_lyrics").toFile())
         ForkYouTubeHistory.init(PrefsStore("com/music/bitchord/navidrome_yt_history", sealed = emptySet()))
         NavidromePlatform.onSong = ForkYouTubeHistory::remember
-        ForkYouTubeHistory.enabled.value = settings.string(KEY_YT_HISTORY) != "off"
+        ForkYouTubeHistory.enabled.value = settings.string(KEY_YT_HISTORY) != "off" // on until switched off: the owner asked for this sync on the PC (the phone's default is off)
         ForkCanvasSwitch.backdrops.value = settings.string(KEY_BACKDROPS) != "off"
         ForkCanvasSwitch.covers.value = settings.string(KEY_COVERS) != "off"
         ForkNavidromeSettings.install()

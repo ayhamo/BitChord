@@ -217,6 +217,8 @@ class DesktopPlaybackEngine(
         class ForkSkip(val song: Song, val track: Track?, val fadeSeconds: Int, val ticket: Any) : Command
         /** fork: a dead or stalled deck's replacement, opened at the heard position; see [forkRequestRecovery]. */
         class ForkRecovered(val failed: Track, val replacement: Track?, val reason: String, val ticket: Any) : Command
+        /** fork: the song's other version (video / audio) taken over at the matching moment; see [forkSwitchVersion]. */
+        class ForkVersion(val fromId: String, val track: Track, val map: (Long) -> Long, val ack: kotlinx.coroutines.CompletableDeferred<Boolean>) : Command
         data object ClearUpcoming : Command
         data object Reconfigure : Command
         data object Flush : Command
@@ -257,6 +259,7 @@ class DesktopPlaybackEngine(
         priorFailure: Throwable? = null,
     ) {
         forkSkipTicket = null // fork: whatever a skip was still opening is no longer wanted
+        forkVersionLeft = null // fork: a song asked for by name is wanted, whichever version it is
         resolveJob?.cancel()
         nextResolveJob?.cancel()
         upgradeJob?.cancel()
@@ -324,6 +327,7 @@ class DesktopPlaybackEngine(
     /** Opens a decoder on [stream], off the audio thread. */
     private suspend fun openTrack(song: Song, stream: DesktopStream, startAtMs: Long, forkInstantOnly: Boolean = false): Result<Track> = // fork: forkInstantOnly
         withContext(Dispatchers.IO) {
+            ForkSongCache.noteStream(song.videoId, stream.url) // fork: which song the kept windows belong to ("Remove from cache")
             val decoder = DesktopAudioDecoder()
             decoder.open(
                 url = stream.url,
@@ -601,7 +605,7 @@ class DesktopPlaybackEngine(
             analyzer.focusOn(_state.value.song?.videoId, song.videoId) // fork (Desktop Revived a5603aa5)
             analyzer.request(song, local, song.durationText.durationSeconds())
         }
-        if (local == null && DesktopMusicSources.mayServeFromAddon(song)) {
+        if (local == null && (DesktopMusicSources.mayServeFromAddon(song) || ForkDirectSource.holdsNext())) { // fork: Direct Source Stream holds every next song
             // Android does not read an addon's track ahead; it is asked for a stream only once the
             // track is about to play. Held here and armed shortly before the transition — see
             // [armAddonUpcoming].
@@ -788,6 +792,8 @@ class DesktopPlaybackEngine(
      */
     private var equalizer = DesktopEqualizer()
     private var equalizerIncoming = DesktopEqualizer()
+    private var forkLoudness = ForkLoudnessStage() // fork: loudness normalization per deck, after its equaliser (ForkLoudness)
+    private var forkLoudnessIncoming = ForkLoudnessStage() // fork
     private var silence: DesktopSilenceSkipper? = null
 
     /** The playing track's heard position, on the sink's played-frame count; see [play]. */
@@ -965,6 +971,7 @@ class DesktopPlaybackEngine(
         // Widened first, whether or not a mix is running, then equalised.
         widen(spatial, track, block, count)
         equalise(equalizer, block, count)
+        forkLoudness.process(block, count, sink.format.channels, sink.format.sampleRate, track.song, track.stream.url) // fork
         if (fadeRemaining <= 0 || incoming == null) return block to count
 
         if (mixed.size < count) mixed = FloatArray(count)
@@ -976,6 +983,7 @@ class DesktopPlaybackEngine(
         if (other != null) {
             widen(spatialIncoming, incoming, other, otherCount)
             equalise(equalizerIncoming, other, otherCount)
+            forkLoudnessIncoming.process(other, otherCount, sink.format.channels, sink.format.sampleRate, incoming.song, incoming.stream.url) // fork
         }
         val channels = sink.format.channels.coerceAtLeast(1)
         val plan = activePlan
@@ -1248,6 +1256,7 @@ class DesktopPlaybackEngine(
         equalizer = promoted
         // Whichever is now idle starts the next incoming track clean.
         equalizerIncoming.reset()
+        forkLoudness = forkLoudnessIncoming.also { forkLoudnessIncoming = forkLoudness.apply { reset() } } // fork: the stages swap with their decks too (ForkLoudness)
         upcoming = null
         nextSong = null
         fadeRemaining = 0
@@ -1374,7 +1383,7 @@ class DesktopPlaybackEngine(
                     startTrack(command.track, command.playWhenReady)
                 }
                 is Command.ForkSelect -> forkSelect(command)
-                is Command.ReplaceCurrent -> replaceCurrent(command.track, command.playWhenReady)
+                is Command.ReplaceCurrent -> if (command.track.song.videoId == forkVersionLeft && current?.song?.videoId != forkVersionLeft) command.track.decoder.close() else replaceCurrent(command.track, command.playWhenReady) // fork: a copy of the version just switched away from (unless that version plays again)
                 is Command.Upcoming -> {
                     forkUpcomingQueuedFor = null // fork
                     upcoming?.decoder?.close()
@@ -1401,6 +1410,7 @@ class DesktopPlaybackEngine(
                 is Command.MixNow -> startSkipMix(command.fadeSeconds)
                 is Command.ForkSkip -> forkStartSkip(command)
                 is Command.ForkRecovered -> forkInstallRecovered(command)
+                is Command.ForkVersion -> forkStartVersion(command) // fork
                 Command.Reconfigure -> { forkLoopBail("the output was reopened", settle = true); reconfigureSink() } // fork
                 Command.ClearUpcoming -> {
                     forkLoopBail("the next song changed", settle = true) // fork
@@ -1544,7 +1554,7 @@ class DesktopPlaybackEngine(
      * Seeking to the write point itself left the next read waiting on that worker, an underrun.
      */
     private fun forkStartWaitingSwap(playing: Track) {
-        forkArmedSwap?.let { if (it.song.videoId != playing.song.videoId) forkDropSwap() }
+        forkArmedSwap?.let { if (it.song.videoId != playing.song.videoId && it !== forkVersion?.track) forkDropSwap() } // fork: a version switch's deck is another id on purpose
         val track = forkWaitingSwap ?: return
         if (track.song.videoId != playing.song.videoId) {
             forkDropSwap()
@@ -1562,6 +1572,7 @@ class DesktopPlaybackEngine(
 
     /** Closes any pending swap, except [keep] (the track being started from it). */
     private fun forkDropSwap(keep: Track? = null) {
+        forkVersion?.takeIf { it.track !== keep }?.let { forkVersion = null; it.ack.complete(false) } // fork: a version switch dropped with it
         listOfNotNull(forkSwap, forkArmedSwap, forkWaitingSwap).filter { it !== keep }.forEach { it.decoder.close() }
         forkSwap = null
         forkArmedSwap = null
@@ -1572,12 +1583,13 @@ class DesktopPlaybackEngine(
     private fun forkSwapBeforeSeek() {
         val playing = current ?: return forkDropSwap()
         val mixing = forkSwap
-        if (mixing != null && mixing.song.videoId == playing.song.videoId) {
+        if (mixing != null && (mixing.song.videoId == playing.song.videoId || mixing === forkVersion?.track)) { // fork: a version switch mid-cross is taken too, or its deck kept crossing in at the old place
             forkFinishSwap()
             return
         }
         val armed = forkArmedSwap
         forkArmedSwap = null
+        if (armed != null && armed === forkVersion?.track) { forkVersionCut(armed); return } // fork: a version switch is taken at once, then seeked
         if (armed != null && forkWaitingSwap == null && armed.song.videoId == playing.song.videoId) {
             forkWaitingSwap = armed
         } else {
@@ -1623,6 +1635,7 @@ class DesktopPlaybackEngine(
         if (!track.decoder.forkHasSamples() || lateUs > FORK_SWAP_LATE_US) {
             if (lateUs <= FORK_SWAP_LATE_US) return
             forkArmedSwap = null
+            if (track === forkVersion?.track) { forkVersionCut(track); return } // fork: a version switch is not re-armed but cut over
             if (forkArmTries >= FORK_SWAP_TRIES) {
                 DesktopTrackLog.log("better copy of '${track.song.title}' never caught up; staying on what plays")
                 track.decoder.close()
@@ -1633,11 +1646,13 @@ class DesktopPlaybackEngine(
             return
         }
         // Lined up on where the copy's stream really starts, not on where it was asked to (ForkCueCorrection).
-        val fromUs = ForkCueCorrection.swapStart(forkArmedAtUs, track.decoder.forkLandedUs)
+        val shiftUs = if (track === forkVersion?.track) forkVersionShiftUs else 0L // fork: a version switch's deck runs on its own timeline
+        val fromUs = ForkCueCorrection.swapStart(forkArmedAtUs, track.decoder.forkLandedUs?.minus(shiftUs)) // fork: ?.minus(shiftUs)
         if (fromUs > atUs) return
         if (atUs - fromUs > FORK_SWAP_LEAD_US + FORK_SWAP_LATE_US) {
             DesktopTrackLog.log("better copy of '${track.song.title}' landed ${(atUs - fromUs) / 1000} ms back; staying on what plays")
             forkArmedSwap = null
+            if (track === forkVersion?.track) { forkVersionCut(track); return } // fork
             track.decoder.close()
             return
         }
@@ -1661,12 +1676,136 @@ class DesktopPlaybackEngine(
         val old = current
         current = track
         if (old !== track) old?.decoder?.close()
+        if (forkFinishVersion(track)) return // fork: a version switch also moves the clock and the song
         _state.update {
             it.copy(
                 streamFormat = track.decoder.measuredFormat ?: track.stream.format,
                 streamSourceId = track.stream.sourceId,
             )
         }
+    }
+
+    // ---- fork: switching between a song's video and audio versions (ForkVersionSwitch) -----------
+
+    /** The version switch crossing in now, armed or mixing; audio thread only. */
+    private class ForkVersionRun(val fromId: String, val track: Track, val ack: kotlinx.coroutines.CompletableDeferred<Boolean>)
+    private var forkVersion: ForkVersionRun? = null
+    /** The other version's time minus this one's at the armed point: what the clock moves by at the hand-over. */
+    private var forkVersionShiftUs = 0L
+    /** The id a switch went away from, whose late quality copy must not cut back to it. */
+    @Volatile private var forkVersionLeft: String? = null
+
+    /**
+     * The other version of the playing song, opened at [map] of where the song is, taken over by the
+     * audio thread with the quality upgrade's 200 ms cross (the phone crosses a version swap in 550 ms
+     * on its two players; here the cross is the upgrade's, whose arming lines both decks up) or, where
+     * that can't run (paused, another speed, Skip silence, a stretch still easing out), cut over at the
+     * heard moment. Refused mid-mix, as the phone defers it while Automix is transitioning. True once
+     * the switch is heard; the queue and history follow it then ([ForkVersionSwitch]).
+     */
+    internal suspend fun forkSwitchVersion(fromId: String, target: Song, live: DesktopLiveResolution, map: (Long) -> Long): Boolean {
+        val shown = _state.value
+        if (shown.song?.videoId != fromId) { live.pendingSubstitute?.cancel(); return false }
+        val track = openTrack(target, live.stream, map(shown.positionMs.coerceAtLeast(0L)).coerceAtLeast(0L)).getOrElse {
+            DesktopTrackLog.log("version switch: could not open '${target.title}': ${it.message}")
+            live.pendingSubstitute?.cancel()
+            return false
+        }
+        val ack = kotlinx.coroutines.CompletableDeferred<Boolean>()
+        commands += Command.ForkVersion(fromId, track, map, ack)
+        val taken = try { ack.await() } catch (cancelled: kotlinx.coroutines.CancellationException) { ack.complete(false); throw cancelled }
+        if (taken) {
+            upgradeJob?.cancel()
+            searchingBetterFor = null
+            live.pendingSubstitute?.let { watchForUpgrade(target, it) }
+        } else {
+            live.pendingSubstitute?.cancel()
+        }
+        return taken
+    }
+
+    private fun forkStartVersion(command: Command.ForkVersion) {
+        val playing = current
+        val track = command.track
+        if (playing == null || playing.song.videoId != command.fromId || command.ack.isCompleted || forkMixing()) {
+            DesktopTrackLog.log("version switch refused: ${if (forkMixing()) "a mix is running" else "the song moved on"}")
+            track.decoder.close()
+            command.ack.complete(false)
+            return
+        }
+        if (forkLoopRun != null) forkLoopCancel("the song switched versions") // armed, not yet heard: it was built on the other cut
+        forkDropSwap() // a better copy of the version being left is stale
+        val canCross = !paused && sink.isOpen && sink.format.sampleRate > 0 &&
+            track.decoder.outputFormat.channels == sink.format.channels &&
+            playbackSpeed == 1f && !skipSilenceEnabled && playing.tempo == null
+        forkVersion = ForkVersionRun(command.fromId, track, command.ack)
+        if (!canCross) {
+            forkVersionCut(track, command.map)
+            return
+        }
+        val atUs = playhead.peek(framesWritten) + FORK_SWAP_LEAD_US
+        val targetUs = (command.map(atUs / 1_000) * 1_000).coerceAtLeast(0L)
+        track.decoder.seek(targetUs)
+        track.startUs = targetUs
+        forkVersionShiftUs = targetUs - atUs
+        forkVersionMap = command.map
+        forkArmedSwap = track
+        forkArmedAtUs = atUs
+        forkArmTries = FORK_SWAP_TRIES
+        DesktopTrackLog.log("version switch: '${playing.song.title}' -> '${track.song.title}', ${atUs / 1000} ms -> ${targetUs / 1000} ms")
+    }
+
+    private var forkVersionMap: (Long) -> Long = { it }
+
+    /** The playing deck's stream and the quality in force, for the switch's measurement and resolve. */
+    internal fun forkPlayingStream(songId: String): DesktopStream? = current?.takeIf { it.song.videoId == songId }?.stream
+    internal val forkQuality: String get() = audioQuality
+
+    /** The switch as a cut: [track] re-cued to the heard moment, then started as a replaced deck is. */
+    private fun forkVersionCut(track: Track, map: (Long) -> Long = forkVersionMap) {
+        val run = forkVersion?.takeIf { it.track === track } ?: return track.decoder.close()
+        val heardUs = playhead.peek(sink.framesPlayed())
+        val targetUs = (map(heardUs / 1_000) * 1_000).coerceAtLeast(0L)
+        track.decoder.seek(targetUs)
+        track.startUs = targetUs
+        forkVersion = null
+        // replaceCurrent's own cut-over, without its upgrade holds (they keep a copy of the same song)
+        sink.flush()
+        framesWritten = sink.framesPlayed()
+        activePlan = null
+        transitionEcho = null
+        transitionBeatRepeat = null
+        transitionReverb = null
+        transitionTexture = null
+        beatRepeatActive = false
+        beatRepeatLatched = false
+        reverbActive = false
+        textureActive = false
+        outgoingFilter.open()
+        incomingFilter.open()
+        forkVersionLeft = run.fromId
+        ForkVersionSwitch.onEngineSwitched(run.fromId, track.song)
+        startTrack(track, playWhenReady = !paused)
+        DesktopTrackLog.log("version switch: cut over to '${track.song.title}' at ${targetUs / 1000} ms")
+        run.ack.complete(true)
+    }
+
+    /** From [forkFinishSwap]: the crossed-in deck is the other version, so the song and its clock change too. */
+    private fun forkFinishVersion(track: Track): Boolean {
+        val run = forkVersion?.takeIf { it.track === track } ?: return false
+        forkVersion = null
+        forkVersionLeft = run.fromId
+        // From the frame being heard: what is still queued is mostly the cross, and the clock
+        // shouldn't run on in the old version's time for the length of the queue and then jump.
+        playhead.forkShift(sink.framesPlayed(), forkVersionShiftUs)
+        forkLoudness.follow(track.song.videoId) // the cross was levelled at the old version's gain: glide, no step
+        activePlan = null
+        ForkVersionSwitch.onEngineSwitched(run.fromId, track.song)
+        publishTrack(track, isPlaying = !paused, positionUs = playhead.peek(sink.framesPlayed()))
+        requestAnalysisAround(track)
+        DesktopTrackLog.log("version switch: crossed into '${track.song.title}'")
+        run.ack.complete(true)
+        return true
     }
 
     private fun startTrack(track: Track, playWhenReady: Boolean) {
@@ -2091,7 +2230,7 @@ class DesktopPlaybackEngine(
         } else {
             duration - transitionSecondsFor(song) * 1_000L
         }
-        if (startMs - positionMs > ADDON_ARM_LEAD_MS) return
+        if (startMs - positionMs > ForkDirectSource.armLeadMs(ADDON_ARM_LEAD_MS)) return // fork: Direct Source Stream's 25 s window
         // Whichever of this thread and a newer [prepareNext] gets there first owns it.
         if (!awaitingArm.compareAndSet(song, null)) return
         DesktopTrackLog.log(
@@ -2408,7 +2547,7 @@ class DesktopPlaybackEngine(
             if (other != null) {
                 val got = incomingReadCount
                 for (i in 0 until frames) {
-                    val gain = run.inGain(mf + i)
+                    val gain = run.inGain(mf + i) * run.inLevel // fork: * inLevel (ForkLoudness)
                     val l = 2 * i
                     if (l < got) block[l] += other[l] * gain
                     if (l + 1 < got) block[l + 1] += other[l + 1] * gain
@@ -2424,6 +2563,7 @@ class DesktopPlaybackEngine(
     private fun forkLoopWrite(track: Track, block: FloatArray, count: Int) {
         widen(spatial, track, block, count)
         equalise(equalizer, block, count)
+        forkLoudness.process(block, count, sink.format.channels, sink.format.sampleRate, track.song, track.stream.url) // fork: ForkLoudness
         play(track, block, count)
     }
 

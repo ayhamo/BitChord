@@ -75,8 +75,7 @@ internal object DesktopAppUiHost : AppUiHost {
         _homeRecentsViewType.value = value
     }
 
-    /** Nothing is pinned here: the desktop has no pin action to put anything first. */
-    override val pinnedPlaylists: StateFlow<List<String>> = MutableStateFlow(emptyList())
+    override val pinnedPlaylists: StateFlow<List<String>> get() = ForkPins.pinned // fork: was always empty; pinned from a playlist page's "More" (ForkPins)
 
     private val _librarySort = MutableStateFlow(
         runCatching { LibrarySort.valueOf(persistence.string(KEY_LIBRARY_SORT, LibrarySort.DEFAULT.name)) }

@@ -33,7 +33,7 @@ internal object ForkYouTubeHistory {
     private const val MISS_MS = 7L * 24 * 60 * 60 * 1000
 
     /** The switch on the Navidrome page, saved by [ForkNavidrome]. */
-    val enabled = MutableStateFlow(true)
+    val enabled = MutableStateFlow(true) // on by default on the PC at the owner's word (the phone's is off); set from the saved switch by ForkNavidrome.install
 
     private lateinit var saved: NavidromePlatform.Store
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)

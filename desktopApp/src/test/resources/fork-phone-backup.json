@@ -1,0 +1,241 @@
+{
+    "app": "bitchord",
+    "version": 1,
+    "versionName": "1.9.0",
+    "exportedAt": "2026-11-04T10:00:00Z",
+    "settings": {
+        "autoplay": {
+            "type": "bool",
+            "value": "false",
+            "values": []
+        },
+        "crossfade_seconds": {
+            "type": "int",
+            "value": "6",
+            "values": []
+        },
+        "playback_speed": {
+            "type": "float",
+            "value": "1.25",
+            "values": []
+        },
+        "repeat_mode": {
+            "type": "int",
+            "value": "2",
+            "values": []
+        },
+        "audio_quality_wifi": {
+            "type": "string",
+            "value": "HIGH",
+            "values": []
+        },
+        "audio_quality_cellular": {
+            "type": "string",
+            "value": "MEDIUM",
+            "values": []
+        },
+        "audio_quality_download": {
+            "type": "string",
+            "value": "STANDARD",
+            "values": []
+        },
+        "smart_fade_enabled": {
+            "type": "bool",
+            "value": "true",
+            "values": []
+        },
+        "shuffle_enabled": {
+            "type": "bool",
+            "value": "true",
+            "values": []
+        },
+        "lyrics_source_order": {
+            "type": "string",
+            "value": "BINI_LYRICS,LRC_RED",
+            "values": []
+        },
+        "lyrics_offset_ms": {
+            "type": "int",
+            "value": "-250",
+            "values": []
+        },
+        "equalizer_bands": {
+            "type": "string",
+            "value": "1.0,0.0,-2.5,0.0,0.0,0.0,3.0",
+            "values": []
+        },
+        "theme_mode": {
+            "type": "string",
+            "value": "LIGHT",
+            "values": []
+        },
+        "pinned_playlists": {
+            "type": "stringSet",
+            "value": null,
+            "values": [
+                "VLPL123"
+            ]
+        },
+        "lastfm_username": {
+            "type": "string",
+            "value": "someone",
+            "values": []
+        },
+        "search_history": {
+            "type": "string",
+            "value": "[{\"id\":\"abc123\",\"title\":\"A Song\",\"subtitle\":\"Song • An Artist\",\"artworkUrl\":\"https://i.ytimg.com/vi/abc123/hq.jpg\",\"entityType\":\"TRACK\",\"timestamp\":1730000000000}]",
+            "values": []
+        }
+    },
+    "listening": [
+        {
+            "version": 1,
+            "month": "2026-10",
+            "tracks": [
+                {
+                    "id": "abc123",
+                    "title": "A Song",
+                    "artist": "An Artist & Friend",
+                    "album": "An Album",
+                    "albumId": "MPREb_1",
+                    "artistId": "UC1",
+                    "art": "https://i.ytimg.com/vi/abc123/hq.jpg",
+                    "ms": 600000,
+                    "plays": 3,
+                    "last": 1730000000000,
+                    "days": {
+                        "2026-10-02": {
+                            "ms": 400000,
+                            "plays": 2
+                        },
+                        "2026-10-03": {
+                            "ms": 200000,
+                            "plays": 1
+                        }
+                    }
+                }
+            ],
+            "artists": [
+                {
+                    "name": "An Artist",
+                    "sub": null,
+                    "art": "https://i.ytimg.com/vi/abc123/hq.jpg",
+                    "id": "UC1",
+                    "ms": 600000,
+                    "plays": 3,
+                    "key": "an artist",
+                    "days": {
+                        "2026-10-02": {
+                            "ms": 400000,
+                            "plays": 2
+                        },
+                        "2026-10-03": {
+                            "ms": 200000,
+                            "plays": 1
+                        }
+                    }
+                }
+            ],
+            "albums": [
+                {
+                    "name": "An Album",
+                    "sub": "An Artist & Friend",
+                    "art": "https://i.ytimg.com/vi/abc123/hq.jpg",
+                    "id": "MPREb_1",
+                    "ms": 600000,
+                    "plays": 3,
+                    "key": "MPREb_1",
+                    "days": {
+                        "2026-10-02": {
+                            "ms": 400000,
+                            "plays": 2
+                        },
+                        "2026-10-03": {
+                            "ms": 200000,
+                            "plays": 1
+                        }
+                    }
+                }
+            ],
+            "hours": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 400000, 200000, 0, 0],
+            "days": {
+                "2": 400000,
+                "3": 200000
+            },
+            "trackDays": {
+                "2026-10-02": {
+                    "ms": 400000,
+                    "plays": 2
+                },
+                "2026-10-03": {
+                    "ms": 200000,
+                    "plays": 1
+                }
+            },
+            "artistDays": {
+                "2026-10-02": {
+                    "ms": 400000,
+                    "plays": 2
+                },
+                "2026-10-03": {
+                    "ms": 200000,
+                    "plays": 1
+                }
+            },
+            "albumDays": {
+                "2026-10-02": {
+                    "ms": 400000,
+                    "plays": 2
+                },
+                "2026-10-03": {
+                    "ms": 200000,
+                    "plays": 1
+                }
+            }
+        }
+    ],
+    "fork": {
+        "settings": {
+            "crossfade_on_skip": {
+                "type": "bool",
+                "value": "false",
+                "values": []
+            },
+            "backdrop_clips": {
+                "type": "bool",
+                "value": "false",
+                "values": []
+            },
+            "preload_songs": {
+                "type": "int",
+                "value": "2",
+                "values": []
+            },
+            "download_on_mobile": {
+                "type": "bool",
+                "value": "true",
+                "values": []
+            }
+        },
+        "savedQueues": [
+            {
+                "id": "1730000000000",
+                "name": "Evening",
+                "index": 0,
+                "positionMs": 42000,
+                "savedAt": 1730000000000,
+                "songs": [
+                    {
+                        "videoId": "abc123",
+                        "title": "A Song",
+                        "artist": "An Artist & Friend",
+                        "thumbnailUrl": "https://i.ytimg.com/vi/abc123/hq.jpg",
+                        "localUri": "content://media/external/audio/media/77",
+                        "sourceHiRes": false,
+                        "isVideo": false
+                    }
+                ]
+            }
+        ]
+    }
+}
