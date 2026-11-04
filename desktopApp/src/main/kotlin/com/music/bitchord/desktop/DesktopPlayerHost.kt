@@ -211,7 +211,7 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
     // A desktop is never on a metered link as far as this app can tell.
     override val meteredConnection = MutableStateFlow<Boolean?>(false)
     override val preferUsbDac = MutableStateFlow(false)
-    override val prioritizeSpotifyCanvas = MutableStateFlow(false)
+    override val prioritizeSpotifyCanvas: StateFlow<Boolean> get() = ForkSpotifyCanvasFirst.prioritized // fork: was MutableStateFlow(false); its row under Spotify Canvas setup
     override val reduceAnimation: StateFlow<Boolean> get() = DesktopAppearanceSettings.reduceAnimation // fork: was MutableStateFlow(false)
     override val reduceDynamicBlur: StateFlow<Boolean> get() = DesktopAppearanceSettings.reduceDynamicBlur // fork: was MutableStateFlow(false), so the row did nothing
     override val showNerdStats = MutableStateFlow(false)

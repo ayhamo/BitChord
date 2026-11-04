@@ -173,6 +173,7 @@ internal object ForkBackup {
         bool("reduce_animation"), bool("reduce_dynamic_blur"), bool("show_listen_together_button"),
         bool("show_nerd_stats"), bool("show_queue_history"), bool("skip_silence"), bool("spatial_audio"),
         bool("spotify_canvas_auto_hide"), bool("synced_lyrics"), text("translation_language"),
+        bool(ForkSpotifyCanvasFirst.KEY), bool(ForkCachedSongs.KEY_SHOWN), // "Prioritize Spotify Canvas", "Show cached songs folder": the phone's keys
         named("last_player_screen", "last_player_screen", listOf("MAIN", "LYRICS", "QUEUE")),
         named("library_sort", "library_sort", com.music.bitchord.data.settings.LibrarySort.entries.map { it.name }),
         // Equaliser: the same names, numbers and comma-joined bands on both.

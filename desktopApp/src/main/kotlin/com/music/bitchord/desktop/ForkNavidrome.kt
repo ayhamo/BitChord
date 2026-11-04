@@ -111,6 +111,7 @@ internal object ForkNavidrome {
         ForkCanvasSwitch.backdrops.value = settings.string(KEY_BACKDROPS) != "off"
         ForkCanvasSwitch.covers.value = settings.string(KEY_COVERS) != "off"
         ForkNavidromeSettings.install()
+        ForkWidePlayerSettings.install() // the player's saved wide layout, before it is drawn
         ForkNavidromeGenres.install()
         ForkPreload.install()
         ForkRadio.install(PrefsStore("com/music/bitchord/navidrome_radio_logos", sealed = emptySet()))

@@ -68,6 +68,7 @@ object DesktopSearchClient {
                 songs = page.songs,
                 continuation = page.continuation,
                 owned = page.owned,
+                forkSuggested = page.suggested, forkDescription = page.description, // fork: the phone's Suggested and About the album (ForkCollectionExtras)
             )
         }
 
@@ -185,6 +186,8 @@ data class DesktopCollection(
      * knew, drawn as a loader until the browse answers.
      */
     val loading: Boolean = false,
+    val forkSuggested: List<Song> = emptyList(), // fork: YouTube's "Suggested" under a playlist (ForkCollectionExtras)
+    val forkDescription: String? = null, // fork: the release's "About" blurb (ForkCollectionExtras)
 ) {
     /** The raw id an edit is addressed to; the browse id carries a `VL` prefix. */
     val playlistId: String get() = browseId.removePrefix("VL")

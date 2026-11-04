@@ -176,13 +176,15 @@ internal object ForkSongCache {
     private val directory get() = DesktopMediaCache.directory.resolve("audio_ranges")
     private val index get() = directory.resolve("songs.index")
 
-    /** From the engine as it opens [videoId] on [url]. */
-    fun noteStream(videoId: String, url: String) {
-        if (url.contains(".googlevideo.com")) urls[url] = videoId
+    /** From the engine as it opens [song] on [url]; the song itself for the Cached songs page ([ForkCachedSongs]). */
+    fun noteStream(song: Song, url: String) {
+        if (url.contains(".googlevideo.com")) urls[url] = song.videoId
+        ForkCachedSongs.noteStream(song, url)
     }
 
     /** From the range reader as it keeps a window of [url] under [key]. */
     fun noteSpan(url: String, key: String) {
+        ForkCachedSongs.noteKept(url)
         val id = urls[url] ?: return
         load()
         if (keys.getOrPut(id) { ConcurrentHashMap.newKeySet() }.add(key)) save()
@@ -192,18 +194,18 @@ internal object ForkSongCache {
         if (song.localUri != null) return false
         if (NavidromeSettings.isNavidromeId(song.videoId)) return ForkPreload.holds(song.videoId.removePrefix(NavidromeSettings.ID_PREFIX))
         load()
-        val held = keys[song.videoId] ?: return false
-        return spans(held).isNotEmpty()
+        val held = keys[song.videoId] ?: return ForkCachedSongs.holds(song.videoId) // the Cached songs index knows streams this one may not (an older songs.index)
+        return spans(held).isNotEmpty() || ForkCachedSongs.holds(song.videoId)
     }
 
     /** Throws away what is kept of [song]; the bytes freed. */
     fun remove(song: Song): Long {
         if (NavidromeSettings.isNavidromeId(song.videoId)) return ForkPreload.remove(song.videoId.removePrefix(NavidromeSettings.ID_PREFIX))
         load()
-        val held = keys.remove(song.videoId) ?: return 0L
-        val freed = spans(held).sumOf { file -> runCatching { Files.size(file).also { Files.deleteIfExists(file) } }.getOrDefault(0L) }
-        save()
-        return freed
+        val held = keys.remove(song.videoId)
+        val freed = held?.let { set -> spans(set).sumOf { file -> runCatching { Files.size(file).also { Files.deleteIfExists(file) } }.getOrDefault(0L) } } ?: 0L
+        if (held != null) save()
+        return freed + ForkCachedSongs.remove(song.videoId) // and its row on the Cached songs page
     }
 
     private fun spans(held: Set<String>) = runCatching {

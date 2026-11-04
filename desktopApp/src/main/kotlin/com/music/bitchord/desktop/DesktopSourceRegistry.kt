@@ -107,7 +107,7 @@ internal object DesktopSourceRegistry {
             get() = config.descriptor()
 
         override suspend fun resolve(song: Song, quality: String?): Result<DesktopStream?> =
-            DesktopStreamClient.resolve(song, youtubeCeiling(quality)).map { it.copy(sourceId = config.id) }
+            ForkCachedSongs.orKept(song) { DesktopStreamClient.resolve(song, youtubeCeiling(quality)) }.map { it.copy(sourceId = config.id) } // fork: a song kept whole in the song cache plays from it offline (ForkCachedSongs)
 
         /** Allows an unavailable module/Jio stream to fall back by identity. */
         override suspend fun matches(song: Song): List<Song> = youTubeMatches(song)

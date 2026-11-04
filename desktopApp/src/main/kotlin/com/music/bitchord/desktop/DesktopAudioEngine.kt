@@ -331,7 +331,7 @@ class DesktopPlaybackEngine(
     /** Opens a decoder on [stream], off the audio thread. */
     private suspend fun openTrack(song: Song, stream: DesktopStream, startAtMs: Long, forkInstantOnly: Boolean = false): Result<Track> = // fork: forkInstantOnly
         withContext(Dispatchers.IO) {
-            ForkSongCache.noteStream(song.videoId, stream.url) // fork: which song the kept windows belong to ("Remove from cache")
+            ForkSongCache.noteStream(song, stream.url) // fork: which song the kept windows belong to ("Remove from cache", the Cached songs page)
             val decoder = DesktopAudioDecoder()
             decoder.open(
                 url = stream.url,

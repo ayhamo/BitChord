@@ -76,8 +76,9 @@ import kotlinx.serialization.json.put
  * The record (`bitchord/fork_playlist_sync.json` in the data folder) is this file's own: the PC's
  * downloads list keeps loose tracks, and only the 200 newest. A record is dropped once every file
  * downloaded for it is gone (the phone's `forgetCollection`, for "a record whose files are
- * already gone"): the PC has no "Delete download" for a whole playlist, and a playlist whose
- * files were all deleted is not one to keep refilling.
+ * already gone"): files deleted one by one, or outside the app, can empty a playlist without
+ * anybody asking for it to be forgotten, and a playlist whose files were all deleted is not one to
+ * keep refilling. A page's or card's "Delete download" forgets its record at once ([forget]).
  */
 internal object ForkPlaylistSync {
 
@@ -219,6 +220,37 @@ internal object ForkPlaylistSync {
             }
             persist()
         }
+    }
+
+    /** The tracks the record for [browseId] names; empty when it is not a followed playlist. */
+    suspend fun tracksOf(browseId: String): Set<String> {
+        val id = syncableBrowseId(browseId) ?: return emptySet()
+        ensureLoaded()
+        return records.value[id]?.videoIds?.toSet().orEmpty()
+    }
+
+    /**
+     * What every record but [browseId]'s names, by track and by file: a release's "Delete download"
+     * leaves those, as the phone's `Downloads.tracksOnlyIn` does (one file can answer to two ids).
+     */
+    suspend fun keptByOthers(browseId: String): Pair<Set<String>, Set<String>> {
+        ensureLoaded()
+        val own = syncableBrowseId(browseId)
+        val others = records.value.values.filter { it.id != own }
+        return others.flatMapTo(HashSet()) { it.videoIds } to others.flatMapTo(HashSet()) { it.files.values }
+    }
+
+    /**
+     * Stops following [browseId], the phone's `forgetCollection` after "Delete download": a playlist
+     * the listener has just removed from the computer is not one to fill again.
+     */
+    suspend fun forget(browseId: String) {
+        val id = syncableBrowseId(browseId) ?: return
+        ensureLoaded()
+        if (records.value[id] == null) return
+        records.update { it - id }
+        _asks.update { it - id }
+        persist()
     }
 
     /**

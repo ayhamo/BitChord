@@ -3,16 +3,22 @@ package com.music.bitchord.desktop
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
+import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.PlaybackSourceType
@@ -28,7 +34,9 @@ import com.music.bitchord.playback.QueueTimeline
 import com.music.bitchord.playback.QueueTimeline.asQueueEntry
 import com.music.bitchord.ui.icons.BitChordIcons
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -58,6 +66,10 @@ internal object ForkCollectionActions {
         val download: (List<Song>) -> Unit,
         /** The window's own scope: a card's fetch has to outlive the Home page that started it. */
         val scope: CoroutineScope,
+        /** The downloads list as the window keeps it: the records carry the file each was saved to. */
+        val downloads: () -> List<Song>,
+        /** The window's per-song "Remove download": deletes the file and drops the record. */
+        val removeDownload: (Song) -> Unit,
     )
 
     @Volatile
@@ -180,6 +192,51 @@ internal object ForkCollectionActions {
         window?.download?.invoke(songs)
     }
 
+    /**
+     * A release's "Delete download", the phone's `Downloads.deleteCollection`: the downloads among
+     * [trackIds], except a track another kept playlist also names (by id or by file), which stays
+     * for that playlist, as the phone's `tracksOnlyIn` keeps it. Each goes through the window's own
+     * per-song removal, so the file, the record and every row's tick go together; then the release
+     * is no longer followed by "Keep playlists updated" (the phone's `forgetCollection`), which
+     * would otherwise fetch its next new track straight back.
+     */
+    suspend fun deleteDownloads(browseId: String, trackIds: Set<String>) {
+        val window = window ?: return
+        val (keptIds, keptFiles) = withContext(Dispatchers.IO) { ForkPlaylistSync.keptByOthers(browseId) }
+        // A page holds only the rows loaded so far: the followed playlist's record and this session's
+        // "Download all" name the rest, which would otherwise stay on disk with nothing tracking them.
+        val all = if (browseId.isEmpty()) trackIds
+        else trackIds + withContext(Dispatchers.IO) { ForkPlaylistSync.tracksOf(browseId) } + requestedOf(browseId)
+        val doomed = forkDownloadsToDelete(all, window.downloads(), keptIds, keptFiles)
+        doomed.forEach(window.removeDownload)
+        if (browseId.isNotEmpty()) {
+            ForkPlaylistSync.forget(browseId)
+            requested.remove(browseId)
+        }
+        DesktopTrackLog.log("delete download: ${doomed.size} of ${trackIds.size} tracks of $browseId removed")
+    }
+
+    /**
+     * Whether a card's "Delete download" is offered without fetching its tracks: something
+     * downloaded that this release is known to hold. The phone asks its record of releases
+     * downloaded whole; the PC keeps one only for playlists ([ForkPlaylistSync], [recorded]), so a
+     * card's own "Download all" this session and a download filed under the album (its id, or its
+     * name with the card's artist) count too. What is deleted is decided again on the click, from
+     * the release's real listing.
+     */
+    fun cardHasDownloads(item: ShelfItem, recorded: Set<String>, downloads: List<Song>): Boolean {
+        val id = item.browseId ?: return false
+        val known = recorded + requested[id].orEmpty()
+        val album = cardType(id) == BrowseType.ALBUM
+        return downloads.any { song ->
+            song.videoId in known || song.albumId == id ||
+                (album && song.albumName.equals(item.title, ignoreCase = true) &&
+                    (song.artist.isBlank() || item.subtitle.contains(song.artist, ignoreCase = true)))
+        }
+    }
+
+    fun requestedOf(browseId: String): Set<String> = requested[browseId].orEmpty()
+
     fun waiting(browseId: String, active: Map<String, DesktopDownloadItem>): Boolean =
         requested[browseId].orEmpty().any { id ->
             when (active[id]?.state) {
@@ -187,6 +244,20 @@ internal object ForkCollectionActions {
                 else -> false
             }
         }
+}
+
+/**
+ * The download records to delete for a release whose tracks are [trackIds]: the page's rows carry no
+ * file, so the window's own records (which do) are the ones handed back. A track [keptIds] or
+ * [keptFiles] names belongs to another kept playlist as well and stays.
+ */
+internal fun forkDownloadsToDelete(
+    trackIds: Set<String>,
+    downloads: List<Song>,
+    keptIds: Set<String>,
+    keptFiles: Set<String>,
+): List<Song> = downloads.filter { song ->
+    song.videoId in trackIds && song.videoId !in keptIds && (song.localPath == null || song.localPath !in keptFiles)
 }
 
 /**
@@ -228,8 +299,49 @@ internal fun ForkCollectionQueueItems(collection: DesktopCollection, songs: List
 }
 
 /**
+ * "Delete download" in an album or playlist page's "More" menu, after "Download all", shown only
+ * while some of the page's loaded rows are downloaded ([downloadedIds], the window's).
+ */
+@Composable
+internal fun ForkDeleteDownloadItem(collection: DesktopCollection, downloadedIds: Set<String>, onDone: () -> Unit) {
+    val ids = remember(collection.songs) { collection.songs.mapTo(HashSet()) { it.videoId } }
+    if (ids.none { it in downloadedIds }) return
+    ForkDeleteDownloadRow(collection.title) {
+        onDone()
+        val window = ForkCollectionActions.window ?: return@ForkDeleteDownloadRow
+        window.scope.launch { ForkCollectionActions.deleteDownloads(collection.browseId, ids) }
+    }
+}
+
+/**
+ * The phone's "Delete download" row: the first click only turns it into the question ("Remove ...
+ * from this device? Tap again to confirm.", in the error colour) and keeps the menu up; the second
+ * acts. Files on disk are the one thing these menus can't bring back by clicking again.
+ */
+@Composable
+internal fun ForkDeleteDownloadRow(title: String, onConfirmed: () -> Unit) {
+    var confirming by remember { mutableStateOf(false) }
+    val error = MaterialTheme.colorScheme.error
+    DropdownMenuItem(
+        text = {
+            if (confirming) {
+                Text(
+                    DesktopStrings.format("delete_download_confirmation", title, fallback = "Remove “%1\$s” from this device? Tap again to confirm."),
+                    color = error,
+                )
+            } else {
+                Text(DesktopStrings["delete_download", "Delete download"])
+            }
+        },
+        leadingIcon = { if (confirming) Icon(Icons.Rounded.Delete, null, tint = error) else Icon(Icons.Rounded.Delete, null) },
+        onClick = { if (confirming) onConfirmed() else confirming = true },
+    )
+}
+
+/**
  * Right-click on a Home card that opens a page: the phone's hold on a card, its whole menu in its
- * order (Play, Shuffle, Play next, Add to queue, Download all, Open, Share, Pin). A card that plays
+ * order (Play, Shuffle, Play next, Add to queue, Download all, Open, Share, Pin, and Delete download
+ * when something of it is known to be downloaded, [ForkCollectionActions.cardHasDownloads]). A card that plays
  * a song still gets the song menu; [content] is handed the call that opens this one.
  *
  * Every row closes the menu first, then fetches the tracks: leaving the menu up over a request it
@@ -331,6 +443,24 @@ internal fun ForkCardMenuHost(content: @Composable (open: (ShelfItem) -> Unit) -
                     )
                 }
                 ForkPinMenuItem(id, type, onDismiss)
+                if (!server && window != null) {
+                    val recorded by produceState(emptySet<String>(), id) { value = withContext(Dispatchers.IO) { ForkPlaylistSync.tracksOf(id) } }
+                    if (ForkCollectionActions.cardHasDownloads(item, recorded, window.downloads())) {
+                        ForkDeleteDownloadRow(item.title) {
+                            val record = recorded // read before the menu (and its state) goes
+                            onDismiss()
+                            window.scope.launch {
+                                // The release's real listing decides; offline (no listing), what
+                                // is known of it here.
+                                val listed = ForkCollectionActions.songsOf(item).getOrNull().orEmpty().mapTo(HashSet()) { it.videoId }
+                                val known = window.downloads()
+                                    .filter { song -> song.videoId in record || song.albumId == id }
+                                    .mapTo(HashSet()) { it.videoId }
+                                ForkCollectionActions.deleteDownloads(id, listed + known + ForkCollectionActions.requestedOf(id))
+                            }
+                        }
+                    }
+                }
             }
         },
     ) { open -> content(open) }

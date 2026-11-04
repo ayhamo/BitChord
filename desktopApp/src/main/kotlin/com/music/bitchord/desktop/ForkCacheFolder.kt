@@ -16,11 +16,10 @@ import java.nio.file.Path
  * ("Show cached songs folder", `show_cache_folder`).
  *
  * The phone's row is a switch that adds a "Cached songs" folder to Library, listing the tracks
- * its `AudioCache` holds. That list is built from the metadata Media3's cache keeps per entry
- * (the track's id, title, artist); the PC's [DesktopMediaCache] keeps nothing but files named by
- * a hash of their URL, so there is no list of songs to show without a record the PC never wrote.
- * What the PC can say is where the files are, so this row names the folder and opens it in the
- * system's file manager (Explorer on Windows).
+ * its `AudioCache` holds. The PC's files carry no song of their own, so that list needed a record
+ * of its own ([ForkCachedSongs], `songs.json` beside the windows); the switch follows this row
+ * ([ForkShowCachedSongsRow]). This row names the folder and opens it in the system's file manager
+ * (Explorer on Windows).
  *
  * The folder is [DesktopMediaCache.directory] whatever the build: the portable app moves
  * `user.home` into its own `data\` folder before anything reads it ([ForkPortable]), so the path
@@ -37,6 +36,7 @@ internal fun ForkCacheFolderRow() {
     ) {
         failed = ForkCacheFolder.open(folder)
     }
+    ForkShowCachedSongsRow() // the phone's "Show cached songs folder" (ForkCachedSongs.kt)
 }
 
 internal object ForkCacheFolder {

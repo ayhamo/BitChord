@@ -167,6 +167,7 @@ internal fun LandscapePlayerLayout(
             val compact = maxHeight < LANDSCAPE_COMPACT_HEIGHT
             val gutter = if (compact) LANDSCAPE_GUTTER_COMPACT else PLAYER_GUTTER
 
+            if (forkWideActive()) ForkWidePlayerColumns(pane, compact, gutter, artwork, actions, mainPane, lyricsPane, queuePane) else // fork: the PC's Layout 2/3 (ForkWideLayout)
             Row(
                 modifier = Modifier
                     .widthIn(max = LANDSCAPE_PLAYER_MAX_WIDTH)

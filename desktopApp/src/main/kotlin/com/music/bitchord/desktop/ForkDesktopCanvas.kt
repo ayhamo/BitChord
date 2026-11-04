@@ -72,6 +72,7 @@ internal object ForkDesktopCanvas {
      */
     suspend fun withBackdrop(playing: Song, shown: CanvasArtwork?): CanvasArtwork? {
         if (shown == null || shown.source.fillsPhone || !ForkCanvasSwitch.backdrops.value) return shown
+        if (ForkSpotifyCanvasFirst.prioritized.value) return shown // Spotify was asked first already (see asksSpotify)
         if (com.music.bitchord.data.navidrome.NavidromeClips.canvasFor(playing) != null) return shown
         val song = com.music.bitchord.data.navidrome.NavidromeCanvasQuery.searchable(playing)
         val backdrop = withContext(Dispatchers.IO) { spotifyFor(song) }
@@ -98,8 +99,14 @@ internal object ForkDesktopCanvas {
         return forkWithBackdrop(first?.toShared(), backdrop?.toShared())
     }
 
+    /**
+     * Not with "Prioritize Spotify Canvas" on (the phone's `asksSpotify`): Spotify was asked first
+     * then, so a first clip from anyone else means Spotify had none, and asking again for a
+     * backdrop would be the same request twice.
+     */
     private fun asksSpotify(first: DesktopCanvasArtwork?): Boolean =
-        first != null && first.source != DesktopCanvasSource.SPOTIFY && ForkCanvasSwitch.backdrops.value
+        first != null && first.source != DesktopCanvasSource.SPOTIFY && ForkCanvasSwitch.backdrops.value &&
+            !ForkSpotifyCanvasFirst.prioritized.value
 
     /** Spotify's backdrop for the song when already found, without asking (null: none, or not asked yet). */
     private fun known(videoId: String): DesktopCanvasArtwork? = synchronized(spotify) { spotify[videoId] }?.artwork

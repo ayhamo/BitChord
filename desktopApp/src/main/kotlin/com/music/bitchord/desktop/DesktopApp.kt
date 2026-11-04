@@ -490,6 +490,7 @@ private enum class DesktopDestination(val id: String, val label: String) {
     DOWNLOADS("downloads", "Downloads"),
     LOCAL_MUSIC("local-music", "Local Music"),
     NAVIDROME("navidrome", "Navidrome"), // fork
+    CACHED_SONGS("cached-songs", "Cached songs"), // fork: the phone's Library folder (ForkCachedSongs)
     SETTINGS("settings", "Settings"),
 }
 
@@ -2248,6 +2249,8 @@ fun BitChordDesktopApp() {
         open = { item -> openShelfItem(item) },
         download = ::downloadAll,
         scope = scope,
+        downloads = { downloads }, // fork: for "Delete download"
+        removeDownload = ::removeDownload, // fork
     )
 
     /** What the phone records for a search hit: the thing picked, not the words typed to find it. */
@@ -2398,7 +2401,8 @@ fun BitChordDesktopApp() {
     }
 
     /** The Library's folder rows: the two folders this computer has, and Spotify once connected. */
-    val libraryLinks = remember(spotifyCanvasCookie.isNotBlank()) {
+    val forkCachedShown by ForkCachedSongs.shown.collectAsState() // fork: Storage's "Show cached songs folder"
+    val libraryLinks = remember(spotifyCanvasCookie.isNotBlank(), forkCachedShown) { // fork: + forkCachedShown
         listOfNotNull(
             LibraryLink(
                 item = ShelfItem(
@@ -2420,6 +2424,7 @@ fun BitChordDesktopApp() {
                 ),
                 icon = Icons.Rounded.Folder,
             ),
+            ForkCachedSongs.link(forkCachedShown), // fork: the phone's "Cached songs", after Local Music as there
             // As on the phone, only while signed in to Spotify in Account & integrations.
             LibraryLink(
                 item = ShelfItem(
@@ -2477,6 +2482,7 @@ fun BitChordDesktopApp() {
         when {
             browseId == LOCAL_DOWNLOADS_ID -> selectDestination(DesktopDestination.DOWNLOADS)
             browseId == LOCAL_MUSIC_ID -> selectDestination(DesktopDestination.LOCAL_MUSIC)
+            browseId == ForkCachedSongs.BROWSE_ID -> selectDestination(DesktopDestination.CACHED_SONGS) // fork
             browseId == SPOTIFY_LIBRARY_ID -> openSpotifyLibrary()
             // Spotify's tracks fill in below, as they are read and matched.
             browseId.startsWith(SPOTIFY_PAGE_PREFIX) -> showCollection(
@@ -2780,14 +2786,14 @@ fun BitChordDesktopApp() {
         if (collectionLoadingMore) return
         collectionLoadingMore = true
         scope.launch {
-            DesktopSearchClient.moreCollectionSongs(token, collection.songs.firstOrNull()?.artist)
-                .onSuccess { (songs, next) ->
+            ForkCollectionExtras.morePage(token) // fork: was DesktopSearchClient.moreCollectionSongs(token, …); keeps the page's suggestions
+                .onSuccess { (songs, next, forkSuggested) -> // fork: + forkSuggested
                     val current = openedCollection
                     if (current != null && current.browseId == collection.browseId) {
                         openedCollection = current.copy(
                             songs = (current.songs + songs).distinctBy(Song::videoId),
                             continuation = next,
-                        )
+                        ).forkWithSuggested(forkSuggested) // fork: suggestions that arrive on a later page
                     }
                 }
                 .onFailure {
@@ -3519,7 +3525,8 @@ fun BitChordDesktopApp() {
                             onOpenPlaybackSource = {
                                 val id = playerSong.playbackSourceId
                                 overlays.nowPlaying = false
-                                if (playerSong.playbackSourceType == PlaybackSourceType.BROWSE && id != null) {
+                                if (id == com.music.bitchord.data.navidrome.NavidromeSettings.BROWSE_ID) selectDestination(DesktopDestination.NAVIDROME) // fork: "Playing from Navidrome" is the server's page, not a YouTube browse id (was a 400 "invalid argument")
+                                else if (playerSong.playbackSourceType == PlaybackSourceType.BROWSE && id != null) {
                                     openAlbum(id)
                                 }
                             },
@@ -4030,6 +4037,7 @@ fun BitChordDesktopApp() {
                                     },
                                     onTestSource = { candidate ->
                                         sourceStatus = sourceStatus + (candidate.id to "Checking source…")
+                                        ForkSourceHints.forget(candidate.id) // fork: the Test's result, not the page's older probe, is the row's line
                                         scope.launch {
                                             val health = if (candidate.kind == DesktopSourceKind.ADDON) {
                                                 DesktopAddonSource.health(candidate)
@@ -4181,6 +4189,7 @@ fun BitChordDesktopApp() {
                             downloadInProgress = downloadInProgress,
                             contentPadding = contentPadding,
                             forkOpenArtist = ::openArtist, // fork
+                            forkAddSuggested = { song -> openedCollection?.let { c -> ForkCollectionExtras.addSuggested(scope, c, song) { change -> openedCollection?.takeIf { it.browseId == c.browseId }?.let { openedCollection = change(it) } } } }, // fork
                         )
                         destination == DesktopDestination.LISTEN_NOW -> ForkCardMenuHost { forkCardMenu -> ForkScrollbarBox(homeListState, Modifier.fillMaxSize(), sharedPagePadding) { HomeScreen( // fork: the overlay scrollbar (PC-Continued e16ed1f8); ForkCardMenuHost, a release card's right-click menu
                             state = ForkDesktopHome.present(homeState), // fork: was homeState; the Navidrome / YouTube / Spotify sections
@@ -4427,6 +4436,21 @@ fun BitChordDesktopApp() {
                             contentPadding = contentPadding,
                             menu = { song -> songMenu(song) },
                         )
+                        destination == DesktopDestination.CACHED_SONGS -> ForkCachedSongsPage { cached -> // fork: the phone's Cached songs folder, drawn as Downloads is
+                            DesktopLocalMusicPage(
+                                songs = cached,
+                                onSongClick = {},
+                                forkPlayFrom = { shown, song -> playSongs(shown, shown.indexOf(song).coerceAtLeast(0), DesktopQueueSource(ForkCachedSongs.title, PlaybackSourceType.BROWSE)) },
+                                contentPadding = contentPadding,
+                                title = ForkCachedSongs.title,
+                                subtitle = ForkCachedSongs.subtitle,
+                                emptyIcon = BitChordIcons.Download,
+                                emptyTitle = ForkCachedSongs.title,
+                                emptyDescription = ForkCachedSongs.empty,
+                                persistenceKey = "cached",
+                                menu = { song -> songMenu(song) },
+                            )
+                        }
                         destination == DesktopDestination.NAVIDROME -> ForkNavidromeScreen( // fork
                             contentPadding = contentPadding,
                             onStars = { likedIds = likedIds + it },
@@ -5487,6 +5511,7 @@ private fun DesktopArtistPage(
                                 DesktopCircleButton(BitChordIcons.Shuffle, DesktopStrings["shuffle", "Shuffle"], onClick = { onShuffle(top) })
                             }
                         }
+                        forkTopRelease(artist.sections, onShelfItemClick) // fork: the phone's "Recent Album / Single / EP" card
                         artist.description?.takeIf(String::isNotBlank)?.let { blurb ->
                             item(key = "artist-about") {
                                 Column(Modifier.padding(top = 16.dp)) {
@@ -5823,7 +5848,7 @@ private fun DesktopLocalMusicPage(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = { drillDown = null }) { Icon(Icons.Rounded.ArrowBack, DesktopStrings["back", "Back"]) }
                     Text(drillDown!!.first, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                    if (forkPlayFrom != null && selectedTab == 2) { // fork: an album on the Navidrome page
+                    if (persistenceKey == "navidrome" && selectedTab == 2) { // fork: an album on the Navidrome page (not the Cached songs page, which plays through forkPlayFrom too)
                         Spacer(Modifier.width(16.dp))
                         ForkOfflineButton(com.music.bitchord.data.navidrome.NavidromeSettings.albumPageId(drillDown!!.first), drillDown!!.first, drillDown!!.second.firstOrNull()?.artist.orEmpty(), drillDown!!.second.firstOrNull()?.thumbnailUrl, drillDown!!.second)
                     }
@@ -5833,8 +5858,8 @@ private fun DesktopLocalMusicPage(
                 DesktopLibrarySongContent(forkShown, view, { song -> forkPlayFrom?.invoke(forkShown, song) ?: onSongClick(song) }, menu) // fork: was onSongClick
             } else when (selectedTab) {
                 0 -> DesktopLibrarySongContent(filteredSongs, view, { song -> forkPlayFrom?.invoke(filteredSongs, song) ?: onSongClick(song) }, menu) // fork: was onSongClick
-                1 -> DesktopLibraryGroupingContent(artists, view, onGroupClick = { drillDown = it }, forkPicture = if (forkPlayFrom != null) rememberForkArtistPictures() else null) // fork: + forkPicture (Navidrome artists' own pictures)
-                else -> DesktopLibraryGroupingContent(albums, view, onGroupClick = { drillDown = it })
+                1 -> DesktopLibraryGroupingContent(artists, view, onGroupClick = { drillDown = it }, forkPicture = if (persistenceKey == "navidrome") rememberForkArtistPictures() else null, forkMenu = ForkGroupMenu(BrowseType.ARTIST, deletable = persistenceKey == "downloaded") { drillDown = it }) // fork: + forkPicture (Navidrome artists' own pictures), + forkMenu
+                else -> DesktopLibraryGroupingContent(albums, view, onGroupClick = { drillDown = it }, forkMenu = ForkGroupMenu(BrowseType.ALBUM, deletable = persistenceKey == "downloaded") { drillDown = it }) // fork: + forkMenu
             }
         }
     }
@@ -5905,7 +5930,8 @@ private fun DesktopLibraryGroupingContent(
     view: DesktopLibraryView,
     onGroupClick: (Pair<String, List<Song>>) -> Unit,
     forkPicture: ((String) -> String?)? = null, // fork
-) {
+    forkMenu: ForkGroupMenu? = null, // fork: the phone's group menu (ForkLibraryGroupMenu)
+) = ForkGroupMenuHost(forkMenu) { forkOpenMenu -> // fork: was a block body
     if (groups.isEmpty()) {
         DesktopEmptyPage(BitChordIcons.Search, "Nothing here yet", "Music will be grouped as it is added.")
     } else if (view == DesktopLibraryView.GRID) {
@@ -5919,7 +5945,7 @@ private fun DesktopLibraryGroupingContent(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             gridItems(groups, key = { it.key }) { group ->
-                Column(Modifier.fillMaxWidth().clickable { onGroupClick(group.key to group.value) }) {
+                Column(Modifier.fillMaxWidth().contextClick(forkOpenMenu?.let { open -> { open(group.key to group.value) } }).clickable { onGroupClick(group.key to group.value) }) { // fork: contextClick
                     DesktopArtwork(forkPicture?.invoke(group.key) ?: group.value.firstOrNull()?.thumbnailUrl, Modifier.fillMaxWidth().height(150.dp).clip(CircleShape)) // fork: + forkPicture
                     Spacer(Modifier.height(7.dp))
                     Text(group.key, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
@@ -5937,7 +5963,7 @@ private fun DesktopLibraryGroupingContent(
         ) {
             items(groups, key = { it.key }) { group ->
                 Row(
-                    Modifier.fillMaxWidth().clickable { onGroupClick(group.key to group.value) }.padding(vertical = 8.dp),
+                    Modifier.fillMaxWidth().contextClick(forkOpenMenu?.let { open -> { open(group.key to group.value) } }).clickable { onGroupClick(group.key to group.value) }.padding(vertical = 8.dp), // fork: contextClick
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     DesktopArtwork(forkPicture?.invoke(group.key) ?: group.value.firstOrNull()?.thumbnailUrl, Modifier.size(54.dp).clip(CircleShape)) // fork: + forkPicture
@@ -5946,12 +5972,13 @@ private fun DesktopLibraryGroupingContent(
                         Text(group.key, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
                         Text("${group.value.size} songs", color = DesktopSecondary, style = MaterialTheme.typography.bodySmall)
                     }
+                    forkOpenMenu?.let { open -> ForkGroupMoreButton { open(group.key to group.value) } } // fork: the group menu's ⋯
                     Icon(BitChordIcons.Play, DesktopStrings["open", "Open"], tint = DesktopSecondary)
                 }
             }
         } } // fork
     }
-}
+} // fork: ForkGroupMenuHost
 
 /** Mobile's section order, with desktop-only groups placed beside their closest mobile counterpart. */
 private enum class DesktopSettingsSection {
@@ -6523,6 +6550,7 @@ private fun DesktopSettingsScreen(
                         fullBleedArtwork,
                         onFullBleedArtworkChange,
                     )
+                    ForkWidePlayerLayoutRow() // fork: Classic / Halves / Halves, smaller cover
                     SettingsToggle(
                         DesktopStrings["legacy_mesh_gradient", "Legacy mesh gradient"],
                         DesktopStrings["d_use_the_older_blob_backdrop_behind_the_player", "Use the older blob backdrop behind the player"],
@@ -6551,6 +6579,7 @@ private fun DesktopSettingsScreen(
                             },
                             onClick = onOpenSpotifyCanvasSetup,
                         )
+                        ForkPrioritizeSpotifyCanvasRow(spotifyCanvasReady) // fork: the phone's "Prioritize Spotify Canvas", greyed until signed in
                     }
                     ForkArtistArtSwitch() // fork: "Artist Art", the web's Apple Music switch
                     ForkArtistSignatureRows() // fork: the phone's "Artist signatures" and its API URL
@@ -6690,12 +6719,15 @@ private fun DesktopSettingsScreen(
                     val userAddedIds = sourceConfigs.inSourceOrder()
                         .filter(DesktopSourceConfig::isUserAdded)
                         .map(DesktopSourceConfig::id)
+                    ForkSourceProbe(sourceConfigs) // fork: the phone's probe of each source with a server, once per opening
+                    val forkHealth by ForkSourceHints.health.collectAsState() // fork
                     sourceConfigs.inSourceOrder().forEachIndexed { index, config ->
                         if (!settingsRowVisible(sourcesHeading, config.displayName)) return@forEachIndexed
                         DesktopSourceSettingsRow(
                             position = index + 1,
                             config = config,
-                            status = sourceStatus[config.id],
+                            status = ForkSourceHints.line(config, forkHealth[config.id], sourceStatus[config.id], audioQuality, config.enabled && !audioQuality.permits(config.kind)), // fork: was sourceStatus[config.id]; the phone's lines (ForkSourceHints)
+                            forkRejected = ForkSourceHints.rejected(forkHealth[config.id], config.enabled && !audioQuality.permits(config.kind)), // fork
                             skippedByQuality = config.enabled && !audioQuality.permits(config.kind),
                             onEdit = if (config.kind.needsServer) {
                                 { editingSource = config }
@@ -6727,6 +6759,7 @@ private fun DesktopSettingsScreen(
                         )
                     }
                     ForkDirectSourceRow() // fork: the phone's Direct Source Stream, under Sources
+                    ForkSourcesFooter(sourceConfigs, audioQuality) // fork: the phone's footer (order note, quality cap or no lossless source)
                 }
             }
             if (section == DesktopSettingsSection.SOURCES) item { ForkSourceMatchingGroup() } // fork: the phone's "Source matching" (Track length tolerance)
@@ -6892,8 +6925,9 @@ private fun DesktopSourceSettingsRow(
     onToggle: ((Boolean) -> Unit)?,
     onMoveUp: (() -> Unit)? = null,
     onMoveDown: (() -> Unit)? = null,
+    forkRejected: Boolean = false, // fork: the phone paints only a rejected source's line red
 ) {
-    val enabledAlpha = if (config.enabled) 1f else 0.45f
+    val enabledAlpha = if (config.enabled && !skippedByQuality) 1f else 0.45f // fork: + !skippedByQuality, dimmed like an off source as on the phone ("on, but not today")
     Row(
         Modifier
             .fillMaxWidth()
@@ -6924,7 +6958,7 @@ private fun DesktopSourceSettingsRow(
                 when {
                     // The ceiling in force, not the switch, is why this one is being passed over —
                     // worth saying, or the row reads as enabled and silently unused.
-                    skippedByQuality -> "Skipped at this audio quality"
+                    skippedByQuality -> status ?: "Skipped at this audio quality" // fork: status carries the phone's line (ForkSourceHints.line)
                     status != null -> status
                     !config.isComplete -> "Setup required"
                     config.kind.needsServer -> "Checking…"
@@ -6934,7 +6968,7 @@ private fun DesktopSourceSettingsRow(
                 } else {
                     ""
                 },
-                color = if (skippedByQuality) DesktopAccent else DesktopSecondary,
+                color = if (forkRejected) DesktopDestructive else DesktopSecondary, // fork: was DesktopAccent when skipped; the phone's colours
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
@@ -7111,6 +7145,7 @@ private fun DesktopCollectionPage(
     downloadInProgress: Set<String>,
     contentPadding: PaddingValues,
     forkOpenArtist: (String, String) -> Unit = { _, _ -> }, // fork: a Navidrome artist's "Similar artists"
+    forkAddSuggested: (Song) -> Unit = {}, // fork: the + on a "Suggested" row (ForkCollectionExtras)
 ) {
     val songs = rememberForkSortedSongs(collection.browseId, collection.songs, collection.continuation == null, loadingMore, onLoadMore) // fork: the phone's song sort (ForkCollectionSort); was collection.songs
     val forkNumbers = rememberForkRowNumbers(collection.songs) // fork: track numbers stay the page's own under a sort
@@ -7152,6 +7187,7 @@ private fun DesktopCollectionPage(
     }.joinToString(" • ").uppercase()
     DesktopPageScaffold(contentPadding) {
         val isCurrentRow = rememberPlayingRowMatcher(songs)
+        val forkSuggestedCurrent = rememberPlayingRowMatcher(collection.forkSuggested) // fork: the playing "Suggested" row
         val forkBar = rememberLazyListState() // fork
         ForkScrollbarBox(forkBar, Modifier.fillMaxSize(), PaddingValues(bottom = LocalDesktopBottomInset.current)) { LazyColumn( // fork: the overlay scrollbar (PC-Continued e16ed1f8)
             state = forkBar, // fork
@@ -7263,6 +7299,7 @@ private fun DesktopCollectionPage(
                                             onDownloadAll(songs)
                                         },
                                     )
+                                    ForkDeleteDownloadItem(collection, downloadedIds) { moreOpen = false } // fork: the phone's "Delete download"
                                     onShare?.let { share ->
                                         DropdownMenuItem(
                                             text = { Text(DesktopStrings["share", "Share"]) },
@@ -7310,6 +7347,7 @@ private fun DesktopCollectionPage(
                     }
                 }
             }
+            forkAboutAlbum(collection) // fork: the phone's "About the album"
             if (searching) {
                 item(key = "collection-search") {
                     DesktopSearchField(
@@ -7340,6 +7378,7 @@ private fun DesktopCollectionPage(
                     onRemove = onRemoveFromPlaylist?.takeIf { song.setVideoId != null },
                 )
             }
+            forkSuggestedSongs(collection, listQuery, forkSuggestedCurrent, onPlaySongs, forkAddSuggested) // fork: the phone's "Suggested" under a playlist
             forkSimilarArtists(forkSimilar, forkOpenArtist) // fork
             forkNavidromeArtistSignature(collection.browseId, songs) // fork: a Navidrome artist's signature, the phone's About foot
             if (collection.continuation != null) {
@@ -8061,7 +8100,7 @@ internal fun SettingsGroup(title: String, content: @Composable () -> Unit) { // 
 }
 
 /** What the settings field is filtering on, or blank when it is empty. */
-private val LocalSettingsQuery = compositionLocalOf { "" }
+internal val LocalSettingsQuery = compositionLocalOf { "" } // fork: internal (was private), for ForkSourcesFooter
 
 /** Where a row tells its group that it survived the filter, so an empty group can hide its name. */
 private val LocalSettingsMatches = compositionLocalOf<MutableList<String>?> { null }

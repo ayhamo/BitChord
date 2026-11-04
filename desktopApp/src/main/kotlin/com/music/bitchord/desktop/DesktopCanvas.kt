@@ -127,7 +127,7 @@ object DesktopCanvasClient {
         val album = song.albumName
         // Keyed on the track alone: the album arrives after the player opens, and keying on it made
         // the late arrival look like a different question.
-        return resolve("song|${song.videoId}", album != null) {
+        return resolve(ForkSpotifyCanvasFirst.key("song|${song.videoId}"), album != null) { // fork: keyed on the order, as the phone's cacheKey
             firstHit(
                 { DesktopAppleMusicCanvas.search(title, artist, album) },
                 { DesktopTidalCanvas.search(title, artist, album) },
@@ -139,7 +139,7 @@ object DesktopCanvasClient {
 
     /** A canvas already worked out for [song], without going near the network. */
     fun cached(song: Song): DesktopCanvasArtwork? =
-        synchronized(cache) { cache["song|${song.videoId}"]?.artwork }
+        synchronized(cache) { cache[ForkSpotifyCanvasFirst.key("song|${song.videoId}")]?.artwork } // fork: the order's key
 
     /**
      * The canvas for a release, for an album page's header.
@@ -151,7 +151,7 @@ object DesktopCanvasClient {
         val name = album.cleanedForCanvas()
         val credit = artist.cleanedForCanvas()
         if (name.isBlank() || credit.isBlank()) return null
-        return resolve("album|$name|$credit", withAlbum = true) {
+        return resolve(ForkSpotifyCanvasFirst.key("album|$name|$credit"), withAlbum = true) { // fork: keyed on the order
             firstHit(
                 { DesktopAppleMusicCanvas.searchAlbum(name, credit) },
                 { DesktopTidalCanvas.searchAlbum(name, credit) },
@@ -186,7 +186,7 @@ object DesktopCanvasClient {
         vararg sources: suspend () -> DesktopCanvasArtwork?,
         accept: (DesktopCanvasArtwork) -> Boolean,
     ): DesktopCanvasArtwork? {
-        for (source in sources) {
+        for (source in ForkSpotifyCanvasFirst.ordered(sources.toList())) { // fork: both callers pass Spotify last; "Prioritize Spotify Canvas" asks it first
             val found = runCatching { source() }
                 .onFailure { DesktopTrackLog.log("canvas: a source failed: $it"); com.music.bitchord.data.canvas.ForkCanvasLookup.fail("a source threw: $it") } // fork: was silent; + the failure report
                 .getOrNull() ?: continue

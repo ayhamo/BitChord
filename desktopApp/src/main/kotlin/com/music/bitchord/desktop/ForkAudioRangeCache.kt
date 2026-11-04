@@ -78,6 +78,18 @@ internal class ForkAudioRangeCache(
         }
     }
 
+    /**
+     * Whether the window of [key] at [start] is on disk and not past its keep date, reading only its
+     * header ([ForkCachedSongs] checks a whole song before playing it with no network, so a window
+     * that [read] would throw away mid-song is found first). Its bytes are checked when read.
+     */
+    @Synchronized
+    fun fresh(key: String, start: Long): Boolean = runCatching {
+        DataInputStream(Files.newInputStream(path(key, start)).buffered()).use { input ->
+            input.readInt() == MAGIC && input.readLong() > now()
+        }
+    }.getOrDefault(false)
+
     @Synchronized
     fun clear() {
         runCatching { Files.list(directory()).use { files -> files.forEach { Files.deleteIfExists(it) } } }
