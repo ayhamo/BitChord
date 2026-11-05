@@ -6,6 +6,9 @@ Snapshot for picking the work up again. Plan: `FORK_PLAN.md`. Every touched upst
 
 The single list of what is left, ticked when done. Everything not here is either done or dropped.
 
+- [ ] PC: grey the Navidrome settings rows while no server is set, as on the phone (offered 2026-11-05)
+- [ ] PC: faster start-up with AppCDS: create `lib/server/classes.jsa` in the bundled runtime during `windowsPortable` (the flags are already in `desktopApp/build.gradle.kts`, gated off today)
+- [ ] Bass-synced glow/flash behind the player (the Auris Reddit post's look; ours today is the cover clip's own rim glow)
 - [ ] Multi-select in Downloads / Local Music (PC; the phone's hold-to-select, Select all, Delete / Download / Remove from cache)
 - [ ] Local Music Playlists and Folders tabs, with the PC Local Music port (after upstream v1.9.1 is merged)
 - [ ] Vocals-only (bundled vocal model; `vocals-only` branch; phone speed first)
