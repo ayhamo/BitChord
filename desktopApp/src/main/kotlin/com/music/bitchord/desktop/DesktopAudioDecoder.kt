@@ -127,6 +127,9 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
     /** Fork: FFmpeg's interrupt callback; see [open]. */
     private var forkInterrupt: AVIOInterruptCB.Callback_Pointer? = null
 
+    /** Fork: the internet radio station this decoder plays, whose ICY titles it passes on (ForkRadioNowPlaying). */
+    private var forkRadioId: String? = null
+
     /** Fork: the error the stream's last read ended on, when it wasn't the end of the file; see [forkThrowIfCutShort]. */
     private var forkReadError: Int? = null
 
@@ -254,6 +257,7 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
         packet = av_packet_alloc()
         frame = av_frame_alloc()
         drained = false
+        forkRadioId = ForkRadioNowPlaying.stationFor(url)?.also { ForkRadioNowPlaying.poll(it, this@DesktopAudioDecoder, opened, streamIndex, atOpen = true) } // fork: a station's live title
     }.onFailure { close() }
 
     /**
@@ -271,8 +275,15 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
             parameters.codec_type() == AVMEDIA_TYPE_AUDIO && avcodec_find_decoder(parameters.codec_id()) != null
         }
         if (audio.size < 2) return null
+        // fork (PC-Continued 18b6b3ae): the immersive mix is a different mix, not a rung. With the
+        // Atmos setting on and an E-AC-3 decoder, a manifest's Atmos rendition is the one opened (a
+        // FLAC beside it is the stereo answer); with it off this key is false for every stream and
+        // the order is exactly as before.
+        val forkAtmosFirst = DesktopCodecs.supportsDolbyAtmos && DesktopAddonSettings.dolbyAtmosEnabled
+        fun forkFormat(i: Int) = DesktopStreamFormat(codec = avcodec_get_name(container.streams(i).codecpar().codec_id())?.string)
         return audio.maxWithOrNull(
-            compareBy<Int> { i ->
+            compareBy<Int> { i -> forkAtmosFirst && forkFormat(i).isDolbyAtmos } // fork
+                .thenBy { i ->
                 val name = avcodec_get_name(container.streams(i).codecpar().codec_id())?.string
                 DesktopStreamFormat(codec = name).isLossless
             }.thenBy { i -> renditionBitrate(container, i) },
@@ -442,6 +453,7 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
             drained = true
             return true
         }
+        forkRadioId?.let { ForkRadioNowPlaying.poll(it, this, container, streamIndex) } // fork: a new ICY StreamTitle arrives with a read
         if (pkt.stream_index() == streamIndex) avcodec_send_packet(context, pkt)
         av_packet_unref(pkt)
         return true
@@ -556,6 +568,8 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
         rangeSource = null
         forkInterrupt?.deallocate() // fork
         forkInterrupt = null
+        forkRadioId?.let { ForkRadioNowPlaying.closed(it, this) } // fork: its title goes with it
+        forkRadioId = null // fork
     }
 
     internal companion object {

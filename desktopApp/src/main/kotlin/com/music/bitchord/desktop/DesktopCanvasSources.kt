@@ -17,6 +17,7 @@ import java.nio.charset.StandardCharsets
 import java.text.Normalizer
 import java.time.Duration
 import java.util.Locale
+import com.music.bitchord.data.canvas.normalizeTitleForMatch
 
 /**
  * Where motion artwork comes from.
@@ -56,7 +57,7 @@ internal fun canvasMatches(
     wantName: String,
     wantArtist: String,
 ): Boolean {
-    if (gotName.normalizeForCanvasMatch() != wantName.normalizeForCanvasMatch()) return false
+    if (!com.music.bitchord.data.canvas.titlesMatch(gotName, wantName)) return false // fork: was normalizeForCanvasMatch() !=, "" == "" for non-Latin titles
     val wanted = splitCanvasArtists(wantArtist)
     val credited = gotArtists.map { it.normalizeForCanvasMatch() }.filter { it.isNotBlank() }
     if (wanted.isEmpty() || credited.isEmpty()) return false
@@ -303,8 +304,8 @@ internal object DesktopAppleMusicCanvas {
         if (!wanted.all { want -> credited.any { it == want } }) return null
 
         var score = 10
-        val wantTitle = title.normalizeForCanvasMatch()
-        val hitTitle = hitName.normalizeForCanvasMatch()
+        val wantTitle = title.normalizeTitleForMatch().ifEmpty { return null } // fork: was normalizeForCanvasMatch(), "" for a non-Latin title (and "".contains("") scored it)
+        val hitTitle = hitName.normalizeTitleForMatch() // fork: was normalizeForCanvasMatch()
         score += when {
             hitTitle == wantTitle -> 15
             hitTitle.contains(wantTitle) || wantTitle.contains(hitTitle) -> 7
@@ -363,6 +364,7 @@ internal object DesktopAppleMusicCanvas {
             ),
         )
         if (status == 401) synchronized(this) {
+            forkRejected += bearer // fork: never picked, loaded or saved again (the phone's `rejected`)
             com.music.bitchord.data.canvas.ForkAppleTokenBackup.forget(bearer) // fork
             if (cachedToken == bearer) {
                 cachedToken = null
@@ -395,15 +397,10 @@ internal object DesktopAppleMusicCanvas {
 
         for (path in scripts) {
             val script = canvasGet("https://music.apple.com$path") ?: continue
-            val candidates = Regex("""ey[A-Za-z0-9_-]+\.ey[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+""")
-                .findAll(script)
-                .map(MatchResult::value)
-                .distinct()
-                .mapNotNull { jwt -> expiry(jwt)?.let { jwt to it } }
-                .filter { it.second > now }
-                .toList()
-            if (candidates.isEmpty()) continue
-            val (jwt, expiresAt) = candidates.firstOrNull { isWebPlayerToken(it.first) } ?: candidates.first()
+            val (jwt, expiresAt) = forkPickToken( // fork: was the pick inline, without the refused tokens filtered out
+                Regex("""ey[A-Za-z0-9_-]+\.ey[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+""").findAll(script).map(MatchResult::value),
+                forkRejected, now, ::expiry, ::isWebPlayerToken,
+            ) ?: continue
             cachedToken = jwt
             tokenExpiresAtMs = expiresAt
             com.music.bitchord.data.canvas.ForkAppleTokenBackup.save(jwt, expiresAt) // fork: kept on disk as the backup
@@ -418,11 +415,39 @@ internal object DesktopAppleMusicCanvas {
 
     /** Fork: ForkAppleTokenBackup's saved token, made the current one; null when there is none. */
     private fun forkBackupToken(now: Long): String? {
-        val (jwt, expiresAt) = com.music.bitchord.data.canvas.ForkAppleTokenBackup.load(now) ?: return null
+        val (jwt, expiresAt) = com.music.bitchord.data.canvas.ForkAppleTokenBackup.load(now, forkRejected) ?: return null
         cachedToken = jwt
         tokenExpiresAtMs = expiresAt
         DesktopTrackLog.log("canvas: using the saved Apple Music token")
         return jwt
+    }
+
+    /**
+     * Fork: tokens the catalog API turned down (401), as the phone's `rejected` set. The PC only
+     * dropped the cached token, so the next lookup re-scraped the same bundle, picked the same
+     * refused JWT (and reloaded it from the backup), and every song paid for the page and bundle
+     * GETs plus a 401. A refused token is now never picked, loaded or saved again, so a bundle that
+     * offers only refused ones counts as a failed scrape and backs off [TOKEN_RETRY_MS].
+     */
+    private val forkRejected = mutableSetOf<String>()
+
+    /**
+     * Fork: the token to use out of a bundle's JWTs: not refused, readable, unexpired, the web
+     * player's own first. Null when none is left, which the caller treats as a failed scrape.
+     */
+    internal fun forkPickToken(
+        jwts: Sequence<String>,
+        rejected: Set<String>,
+        now: Long,
+        expiry: (String) -> Long?,
+        isWebPlayer: (String) -> Boolean,
+    ): Pair<String, Long>? {
+        val candidates = jwts.distinct()
+            .filter { it !in rejected }
+            .mapNotNull { jwt -> expiry(jwt)?.let { jwt to it } }
+            .filter { it.second > now }
+            .toList()
+        return candidates.firstOrNull { isWebPlayer(it.first) } ?: candidates.firstOrNull()
     }
 
     private fun payload(jwt: String): JsonObject? = runCatching {
@@ -557,13 +582,13 @@ internal object DesktopCommunityCanvas {
 
     fun search(title: String, artist: String, album: String?): DesktopCanvasArtwork? {
         val index = manifest().ifEmpty { return null }
-        val wantTitle = title.normalizeForCanvasMatch()
+        val wantTitle = title.normalizeTitleForMatch().ifEmpty { return null } // fork: was normalizeForCanvasMatch(), "" for a non-Latin title, which every entry contains
         val wantArtist = artist.normalizeForCanvasMatch()
         val wantAlbum = album?.normalizeForCanvasMatch()
         // Contributors write titles as they please, so this side matches on containment. The album
         // check is what keeps it honest when one is known.
         val hit = index.firstOrNull { entry ->
-            val song = entry.song.normalizeForCanvasMatch()
+            val song = entry.song.normalizeTitleForMatch() // fork: was normalizeForCanvasMatch()
             val credited = entry.artist.normalizeForCanvasMatch()
             val listed = entry.album.normalizeForCanvasMatch()
             song.isNotBlank() && (wantTitle.contains(song) || song.contains(wantTitle)) &&
@@ -592,11 +617,14 @@ internal object DesktopCommunityCanvas {
     @Synchronized
     private fun manifest(): List<Entry> {
         val now = System.currentTimeMillis()
-        if (entries.isNotEmpty() && now - fetchedAtMs < TTL_MS) return entries
+        if (!com.music.bitchord.data.canvas.ForkCommunityManifest.due(entries.isNotEmpty(), fetchedAtMs, now, TTL_MS)) { // fork: was `entries.isNotEmpty() && now - fetchedAtMs < TTL_MS`; an empty index waits 5 min
+            if (entries.isEmpty()) com.music.bitchord.data.canvas.ForkCanvasLookup.coolingDown("Community: manifest unavailable", com.music.bitchord.data.canvas.ForkCommunityManifest.retryAt(fetchedAtMs)) // fork
+            return entries
+        }
         val body = canvasGet(MANIFEST)
         if (body == null) {
             // Serve what we already have rather than losing canvas entirely for half an hour.
-            if (entries.isEmpty()) com.music.bitchord.data.canvas.ForkCanvasLookup.fail("Community: manifest unreachable") // fork: nothing to look in is not "no clip"
+            if (entries.isEmpty()) com.music.bitchord.data.canvas.ForkCanvasLookup.coolingDown("Community: manifest unreachable", com.music.bitchord.data.canvas.ForkCommunityManifest.retryAt(now)) // fork: nothing to look in is not "no clip"; was fail()
             fetchedAtMs = now
             return entries
         }

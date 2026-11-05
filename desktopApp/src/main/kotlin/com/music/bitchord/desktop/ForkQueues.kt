@@ -106,10 +106,13 @@ internal object ForkQueues {
     private val writeLock = Mutex()
 
     init {
-        // Merged, not replaced: a queue saved before the file was read stays.
+        // Merged, not replaced: a queue saved before the file was read stays. Under the write lock,
+        // so a save landing during the first read cannot be written out and then read back over.
         scope.launch {
-            val read = read()
-            _saved.update { (it + read).distinctBy { q -> q.id }.take(MAX) }
+            writeLock.withLock {
+                val read = read()
+                _saved.update { (it + read).distinctBy { q -> q.id }.take(MAX) }
+            }
         }
     }
 

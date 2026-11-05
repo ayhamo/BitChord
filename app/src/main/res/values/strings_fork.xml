@@ -96,6 +96,8 @@
     <string name="fork_handoff_failed">Could not continue that queue here</string>
     <string name="fork_handoff_menu">Continue from other device</string>
     <string name="fork_handoff_none">Nothing to continue from another device</string>
+    <string name="fork_handoff_unreachable">Couldn\'t reach the server</string>
     <string name="fork_handoff_setting">Continue on other devices</string>
     <string name="fork_handoff_setting_subtitle">Leaves your queue on your Navidrome server when you pause or leave the app, so the PC can pick it up at the same song and second</string>
+    <string name="fork_download_stopped">Stopped by Android; tap to retry</string>
 </resources>

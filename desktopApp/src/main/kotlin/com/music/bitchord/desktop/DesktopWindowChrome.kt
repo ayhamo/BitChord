@@ -247,6 +247,10 @@ internal fun Modifier.captionPress(scope: WindowScope, actions: DesktopWindowAct
             }
             lastPressAt = down.uptimeMillis
             lastPressPosition = down.position
+            // fork: no move in full screen, where the window is pinned anyway. The native move
+            // loop took the press there, and the player caption's second click never came back
+            // as one: a double click did not leave full screen.
+            if (DesktopWindowsFrame.fullscreenActive) return@awaitEachGesture
             if (DesktopWindowsFrame.startDrag()) return@awaitEachGesture
             if (DesktopPlatform.isMac && DesktopMacFrame.startDrag()) return@awaitEachGesture
             val window = scope.window

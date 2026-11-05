@@ -90,6 +90,9 @@ object NavidromeLyrics {
                 return@withLock lines
             }
         }
+        // Offline mode: nothing goes to the server (each lyrics look waited out a dead request). Not
+        // remembered, so the server is asked once back online.
+        if (NavidromePlatform.offline.value) return@withLock null
         val rows = runCatching { NavidromeRepository.client().lyricsBySongId(songId) }
             .onFailure {
                 if (it is kotlinx.coroutines.CancellationException) throw it

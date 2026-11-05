@@ -150,7 +150,9 @@ internal fun ForkAudioPipelineDialog(
             )
         }
         // Scrolls under the fixed title when the window is shorter than the five stages (it was cut off).
-        Box(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).fillMaxWidth().padding(bottom = 8.dp)) {
+        Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).fillMaxWidth()) { // fork: outputs above and the source pin below the chain (ForkSourcePins)
+        ForkPipelineOutputs() // fork (PC-Continued 5b1b855c)
+        Box(Modifier.fillMaxWidth().padding(bottom = 8.dp)) { // fork: was weight + verticalScroll here, moved to the Column
             // On its own layer, each frame re-records just the bus and nodes, not the rows.
             Spacer(
                 Modifier
@@ -242,6 +244,8 @@ internal fun ForkAudioPipelineDialog(
                     ForkPipelineRow(DesktopStrings["pipeline_buffers", "Buffers"], forkBufferText(pipeline))
                 }
             }
+        }
+        ForkPipelineSourceChooser() // fork (PC-Continued 5b1b855c): per-track source pin
         }
     }
 }

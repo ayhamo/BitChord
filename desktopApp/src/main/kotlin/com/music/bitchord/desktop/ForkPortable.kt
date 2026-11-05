@@ -51,6 +51,27 @@ internal object ForkPortable {
             System.getProperty("user.home")
         }
 
+    /**
+     * Fork: first thing in `main`. BitChord.exe passes `.` for its folder when the folder's name is
+     * outside the ANSI code page and has no 8.3 short name (see java_folder in BitChord.c), so
+     * `user.home` and `java.io.tmpdir` arrive relative to the working folder. Made absolute here,
+     * before any library reads them, so a native library handed one (System.load wants an absolute
+     * path) or anything that changes the working folder later still finds the right place.
+     */
+    fun absolutePaths() {
+        if (dataDir == null) return
+        for (key in listOf("user.home", "java.io.tmpdir", DATA_PROPERTY)) {
+            absolutized(System.getProperty(key))?.let { System.setProperty(key, it) }
+        }
+    }
+
+    /** [value] made absolute against the working folder, or null when it already is (or is blank). */
+    internal fun absolutized(value: String?): String? {
+        if (value.isNullOrBlank()) return null
+        val path = runCatching { Path.of(value) }.getOrNull() ?: return null
+        return if (path.isAbsolute) null else path.toAbsolutePath().normalize().toString()
+    }
+
     /** Where a WebView without storage of its own keeps it, in the portable app; null otherwise. */
     fun webViewDirectory(): File? = dataDir?.resolve("webview")?.toFile()?.also { it.mkdirs() }
 

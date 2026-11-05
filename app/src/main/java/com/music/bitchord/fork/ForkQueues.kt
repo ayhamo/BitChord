@@ -80,8 +80,9 @@ object ForkQueues {
 
     fun init(context: Context) {
         file = File(context.filesDir, "fork_queues.json")
-        // Merged, not replaced: a queue saved before the file was read stays.
-        scope.launch { val read = read(); _saved.update { (it + read).distinctBy { q -> q.id }.take(MAX) } }
+        // Merged, not replaced: a queue saved before the file was read stays. Under the write lock,
+        // so a save landing during the first read cannot be written out and then read back over.
+        scope.launch { writeLock.withLock { val read = read(); _saved.update { (it + read).distinctBy { q -> q.id }.take(MAX) } } }
     }
 
     /** The main screen's controller, its scope and its "play this list from here"; see [ForkQueuesBinding]. */
@@ -118,18 +119,23 @@ object ForkQueues {
      * [ForkHandoffPhone]'s restore: the other device's queue, played through the same path as a
      * saved one (the seek waits for the new queue's entry), but named by its own origin instead of
      * a saved name, so "Playing from …" and AutoPlay carry on as on the other device. False when the
-     * main screen isn't bound (nothing to play it with).
+     * main screen isn't bound (nothing to play it with). [onSettled] runs once the seek has landed,
+     * was given up, or wasn't needed.
      */
-    internal fun playHandoff(songs: List<Song>, index: Int, positionMs: Long, source: QueueSource): Boolean {
+    internal fun playHandoff(songs: List<Song>, index: Int, positionMs: Long, source: QueueSource, onSettled: () -> Unit = {}): Boolean {
         if (play == null || songs.isEmpty()) return false
-        play(Saved("handoff", source.title, songs, index.coerceIn(songs.indices), positionMs, System.currentTimeMillis()), source)
+        play(Saved("handoff", source.title, songs, index.coerceIn(songs.indices), positionMs, System.currentTimeMillis()), source, onSettled)
         return true
     }
 
-    /** Replaces the queue with [queue] and resumes at its song and second; [source] names it (a saved queue: by its name). */
-    fun play(queue: Saved, source: QueueSource = QueueSource(queue.name, PlaybackSourceType.QUEUE)) {
-        val start = play ?: return
-        if (queue.songs.isEmpty()) return
+    /**
+     * Replaces the queue with [queue] and resumes at its song and second; [source] names it (a saved
+     * queue: by its name). [onSettled] runs once the song is at its second, or the seek was given up
+     * or not needed (the handoff holds its saves until then).
+     */
+    fun play(queue: Saved, source: QueueSource = QueueSource(queue.name, PlaybackSourceType.QUEUE), onSettled: () -> Unit = {}) {
+        val start = play ?: return onSettled()
+        if (queue.songs.isEmpty()) return onSettled()
         // Starting only launches the swap. The song may already be playing in the queue being
         // replaced: seeking that one, the new queue then lands at 0:00. Wait to see the swap.
         var swapped = false
@@ -148,31 +154,37 @@ object ForkQueues {
         val target = queue.current?.videoId
         if (target == null || listening == null) {
             listening?.removeListener(swap)
+            onSettled()
             return
         }
-        appScope?.launch {
-            // The queue is built off the main thread, and the new item is positioned (at 0) as it
-            // is prepared: a seek before the song is ready is overwritten. Seek once it is the
-            // current song and ready, and check that it took.
-            var waited = 0L
-            while (waited < RESTORE_WAIT_MS) {
-                val p = player ?: return@launch
-                if (swapped && isNewEntry(p.currentMediaItem?.queueEntryId, replaced) &&
-                    p.currentMediaItem?.mediaId == target && p.playbackState == Player.STATE_READY
-                ) {
-                    p.seekTo(queue.positionMs)
-                    delay(500)
-                    if (kotlin.math.abs(p.currentPosition - queue.positionMs) < 5_000) {
-                        listening.removeListener(swap)
-                        return@launch
+        val seeking = appScope?.launch {
+            try {
+                // The queue is built off the main thread, and the new item is positioned (at 0) as it
+                // is prepared: a seek before the song is ready is overwritten. Seek once it is the
+                // current song and ready, and check that it took.
+                var waited = 0L
+                while (waited < RESTORE_WAIT_MS) {
+                    val p = player ?: return@launch
+                    if (swapped && isNewEntry(p.currentMediaItem?.queueEntryId, replaced) &&
+                        p.currentMediaItem?.mediaId == target && p.playbackState == Player.STATE_READY
+                    ) {
+                        p.seekTo(queue.positionMs)
+                        delay(500)
+                        if (kotlin.math.abs(p.currentPosition - queue.positionMs) < 5_000) {
+                            listening.removeListener(swap)
+                            return@launch
+                        }
                     }
+                    delay(100)
+                    waited += 100
                 }
-                delay(100)
-                waited += 100
+                listening.removeListener(swap)
+                Log.d(TAG, "saved queue ${queue.name}: never reached ${queue.current?.title}, not seeking")
+            } finally {
+                onSettled()
             }
-            listening.removeListener(swap)
-            Log.d(TAG, "saved queue ${queue.name}: never reached ${queue.current?.title}, not seeking")
         }
+        if (seeking == null) onSettled()
     }
 
     /** Whether the playing entry [now] is not the one [replaced] was; with no entry ids to tell by, only the playlist change counts. */

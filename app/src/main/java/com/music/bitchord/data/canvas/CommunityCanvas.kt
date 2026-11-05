@@ -40,7 +40,7 @@ object CommunityCanvas {
     fun search(title: String, artist: String, album: String?): CanvasArtwork? {
         val index = manifest().ifEmpty { return null }
 
-        val wantTitle = title.normalizeForMatch()
+        val wantTitle = title.normalizeTitleForMatch().ifEmpty { return null } // fork: was normalizeForMatch(), "" for a non-Latin title, which every entry contains
         val wantArtist = artist.normalizeForMatch()
         val wantAlbum = album?.normalizeForMatch()
 
@@ -49,7 +49,7 @@ object CommunityCanvas {
         // equality. That is looser than the catalogue providers get, and the
         // album check is what keeps it honest when we know one.
         val hit = index.firstOrNull { entry ->
-            val song = entry.song.normalizeForMatch()
+            val song = entry.song.normalizeTitleForMatch() // fork: was normalizeForMatch()
             val credited = entry.artist.normalizeForMatch()
             val listed = entry.album.normalizeForMatch()
             val titleOk = song.isNotBlank() &&
@@ -100,13 +100,16 @@ object CommunityCanvas {
     @Synchronized
     private fun manifest(): List<Entry> {
         val now = System.currentTimeMillis()
-        if (entries.isNotEmpty() && now - fetchedAtMs < TTL_MS) return entries
+        if (!ForkCommunityManifest.due(entries.isNotEmpty(), fetchedAtMs, now, TTL_MS)) { // fork: was `entries.isNotEmpty() && now - fetchedAtMs < TTL_MS`; an empty index waits 5 min
+            if (entries.isEmpty()) ForkCanvasLookup.coolingDown("Community: manifest unavailable", ForkCommunityManifest.retryAt(fetchedAtMs)) // fork
+            return entries
+        }
 
         val body = canvasGet(MANIFEST, mapOf("User-Agent" to CANVAS_UA))
         if (body == null) {
             // Serve whatever we already have rather than losing canvas
             // entirely for the next half hour because one fetch failed.
-            if (entries.isEmpty()) ForkCanvasLookup.fail("Community: manifest unreachable") // fork: nothing to look in is not "no clip"
+            if (entries.isEmpty()) ForkCanvasLookup.coolingDown("Community: manifest unreachable", ForkCommunityManifest.retryAt(now)) // fork: nothing to look in is not "no clip"; was fail()
             fetchedAtMs = now
             return entries
         }

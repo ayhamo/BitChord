@@ -20,6 +20,26 @@ class ForkArtistHeaderTest {
     )
 
     @Test
+    fun theClipBringsItsOwnColoursOnlyWhenItPlays() {
+        val clip = art(0xFF101010.toInt(), null).copy(
+            videoUrl = "https://x/clip.m3u8",
+            videoBackground = 0xFF203040.toInt(),
+            videoAccent = 0xFF506070.toInt(),
+        )
+        val playing = clip.forMotion(plays = true)
+        assertEquals("https://x/clip.m3u8", playing.videoUrl)
+        assertEquals(0xFF203040.toInt(), playing.background)
+        assertEquals(0xFF506070.toInt(), playing.accent)
+        // Switched off: no clip, and the photo's colours, since the photo is what shows.
+        val still = clip.forMotion(plays = false)
+        assertEquals(null, still.videoUrl)
+        assertEquals(0xFF101010.toInt(), still.background)
+        // No clip at all: unchanged.
+        val plain = art(0xFF101010.toInt(), null)
+        assertEquals(plain, plain.forMotion(plays = true))
+    }
+
+    @Test
     fun playIsApplesFillWithThePageColourOnIt() {
         val (fill, glyph) = ForkArtistHeader.playColors(art(0xFF101820.toInt(), 0xFFFFC0CB.toInt()))
         assertEquals(Color(0xFFFFC0CB), fill)

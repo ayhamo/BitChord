@@ -312,6 +312,10 @@ object YtMusicRepository {
         }.also { result -> result.getOrNull()?.let { moodGenreShelfCache.putIfAbsent(key, it) } }
     }
 
+    /** Fork: a Home shelf's See all page (Revived fbd0a9a0); grids and all, see ForkShelfMore.parsePage. */
+    suspend fun browseShelves(browseId: String, params: String? = null): Result<List<HomeShelf>> = // fork
+        call("browse-shelves:$browseId") { com.music.bitchord.data.innertube.ForkShelfMore.parsePage(Innertube.browse(browseId, params)) } // fork
+
     /** A category card borrows the first real cover from the playlists it opens. */
     suspend fun moodGenreArtwork(browseId: String, params: String?): Result<String?> =
         moodGenreShelves(browseId, params).map { shelves ->

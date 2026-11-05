@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Fork strings, kept out of upstream's strings.xml so merges stay cheap. -->
+<resources>
+    <!-- A Home shelf's See all page could not be loaded (ForkShelfMore.kt); %1$s is the shelf's title. -->
+    <string name="fork_shelf_more_failed">Could not open %1$s</string>
+</resources>

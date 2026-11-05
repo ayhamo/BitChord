@@ -162,6 +162,8 @@ fun HomeScreen(
     onMoodsShowAll: () -> Unit = {},
     /** Whether the Top Picks and mood artwork may animate — see [LocalArtworkMotion]. */
     artworkMotion: Boolean = true,
+    /** Fork: a shelf heading with a See all link was tapped (ForkShelfMore.kt). Null leaves headings plain. */
+    onShelfOpen: ((HomeShelf) -> Unit)? = null,
 ) {
     val forkHome = rememberForkHome() // fork
     // Top Picks' pictures and motion wait for the feed — see LocalArtworkImages.
@@ -169,6 +171,7 @@ fun HomeScreen(
     CompositionLocalProvider(
         LocalArtworkMotion provides (artworkMotion && feedReady),
         LocalArtworkImages provides feedReady,
+        LocalForkShelfOpen provides onShelfOpen, // fork
     ) {
     // The loops also hold still while the feed is being scrolled — see
     // LocalArtworkScrolling for why that is asked rather than provided.
@@ -348,6 +351,8 @@ private fun RecentShelf(
     isPlaying: Boolean,
 ) {
     Column(Modifier.padding(bottom = 26.dp)) {
+        val forkOpen = forkShelfOpener(shelf) // fork: an openable heading is the shared one, with its chevron
+        if (forkOpen != null) SectionHeader(shelf.title, shelf.subtitle, onOpen = forkOpen) else // fork
         RecentSectionHeader(title = localizeShelfTitle(shelf.title), subtitle = localizeShelfSubtitle(shelf.subtitle))
         val isCurrentItem = shelf.items.playingItemMatcher(currentSong)
         BoxWithConstraints {
@@ -526,13 +531,14 @@ private const val LOGO_ASPECT = 730f / 484f
  * Home and Explore never pass it, so their heading is unchanged.
  */
 @Composable
-internal fun SectionHeader(title: String, subtitle: String = "", onShowAll: (() -> Unit)? = null) {
+internal fun SectionHeader(title: String, subtitle: String = "", onShowAll: (() -> Unit)? = null, onOpen: (() -> Unit)? = null) { // fork: + onOpen (ForkShelfMore.kt)
     val displayTitle = localizeShelfTitle(title)
     val displaySubtitle = localizeShelfSubtitle(subtitle)
     Row(
         modifier = Modifier
             .padding(horizontal = PAGE_GUTTER, vertical = 10.dp)
-            .fillMaxWidth(),
+            .fillMaxWidth()
+            .then(if (onOpen != null) Modifier.clickable(onClick = onOpen) else Modifier), // fork
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
@@ -553,6 +559,7 @@ internal fun SectionHeader(title: String, subtitle: String = "", onShowAll: (() 
                 )
             }
         }
+        ForkShelfChevron(onOpen) // fork
         if (onShowAll != null) {
             Text(
                 text = stringResource(Res.string.show_all),
@@ -744,7 +751,7 @@ private fun HeroShelf(
     isPlaying: Boolean = false,
 ) {
     Column(Modifier.padding(bottom = 26.dp)) {
-        SectionHeader(shelf.title, shelf.subtitle)
+        SectionHeader(shelf.title, shelf.subtitle, onOpen = forkShelfOpener(shelf)) // fork: + onOpen
         val isCurrentItem = shelf.items.playingItemMatcher(currentSong)
         // Measured rather than taken as a share of the parent, because the card
         // has a ceiling as well as a fraction — see [heroCardWidth]. A fixed
@@ -849,7 +856,7 @@ internal fun Shelf(
     isPlaying: Boolean = false,
 ) {
     Column(Modifier.padding(bottom = 26.dp)) {
-        SectionHeader(shelf.title, shelf.subtitle)
+        SectionHeader(shelf.title, shelf.subtitle, onOpen = forkShelfOpener(shelf)) // fork: + onOpen
         val isCurrentItem = shelf.items.playingItemMatcher(currentSong)
         ShelfRow(
             contentPadding = PaddingValues(horizontal = PAGE_GUTTER),

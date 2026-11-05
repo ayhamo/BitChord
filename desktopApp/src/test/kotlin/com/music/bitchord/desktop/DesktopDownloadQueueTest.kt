@@ -1,6 +1,10 @@
 package com.music.bitchord.desktop
 
 import com.music.bitchord.data.model.Song
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -18,9 +22,30 @@ class DesktopDownloadQueueTest {
 
     private fun song(id: String) = Song(videoId = id, title = "Track $id", artist = "Artist", thumbnailUrl = "")
 
+    private val realTransfer = DesktopDownloadQueue.transfer
+
     @AfterTest
     fun tearDown() {
         DesktopDownloadQueue.cancelAll()
+        DesktopDownloadQueue.transfer = realTransfer
+    }
+
+    @Test
+    fun `cancelling running tracks leaves the rest of the queue to the workers`() = runBlocking {
+        // Every worker busy with a track that never ends; cancelling them used to cancel the
+        // workers themselves, and the tracks behind them stayed queued for good.
+        DesktopDownloadQueue.transfer = { song, _ ->
+            if (song.videoId.startsWith("stuck")) awaitCancellation() else Result.success(song)
+        }
+        val stuck = (0 until DesktopDownloadQueue.WORKERS).map { "stuck$it" }
+        stuck.forEach { DesktopDownloadQueue.enqueue(song(it)) }
+        listOf("after1", "after2").forEach { DesktopDownloadQueue.enqueue(song(it)) }
+        withTimeout(5_000) {
+            DesktopDownloadQueue.active.first { rows -> stuck.all { rows[it]?.state is DesktopDownloadState.Running } }
+        }
+        stuck.forEach(DesktopDownloadQueue::cancel)
+        withTimeout(5_000) { DesktopDownloadQueue.active.first { it.isEmpty() } }
+        Unit
     }
 
     @Test

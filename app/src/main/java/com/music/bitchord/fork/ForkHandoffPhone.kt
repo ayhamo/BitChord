@@ -8,6 +8,7 @@ import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.navidrome.ForkHandoff
 import com.music.bitchord.data.navidrome.ForkHandoffStore
+import com.music.bitchord.data.navidrome.NavidromePlatform
 import com.music.bitchord.data.navidrome.NavidromeSettings
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
@@ -43,7 +44,8 @@ import java.util.concurrent.ConcurrentHashMap
  * **Offering** is the main screen's: when it comes to the front it asks once ([checkOffer]) whether
  * the PC left a newer note, and shows the chip above the mini player ([offer]); a tap restores
  * through [ForkQueues] (the saved-queue path: queue, song, second, and here the origin too), a
- * close dismisses that one note for good. Nothing plays without the tap.
+ * close dismisses that device's queue while it plays on with it ([dismiss]). Nothing plays without
+ * the tap, and playing here takes the chip away.
  *
  * **The playing copy**: a YouTube song playing as an addon's better copy is noted with that copy
  * (source + its own track id, [noteOpened] from `SourceResolver.streamBest`), so the PC asks it
@@ -80,12 +82,23 @@ object ForkHandoffPhone {
     @Volatile private var lastCheckAt = 0L
     @Volatile private var checkBlockedUntil = 0L
 
+    /**
+     * Until when a restore is still on its way to its second ([ForkQueues.play] seeks once the new
+     * queue's song is ready): its song change and start were written as the song at about 0:00.
+     */
+    @Volatile private var restoringUntil = 0L
+    private const val RESTORE_HOLD_MS = 8_000L
+
+    @Volatile private var playingHere = false // the player's, for the saver's hold
+
     private val saver = ForkHandoff.Saver(
         scope = scope,
         enabled = { _enabled.value && NavidromeSettings.isConfigured() && prefs != null },
         snapshot = { withContext(Dispatchers.Main) { snapshot() } },
         write = { note -> ForkHandoffStore.write(note) { Log.d(TAG, it) }.also { if (it) markSaved(note.savedAt) } },
         log = { Log.d(TAG, it) },
+        offline = { NavidromePlatform.offline.value },
+        held = { (_offer.value != null && !playingHere) || System.currentTimeMillis() < restoringUntil }, // an offer holds a paused phone's saves only; a playing one's are real
     )
 
     fun init(context: Context) {
@@ -124,13 +137,21 @@ object ForkHandoffPhone {
         player = active
     }
 
-    /** From the service's `onDestroy`: the player is going. */
+    /**
+     * From the service's `onDestroy` (main thread): the player is going. A pause or skip still
+     * waiting out its debounce is written now, read while the player is still there; it was lost.
+     */
     fun detach() {
+        if (saver.hasPending) saver.flushPending(runCatching { snapshot()?.copy(playing = false) }.getOrNull())
         player = null
     }
 
     fun onPlayingChanged(isPlaying: Boolean) {
-        if (isPlaying) markSaved(System.currentTimeMillis()) // playing here: a note older than now is not "newer"
+        playingHere = isPlaying
+        if (isPlaying) {
+            markSaved(System.currentTimeMillis()) // playing here: a note older than now is not "newer"
+            _offer.value = null // and the chip offering the other device's queue is out of date
+        }
         saver.onPlayingChanged(isPlaying)
     }
 
@@ -165,6 +186,7 @@ object ForkHandoffPhone {
             positionMs = position,
             origin = ForkHandoff.originOf(playing),
             items = items,
+            playing = p.isPlaying,
         )
     }
 
@@ -243,6 +265,7 @@ object ForkHandoffPhone {
     /** The main screen came to the front: one look at the server, at most every [CHECK_GAP_MS]. */
     fun checkOffer() {
         if (!_enabled.value || !NavidromeSettings.isConfigured() || prefs == null) return
+        if (NavidromePlatform.offline.value) return // offline mode: nothing goes to the server
         val now = System.currentTimeMillis()
         if (now - lastCheckAt < CHECK_GAP_MS || now < checkBlockedUntil) return
         lastCheckAt = now
@@ -262,31 +285,54 @@ object ForkHandoffPhone {
         }
     }
 
-    /** The chip closed: this note is not offered again (a newer one will be). */
+    /**
+     * The chip closed: that device's queue is not offered again while it plays on with it; a new
+     * song or queue there, or a pause, is ([ForkHandoff.isDismissed]).
+     */
     fun dismiss() {
         val note = _offer.value ?: return
-        prefs?.edit()?.putString(KEY_DISMISSED, note.key)?.apply()
+        prefs?.edit()?.putString(KEY_DISMISSED, note.dismissKey)?.apply()
         _offer.value = null
     }
 
+    /** How "Continue from other device" went, for its message. */
+    enum class Outcome { PLAYED, NOTHING, UNREACHABLE, FAILED }
+
     /**
      * "Continue from other device" in the player's menu: the server's note whatever its age, if it
-     * came from another device. [done] gets false when there is none (or it can't be read).
+     * came from another device. A server that couldn't be read is [Outcome.UNREACHABLE], not
+     * "nothing to continue", which it used to say.
      */
-    fun restoreLatest(done: (Boolean) -> Unit) {
+    fun restoreLatest(done: (Outcome) -> Unit) {
         scope.launch {
-            val note = runCatching { ForkHandoffStore.read() }.getOrNull()?.takeIf { it.device.id != deviceId && it.items.isNotEmpty() }
+            val read = try {
+                Result.success(ForkHandoffStore.read())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.d(TAG, "handoff: could not read the note (${e.javaClass.simpleName}: ${e.message})")
+                Result.failure(e)
+            }
+            val note = read.getOrNull()?.takeIf { it.device.id != deviceId && it.items.isNotEmpty() }
             withContext(Dispatchers.Main) {
-                if (note == null) done(false) else done(restore(note))
+                done(
+                    when {
+                        read.isFailure -> Outcome.UNREACHABLE
+                        note == null -> Outcome.NOTHING
+                        restore(note) -> Outcome.PLAYED
+                        else -> Outcome.FAILED
+                    },
+                )
             }
         }
     }
 
-    /** The chip's tap. */
+    /** The chip's tap. The chip goes only once the queue is playing: a failed restore left nothing to tap again. */
     fun restoreOffered(): Boolean {
         val note = _offer.value ?: return false
+        if (!restore(note)) return false
         _offer.value = null
-        return restore(note)
+        return true
     }
 
     /**
@@ -313,8 +359,16 @@ object ForkHandoffPhone {
             type = origin?.sourceType ?: PlaybackSourceType.QUEUE,
             id = origin?.id,
         )
+        // Nothing written until the restore has reached its second (or given up): its song change and
+        // start were otherwise saved as the song at about 0:00.
+        restoringUntil = System.currentTimeMillis() + RESTORE_HOLD_MS
+        val played = ForkQueues.playHandoff(restored.songs, restored.index, restored.positionMs, source) { restoringUntil = 0L }
+        if (!played) {
+            restoringUntil = 0L
+            return false // not taken up: still offered, and still newer than this phone's own note
+        }
         markSaved(note.savedAt) // taken up: not offered again
         Log.d(TAG, "handoff: continuing ${restored.songs.size} songs from ${note.device.name} at ${ForkHandoff.clock(restored.positionMs)}")
-        return ForkQueues.playHandoff(restored.songs, restored.index, restored.positionMs, source)
+        return true
     }
 }

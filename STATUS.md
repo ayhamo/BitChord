@@ -9,17 +9,132 @@ The single list of what is left, ticked when done. Everything not here is either
 - [ ] Multi-select in Downloads / Local Music (PC; the phone's hold-to-select, Select all, Delete / Download / Remove from cache)
 - [ ] Local Music Playlists and Folders tabs, with the PC Local Music port (after upstream v1.9.1 is merged)
 - [ ] Vocals-only (bundled vocal model; `vocals-only` branch; phone speed first)
-- [ ] PoToken
-- [ ] Karaoke
 - [ ] Kawarp fluid background
-- [ ] Light theme / system theme on the PC
 - [ ] Picture-in-picture
+- [ ] PC-Continued's Automix planner changes (8498b497/18b6b3ae: blend in a vocal gap, auto 8/16 bars, end where the sound stops; shared, changes the phone): look again at their next major release, maybe as an off-by-default experimental switch
+- [ ] Home "See all" for shelves without a YouTube link (owner, 2026-11-05): open the shelf's own items in the grid; signed-out Home shelves carry no link
+- [ ] PC updater (owner, 2026-11-05): a second small exe beside BitChord.exe, started by BitChord: downloads the release zip, extracts it over the app without touching `data/`, then opens BitChord; with a nice update window. Revived 441cdf9f's updater is the reference, not the code
 - [ ] Cover fade (cover-to-cover transition, from the Octave video)
 - [ ] Two or three Apple AutoMix presets on our own analysis
 - [ ] "My devices" and remote control (via Listen Together, ~1 day)
 - [ ] youtube.com playlists in the app (not only YouTube Music's)
 - [ ] Suggested songs under playlists: not shown on the PC (no second page fetched); check the phone with the same playlist, then fix the shared parser if needed
 - [ ] Sidebar ⟳ beside the playlists, F5 / Ctrl+R (offered; the Library page button and focus refresh are done)
+
+## PC fork survey: everything still takeable (2026-11-05, two agents, read-only; no SponsorBlock; keyboard shortcuts skipped by the owner)
+
+S ~1-2 agent-h, M ~4-8, L ~10-20. "shared" = the phone runs it too (test both; upstream behaviour → ask first).
+
+**Desktop Revived** (485 commits to revived/1.9.1). Quick: 1 locale-safe analysis JSON (9dcd4818, `analysis_jni.cpp:67` `%.6g` writes "," on a comma-decimal Windows locale → every native analysis rejected; S, highest value); 2 Trending keeps official videos (855e855f, shared); 3 duplicate new-release/video shelves (bbfb5a78, shared); 4 Spotify Canvas hardening (1432c5af, ad164a5d, f432c745, ccdc961a/750c2098; partly ours); 5 Spotify library fixes (a62df09d, 8b757325/32e61148); 6 web sign-in "Use this profile" again + blocked-window help (2bed5513); 7 full update notes (fd4e5680; ours cut at 600 chars); 8 cover colours from Canvas frames (bbb5f682); 9 Korean strings; 10 Linux bits. Medium/large: 11 Home "See all" pages (fbd0a9a0 family, shared, ask); 12 Apple moving artist video (port the phone's `AppleArtistArt`); 13 faster start-up (3d73286b family); 14 true borderless full screen (491a2bc9); 15 Linux window fixes; 16 Spotify account manage/switch; 17 Spotify token via Chromium (6bf7b579, risky); 18 playlist overflow menus; 19 song menu quick-action row (phone's wins); 20 hover effects; 21 list edge fades; 22 Now Playing details panel; 23 "New" page; 24 narrow-window icon rail; 25 in-app updater (L); 26 light theme, PiP (L, later list); 27 cosmetics. ~95 h, ~55 h without cosmetics/Linux/26.
+
+**PC-Continued** (20 commits to v1.9 8f03de8f; 370ab56c is already ours via upstream PR #795; BBC radio is dead code in their v1.9). Quick: 1 PoToken re-mint (c310d0e3, shared, test phone too); 3 caps: lyrics LRU 300 (ours unbounded), Coil/artwork 12 MB, cover disk cache (288m heap: measure first); 4 Karaoke (e16ed1f8); 5 canvas HLS master first (5e9dbcbd); 6 typed lyric search waits for all providers (18b6b3ae, shared opt-in); 10 Win11 snap layouts (5b1b855c, native); 16 Listen Together error after 3 reconnects (aaaaee54); 17 Atmos leftovers (18b6b3ae); 18 output device glyphs. Medium: 8 Automix FX polish (8498b497, by ear); 9 backdrop pulse (sharedUi); 11 per-track source pin (5b1b855c); 12 accent colour (be257dad); 15 live radio now-playing (ICY/ID3, could title Navidrome radio). Owner calls: 2 yt-dlp out of process (bundled 23.5 MB exe goes stale, no cookies); 7 planner: vocal-gap blend, auto 8/16 bars (shared, changes phone Automix); 13 settings sub-pages; 14 turntable cover; 19 Chrome sign-in. Their look: 20 Apple Music catalogue/charts (L, scrapes apple.com), 21 their player look (L). ~125 h, ~75 h without 20-21.
+
+## Final area audit (2026-11-05): all fixed, not committed, not tried in the apps
+
+Eight Opus reviewers (one per area), each finding re-checked by a second agent. The owner said fix all: five fixers fixed every confirmed finding with tests, three reviewers then found and fixed 16 problems in the fixes. Built and tested: phone 1312/1312, shared + sharedUi + PC 959 tests with only the 16 FFmpeg-less failures. Native window fixes need a hand check on Windows (maximize→F11→Esc, Alt+Tab in full screen, snap→F11→Esc, caption double-click, non-ANSI folder, Quit then start). Left on purpose (low): a ms-wide name-claim window on PC downloads; records kept when every downloaded file is deleted by hand; accented 100-120 char names renamed by the byte cut; tracks past the 2 h sync deadline not cancellable; the PC download .part sidecar untested; quit save may time out if a tick waits for the UI thread; Karaoke keeps the old stereo verdict ~90 ms after a mix; PC liked list ignores server-side unstars.
+
+```
+PLAYLIST SYNC (verified)
+1 MEDIUM fork PC: quiet focus refresh after error -> stuck skeleton (Refresh button still visible) DesktopApp.kt:2939/2974
+2 LOW PC: focus refresh re-walks all Liked pages DesktopApp.kt:2960-2971
+3 LOW upstream phone: one always-failing playlist -> every app open re-reads all followed playlists PlaylistSync.kt:106/152/180/184
+4 MEDIUM upstream phone: tapping one "New songs in A" approves every playlist's big batch PlaylistSync.kt:330-333/377/117-123/197
+5 LOW fork PC: page with no new rows ends walk as complete -> deleted tracks re-downloaded ForkPlaylistSync.kt:478/481/382
+6 LOW fork PC: "Download" approval waits silently behind a running check ForkPlaylistSync.kt:300/412
+7 LOW fork PC: lastAttempt stamped before reads -> failed check skips 12 h ForkPlaylistSync.kt:194/302
+8 LOW both: failed read clears unanswered ask ForkPlaylistSync.kt:340-343; PlaylistSync.kt:193
+9 LOW fork PC: Delete download during sync download leaves new tracks ForkCollectionActions.kt:217-237
+
+HANDOFF (verified, all fork)
+1 HIGH both: backgrounding a paused device overwrites the other device's newer note ForkHandoff.kt:617-619
+2 MEDIUM PC mainly: "Not now" doesn't stick while the other device plays ForkHandoff.kt:164/436-442
+3 LOW both: offer not withdrawn when this device starts playing
+4 MEDIUM both: write back-off (to 30 min) drops pause/background saves, not reset on reconnect ForkHandoff.kt:643/665
+5 LOW both: no final save on PC quit / within 1.5 s of skip
+6 LOW both: rebuffer/seek extra writes; full note every 30 s (~5-6 MB/h)
+7 LOW both: one transient refusal caps notes at 4 KB for the run ForkHandoffStore.kt:71-74
+8 LOW phone: restore briefly writes position ~0
+9 LOW phone: failed restore uses up the chip
+10 LOW both: read failure says "Nothing to continue"
+
+COVER CLIPS (verified)
+1 HIGH upstream both: Spotify stale query hash + failed scrape -> every song re-downloads open.spotify.com + up to 8 MB bundles (Spotify signed-in only) SpotifyCanvasQuery.kt:126-138
+2 HIGH fork PC: Apple 401 -> re-scrape picks the same refused JWT, no backoff -> per-song HTML+bundle GETs DesktopCanvasSources.kt:365-410
+3 MEDIUM both: Spotify client-token failures not cached, ~5 POSTs per song; PC new HttpClient per call
+4 HIGH fork PC: clip decoder leaks FFmpeg state + file handle when cancelled while opening DesktopCanvasVideo.kt:73-81, DesktopCanvas.kt:285-295
+5 MEDIUM fork PC: album-header clip never pauses, 3 unclosed copies per frame DesktopCanvas.kt:271-307
+6 MEDIUM upstream both: Latin artist + non-Latin title -> another song's clip CanvasArtwork.kt:79
+7 LOW fork phone: Spotify backdrop 429 cached 10 min ForkCanvas.kt:117-145
+8 LOW both: failed Pathfinder not reported (mostly harmless)
+9 LOW both: iTunes rate limit cached as "no artist art" until restart AppleCatalogue.kt:56-64
+10 LOW upstream both: community manifest re-fetched per lookup while host down
+
+PLAYBACK (verified)
+1 MEDIUM fork PC (today): Karaoke + EQ on -> mono source (or identical L/R) plays as silence; Skip silence races through ForkKaraoke.kt:65-79
+2 MEDIUM fork PC (today): yt-dlp URL refused mid-track stays cached -> recovery reuses it, song ends early; replay blocks YouTube for the session ForkYtDlp.kt:153-197
+3 LOW fork PC: crossfade-on-skip ticket race (microseconds at 3 s) -> blend cut, song restarts DesktopAudioEngine.kt:2331-2398
+4 REJECTED: saved-queues first-read race (no save can happen that early)
+Phone skip/mask/queue/AutoPlay incl. today's fix: clean.
+
+DOWNLOADS (verified; desktopApp = upstream's old desktop app the fork owns)
+1 HIGH PC: cancelling one running download leaves the rest of the queue stuck "Running 0%" DesktopDownloadQueue.kt:144-182
+2 MEDIUM PC: same "Artist - Title" -> shared/corrupt file DesktopDownloadManager.kt:32-89
+3 MEDIUM PC: cancel leaves .part; complete .part -> HTTP 416 forever; resume across sources corrupts
+4 MEDIUM PC: menu "Remove download" off the Downloads page drops record, file stays DesktopApp.kt:1228-1234
+5 MEDIUM fork PC: Delete download on a playlist deletes tracks a downloaded album also holds ForkPlaylistSync.kt:259-264
+6 LOW fork PC: cancel during tagging swallowed -> still recorded ForkDownloadTags.kt:61-63
+7 MEDIUM phone (Android 15+): after the data-sync time limit, queued tracks stuck "Queued", re-tap does nothing Downloads.kt:920/199
+8 MEDIUM fork phone (Android 15+): "Available offline" waits in foreground for an allowed network, burning the 6 h budget ForkOfflineService.kt:60-63
+9 MEDIUM upstream phone: Delete download on a release doesn't stop its running downloads Downloads.kt:516-522
+10 LOW phone: same-named tracks on two workers overwrite each other
+11 LOW phone: long CJK titles exceed 255-byte filename -> download fails
+12 LOW PC: downloads list capped at 200
+13 LOW PC: startup check forgets all records when the Music drive is missing
+
+SETTINGS & BACKUP (verified, all fork)
+1 HIGH PC: failed portable settings write (OneDrive/AV lock) never retried -> changes or a whole import lost at exit ForkFilePreferences.kt:105-191
+2 LOW PC: backup drops NetEase lyrics tick/order
+3 MEDIUM both: 4 shared settings (artist signatures on/URL, smart version alignment, direct source stream) missing from the mapping -> PC->phone restore resets them ForkBackup.kt:166-207
+4 LOW phone: Fork settings page rows not greyed (Crossfade on skip, Animated covers, Backdrop videos; Navidrome rows with no server) ForkSettingsRows.kt:307-384
+5 LOW both: defaults not carried (full-bleed artwork flips)
+6 LOW PC: yt-dlp path travels between PCs, blocks PATH fallback
+7 LOW PC: import failing late leaves half-applied data
+8 LOW PC: old audio-quality value exported unmigrated
+9 LOW PC: export overwrites the target in place
+
+NAVIDROME (verified)
+1 CRITICAL fork PC: PC sends Navidrome "finished" scrobbles + ListenBrainz listens only for the queue's last song (normal advances go through onCrossfaded) DesktopApp.kt:1609-1638, DesktopAudioEngine.kt:1217-1221
+2 MEDIUM fork phone: offline switch on + network up -> AutoPlay/Start radio on a Navidrome song queue server songs (PC checks); LOW: handoff + lyrics still ask the server Autoplay.kt:105-111
+3 MEDIUM fork phone: server down on working network -> library pages error instead of kept songs NavidromeRepository.kt:56-75
+4 LOW both: kept playlist listed ≥50% during a rescan -> local copies swept, re-downloaded later NavidromeOffline.kt:479-487
+5 LOW phone: fast star/unstar race
+6 LOW both: dormant /auth/login + /api/ interceptor still installed (rule violation in code) NavidromeClips.kt:136-217
+7 LOW both: genre tiles 31 requests at once (within burst)
+8 LOW both: server-side unstars/account switch not reflected until restart
+9 LOW PC: star failure not rolled back (same as upstream YouTube)
+10 LOW both: instantMix swallows cancellation
+
+PC WINDOW & NATIVE (verified, all fork, PC)
+1 HIGH: F11 from a maximized window -> stuck fullscreen + topmost, no way out but quitting; saves monitor-size bounds window_jni.cpp:314-320, DesktopWindowMode.kt:55-58
+2 MEDIUM: fullscreen forces topmost -> Alt+Tab apps stay under BitChord window_jni.cpp:121-133
+3 MEDIUM: double-click player caption in fullscreen maximizes the popup (taskbar band unpainted) Main.kt:178-196
+4 LOW: monitor unplug/resolution change during fullscreen
+5 MEDIUM: portable folder path with characters outside the ANSI code page -> Java fails to start BitChord.c:221-237
+6 LOW: Quit then immediate restart -> start lost
+7 LOW: maximized window moved to another monitor clamped to the wrong work area window_jni.cpp:99-107
+8 LOW: install_frame message gap (negligible)
+9 LOW: analysis_jni.cpp comment inaccurate on MinGW (no real race)
+```
+
+## Fork picks round (owner, 2026-11-05, running)
+
+Priority from now on: upstream Android first, then PC-Continued; Desktop Revived is cherry-picked only when it publishes a major release. Light theme dropped (not doing). Not doing: Korean text, true borderless full screen, Spotify account switching, SponsorBlock; keyboard shortcuts skipped for now.
+
+Doing now (subagents, then one audit, build and test):
+- Revived: analysis JSON on a comma-decimal Windows locale (9dcd4818; check, fix if affected); Spotify Canvas lookup hardening (1432c5af, ad164a5d, f432c745, ccdc961a/750c2098); Spotify library fixes (a62df09d, 8b757325/32e61148); web sign-in "Use this profile" again (2bed5513); full update notes (fd4e5680).
+- PC-Continued: Karaoke (e16ed1f8); canvas HLS master first (5e9dbcbd); Atmos leftovers (18b6b3ae); Win11 snap layouts (5b1b855c); Listen Together error after 3 failed reconnects (aaaaee54); PoToken re-mint (c310d0e3, shared, test phone too); Automix FX polish (8498b497); accent colour from the song (be257dad); backdrop pulse (8498b497, PC only); per-track source pin (5b1b855c).
+Second batch (owner, 2026-11-05, after the first): faster start-up (Revived 3d73286b family: lazy Local Music scan, analyser/download check after the window shows, Replay stats off the UI thread, Library on demand) + AppCDS in the launcher; Trending keeps official videos (855e855f, shared); duplicate new-release/video shelves (bbfb5a78, shared); cover colours from Canvas frames (bbb5f682); Home "See all" pages (fbd0a9a0 family, shared, owner-approved); Apple moving artist video on the PC (port the phone's `AppleArtistArt`); live now-playing titles for internet radio incl. Navidrome stations (PC-Continued 5b1b855c/e16ed1f8 `DesktopRadioNowPlaying`); yt-dlp as a resolver (PC-Continued c310d0e3 idea; uses the owner's own yt-dlp, no bundled exe). Planner changes: later list, at their next major release.
+Undecided (explained to the owner): Revived Trending videos, duplicate shelves, Canvas cover colours, Home "See all", Apple artist video, hover/fades/menus, faster start-up; PC-Continued radio now-playing, planner, turntable, Chrome sign-in, yt-dlp.
 
 ## Where it stands (2026-11-04, end of day)
 
@@ -125,6 +240,8 @@ The single list of what is left, ticked when done. Everything not here is either
 
 - The PC follows **both** PC forks, picking selectively (owner, 2026-11-04, after the BitChord Discord's admins recommended PC-Continued): **PC-Continued** (jackychan4891, remote `pc-continued`) and **Desktop Revived** (Bntagaaa, remote `revived`). Engine fixes and features commit by commit, never their UI or branch. Each has a daily release watcher: `fork-pc-continued-watch.yml` / `.github/pc-continued-seen.txt` and `fork-desktop-revived-watch.yml` / `.github/desktop-revived-seen.txt` (a new release fails the run, so GitHub emails).
 - Later, the owner's list: PC-Continued's PoToken change (shared code, test phone and PC together); a "Karaoke" switch (centre-channel cancel, PC-Continued e16ed1f8; bass and drums go too); the vocals-only toggle (`vocals-only` branch, plan in the 2026-11-04 conversation; waits until the Revived switch is done); "Fluid Background" (Kawarp: the cover downscaled to 128 px, Kawase-blurred, then a moving domain warp each frame, saturation/brightness/dither, crossfade on track change; library better-lyrics/kawarp `@kawarp/core`; the owner's YT Music Extension project has a tuned integration to read: `src\kawarp.js`, `src\kawarp-bg.js`, defaults in `src\content.js` (warp 1.0, blur passes 6, speed 4.15, saturation 2.6, dithering 0.034, brightness 0.5); BitChord would redo it natively, e.g. as a style of `ArtworkMeshBackdrop`). A light / system theme on the PC (measured 2026-11-04: about 7-10 agent-hours; Revived's `DesktopTheme.kt` / `DesktopSystemTheme.kt` drop in, ~330 literals in ~25 PC dialogs need judging, the native Mica call hard-codes dark in `window_jni.cpp`; default DARK like the phone). A picture-in-picture mini player (Revived `DesktopPip*`, 1b7b472a, built on their UI). Cover change fade (owner, 2026-11-04, from a screen recording of another player): keep the old cover until the new one loads, then an in-place ease-in-out-sine dissolve (~0.6-0.9 s; the recording's was 1.55 s), optional front Y-flip, setting Cut/Dissolve/Flip, later following the Automix blend; one shared `sharedUi` file + ~4 hooks in NowPlayingScreen/LandscapePlayer; core+flip ~5-8 agent-h, all ~10-15 h. Automix: two or three of Apple's AutoMix transition presets on top of BitChord's own analysis (seen in Octave's web player 2026-11-04: 17 presets as gain/filter/reverb/delay/repeater/gater/tempo automations chosen by genre and beat lock; e.g. "Ease-in Ring-out + Reverb", the hip-hop/pop delay-out); needs an effects stage; the owner judges by ear. PC Local Music like the phone's (tags, Albums/Artists tabs, opus/aiff/dsd files; owner moved it here 2026-11-04). The whole later list is reviewed after upstream's v1.9.1 is merged.
+- PC-Continued recheck (2026-11-05, their v1.9 = 8f03de8f, already in the watcher): not yet looked at, from the agent's list: canvas decoder fix 5e9dbcbd (S-M, PC), typed lyric search waiting for every provider 18b6b3ae (S, shared `LyricsRepository`), Apple-style search / Top Picks and mood shelves / accent colour (be257dad), charts, city charts, BBC radio now-playing, window snapping (5b1b855c), backdrop pulse `PlayerAudioPulse` and party from the player menu (8498b497), settings sub-pages (e16ed1f8). **Skipped for now (owner, 2026-11-05): PC keyboard shortcuts** (Ctrl+K quick search, the shortcuts sheet, e16ed1f8); the owner may revisit.
+- AutoPlay (2026-11-05): the owner's empty AutoPlay was Repeat being on, not a bug. Found on the way (upstream code, not fixed, needs the owner's OK): starting an album/playlist page keeps the previous song's AutoPlay tail (`PlaybackService.startBoundedContext`, `existingAutoplay = autoplay`), so the new song gets no radio of its own while 10 old suggestions wait; and a paged playlist never re-checks AutoPlay once its last page loads.
 - How the sources relate (owner, 2026-11-04): BitChord Android (upstream) is the base, merged whole; this fork adds Navidrome and the owner's changes; the PC follows the phone; PC-Continued and Desktop Revived are only quarries. Forks are looked at only when they publish a major release (the watchers), never per commit. Phone parity first: if the phone has a feature, the phone's version wins; a fork's version only where the phone has nothing comparable. Every pick is credited (fork + commit) in the code comment and FORK.md.
 - Licences (owner, 2026-11-04): not a constraint any more; the fork is for the owner's own use and will be made private.
 

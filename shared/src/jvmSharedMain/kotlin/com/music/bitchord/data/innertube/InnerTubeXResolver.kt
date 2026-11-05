@@ -73,6 +73,15 @@ object InnerTubeXResolver {
     @Volatile
     var debugLogging: Boolean = false
 
+    /**
+     * Fork (from PC-Continued c310d0e3): whether [init] and a session change prewarm the cipher
+     * solver and the PoToken WebView before the first track. Always true on the phone; the PC turns
+     * it off while its yt-dlp resolver (ForkYtDlp) answers first, so WebKit and QuickJS, which have
+     * no dispose, are only loaded if a track ever falls back to this resolver.
+     */
+    @Volatile
+    var autoPrewarm: Boolean = true
+
     private var prefs: ConfigStore? = null
     private var poTokens: TokenProvider? = null
     private var playerDir: File? = null
@@ -90,7 +99,7 @@ object InnerTubeXResolver {
         playerDir = File(filesDir, "innertubex_players").apply { mkdirs() }
         scope.launch {
             cipherService.setPreprocessedPlayerCache(::readPlayer, ::writePlayer)
-            warm(WARM_DELAY_MS)
+            if (autoPrewarm) warm(WARM_DELAY_MS) // fork: was unconditional
         }
     }
 
@@ -386,7 +395,7 @@ object InnerTubeXResolver {
         excluded.clear()
         minted.clear()
         // A new cookie or visitor means a new player config and PoToken binding.
-        if (prefs != null) warm(0)
+        if (prefs != null && autoPrewarm) warm(0) // fork: + autoPrewarm
         _sessionGeneration.update { it + 1 }
     }
 

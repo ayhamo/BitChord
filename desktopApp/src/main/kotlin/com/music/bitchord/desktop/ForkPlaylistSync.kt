@@ -102,6 +102,16 @@ internal object ForkPlaylistSync {
      */
     private const val DOWNLOAD_WAIT_MILLIS = 2L * 60 * 60 * 1000
 
+    /**
+     * The longest one whole check may hold [running], downloads included. The per-playlist wait
+     * alone let a check with several busy playlists hold it for hours each, with an approved
+     * "Download" waiting behind it; what is left unsettled stays new for the next check.
+     */
+    private const val CHECK_DEADLINE_MILLIS = DOWNLOAD_WAIT_MILLIS
+
+    /** A check that could read nothing (offline, no network) is tried again after this, not after [PERIOD_MILLIS]. */
+    private const val NOTHING_READ_RETRY_MILLIS = 30L * 60 * 1000
+
     /** After launch, before the first look: the window's startup check of the downloads goes first. */
     private const val FIRST_LOOK_MILLIS = 90_000L
 
@@ -121,6 +131,13 @@ internal object ForkPlaylistSync {
         val videoIds: List<String>,
         /** The files downloaded for it, by track, so "every file is gone" can be told. */
         val files: Map<String, String> = emptyMap(),
+        /**
+         * False for an album downloaded whole (the phone's record of releases downloaded whole):
+         * never checked for new tracks, only there so a playlist's "Delete download" leaves the
+         * tracks the album also holds ([keptByOthers]). Without it, deleting a playlist deleted
+         * the shared tracks out of a downloaded album.
+         */
+        val followed: Boolean = true,
     )
 
     private val persistence = DesktopPersistence()
@@ -145,6 +162,13 @@ internal object ForkPlaylistSync {
     private val running = Mutex()
     private val writeLock = Mutex()
     @Volatile private var lastAttempt = 0L
+
+    /**
+     * The tracks a check is downloading for each playlist right now. They are not in its record
+     * until they have settled, so "Delete download" during a sync used to leave them downloading
+     * and on disk with nothing following them ([inFlightOf]).
+     */
+    private val inFlight = java.util.concurrent.ConcurrentHashMap<String, Set<String>>()
 
     fun setEnabled(on: Boolean) {
         _enabled.value = on
@@ -191,8 +215,7 @@ internal object ForkPlaylistSync {
                     val sinceComplete = now - (persistence.string(KEY_LAST_CHECK, "0").toLongOrNull() ?: 0L)
                     // A check that failed partway is due again after a period, not on every tick:
                     // the next launch's catch-up is the phone's early retry.
-                    val due = if (first) sinceComplete >= CATCH_UP_MILLIS else sinceComplete >= PERIOD_MILLIS && now - lastAttempt >= PERIOD_MILLIS
-                    if (due) runCheck()
+                    if (checkDue(first, sinceComplete, now - lastAttempt)) runCheck()
                 }
                 first = false
                 delay(TICK_MILLIS)
@@ -213,8 +236,10 @@ internal object ForkPlaylistSync {
      * rest.
      */
     fun remember(browseId: String, type: BrowseType, title: String, subtitle: String, thumbnailUrl: String?, songs: List<Song>) {
-        if (type != BrowseType.PLAYLIST) return
-        val id = syncableBrowseId(browseId) ?: return
+        val followed = type == BrowseType.PLAYLIST
+        if (!followed && type != BrowseType.ALBUM) return
+        // An album is recorded too, unfollowed: only so another release's delete leaves its tracks.
+        val id = (if (followed) syncableBrowseId(browseId) else browseId.takeIf(String::isNotBlank)) ?: return
         val ids = songs.filterNot { it.videoId.isBlank() }.map { it.videoId }.distinct()
         if (ids.isEmpty()) return
         scope.launch {
@@ -231,6 +256,7 @@ internal object ForkPlaylistSync {
                         thumbnailUrl = thumbnailUrl ?: existing?.thumbnailUrl,
                         videoIds = (ids + existing?.videoIds.orEmpty()).distinct(),
                         files = onDisk + existing?.files.orEmpty(),
+                        followed = followed || existing?.followed == true,
                     )
                 )
             }
@@ -240,14 +266,14 @@ internal object ForkPlaylistSync {
 
     /** The tracks the record for [browseId] names; empty when it is not a followed playlist. */
     suspend fun tracksOf(browseId: String): Set<String> {
-        val id = syncableBrowseId(browseId) ?: return emptySet()
+        val id = recordKey(browseId) ?: return emptySet()
         ensureLoaded()
         return records.value[id]?.videoIds?.toSet().orEmpty()
     }
 
     /** Fork: the files the record for [browseId] names, by track; empty when it is not a followed playlist. */
     suspend fun filesOf(browseId: String): Map<String, String> {
-        val id = syncableBrowseId(browseId) ?: return emptyMap()
+        val id = recordKey(browseId) ?: return emptyMap()
         ensureLoaded()
         return records.value[id]?.files.orEmpty()
     }
@@ -256,22 +282,39 @@ internal object ForkPlaylistSync {
      * What every record but [browseId]'s names, by track and by file: a release's "Delete download"
      * leaves those, as the phone's `Downloads.tracksOnlyIn` does (one file can answer to two ids).
      */
-    suspend fun keptByOthers(browseId: String): Pair<Set<String>, Set<String>> {
+    suspend fun keptByOthers(browseId: String, trackIds: Set<String> = emptySet()): Pair<Set<String>, Set<String>> {
         ensureLoaded()
-        val own = syncableBrowseId(browseId)
-        val others = records.value.values.filter { it.id != own }
+        val own = recordKey(browseId)
+        val others = records.value.values.filter { it.id != own && !sameRelease(it, browseId, trackIds) }
         return others.flatMapTo(HashSet()) { it.videoIds } to others.flatMapTo(HashSet()) { it.files.values }
     }
+
+    /** The tracks [inFlight] for [browseId]'s playlist: a check is downloading them right now. */
+    fun inFlightOf(browseId: String): Set<String> = recordKey(browseId)?.let { inFlight[it] }.orEmpty()
+
+    /**
+     * An album record that is the release being deleted under another id (an album answers to its
+     * `MPREb_` and its `OLAK5uy_` id): every track it names is among [trackIds]. Counted as one
+     * of the others, it kept every one of its own tracks from being deleted. Only when an album is
+     * what is being deleted: a playlist holding a whole album must still leave that album's tracks.
+     */
+    private fun sameRelease(record: Record, browseId: String, trackIds: Set<String>): Boolean =
+        !record.followed && ForkCollectionActions.cardType(browseId) == BrowseType.ALBUM &&
+            record.videoIds.isNotEmpty() && trackIds.containsAll(record.videoIds)
+
+    /** The key a release's record is under: a playlist's `VL` id, an album's own id. */
+    private fun recordKey(browseId: String): String? = syncableBrowseId(browseId) ?: browseId.takeIf(String::isNotBlank)
 
     /**
      * Stops following [browseId], the phone's `forgetCollection` after "Delete download": a playlist
      * the listener has just removed from the computer is not one to fill again.
      */
-    suspend fun forget(browseId: String) {
-        val id = syncableBrowseId(browseId) ?: return
+    suspend fun forget(browseId: String, trackIds: Set<String> = emptySet()) {
+        val id = recordKey(browseId) ?: return
         ensureLoaded()
-        if (records.value[id] == null) return
-        records.update { it - id }
+        val doomed = records.value.values.filter { it.id == id || sameRelease(it, browseId, trackIds) }.map { it.id }
+        if (doomed.isEmpty()) return
+        records.update { it - doomed.toSet() }
         _asks.update { it - id }
         persist()
     }
@@ -297,9 +340,21 @@ internal object ForkPlaylistSync {
      * playlist's big batch, asks never shown and ones answered "Not now" included.
      */
     private suspend fun runCheck(approved: String? = null) {
-        if (approved != null) running.lock() else if (!running.tryLock()) return
+        if (approved != null) {
+            // Said out loud: the "Download" waits behind a check already running, and nothing
+            // on screen showed for it until then.
+            if (!running.tryLock()) {
+                ForkNotice.show(DesktopStrings["playlist_sync_waiting", "Downloads once the playlist check under way is done"])
+                running.lock()
+            }
+        } else if (!running.tryLock()) {
+            return
+        }
+        // Stamped when the check ends, not before it reads: one that could read nothing (offline,
+        // no network) used to push the next try a whole period away.
+        var readSomething = false
+        val deadline = System.currentTimeMillis() + CHECK_DEADLINE_MILLIS
         try {
-            if (approved == null) lastAttempt = System.currentTimeMillis() // one approved playlist doesn't push back everyone's 12 h check
             ensureLoaded()
             if (ForkOffline.switched.value) {
                 DesktopTrackLog.log("playlist sync: offline mode, not checked")
@@ -315,12 +370,19 @@ internal object ForkPlaylistSync {
                     persist()
                     continue
                 }
+                if (!record.followed) continue // an album downloaded whole: recorded, never checked
+                if (System.currentTimeMillis() >= deadline) {
+                    whole = false
+                    DesktopTrackLog.log("playlist sync: the check ran out of time; the rest waits for the next one")
+                    break
+                }
                 val listing = readWholePlaylist(id)
+                if (listing.opened) readSomething = true
                 if (!listing.complete) {
                     whole = false
                     DesktopTrackLog.log("playlist sync: '${record.title}' was not read to its end; the rest waits for the next check")
                 }
-                update(record, listing, approved = id == approved)
+                update(record, listing, approved = id == approved, deadline = deadline)
                 delay(PAUSE_MILLIS)
             }
             if (whole && approved == null) persistence.saveString(KEY_LAST_CHECK, System.currentTimeMillis().toString())
@@ -330,16 +392,31 @@ internal object ForkPlaylistSync {
             // Never a retry loop: the next period (or launch) is the next try.
             DesktopTrackLog.log("playlist sync: check failed: ${e.message}")
         } finally {
+            if (approved == null) lastAttempt = attemptStamp(System.currentTimeMillis(), readSomething) // one approved playlist doesn't push back everyone's 12 h check
             running.unlock()
         }
     }
 
-    private suspend fun update(record: Record, listing: Listing, approved: Boolean) {
+    /**
+     * When a check that ended at [now] counts as attempted: then, when it read at least one
+     * playlist's opening page; otherwise early enough that the next is due [NOTHING_READ_RETRY_MILLIS]
+     * later, a back-off rather than a retry loop.
+     */
+    internal fun attemptStamp(now: Long, readSomething: Boolean): Long =
+        if (readSomething) now else now - PERIOD_MILLIS + NOTHING_READ_RETRY_MILLIS
+
+    /** Whether the schedule's tick runs a check: on launch a catch-up, later once a period has gone by both. */
+    internal fun checkDue(first: Boolean, sinceComplete: Long, sinceAttempt: Long): Boolean =
+        if (first) sinceComplete >= CATCH_UP_MILLIS else sinceComplete >= PERIOD_MILLIS && sinceAttempt >= PERIOD_MILLIS
+
+    private suspend fun update(record: Record, listing: Listing, approved: Boolean, deadline: Long) {
         val known = record.videoIds.toHashSet()
         val fresh = listing.songs.filter { it.videoId !in known }
         if (fresh.isEmpty()) {
-            // Nothing written, as on the phone: the record only changes alongside new tracks.
-            _asks.update { it - record.id }
+            // Nothing written, as on the phone: the record only changes alongside new tracks. The
+            // ask goes only when the listing is whole: a failed read (no songs at all) used to
+            // clear an ask nobody had answered.
+            if (listing.complete) _asks.update { it - record.id }
             return
         }
         if (fresh.size > ASK_ABOVE && !approved) {
@@ -347,7 +424,7 @@ internal object ForkPlaylistSync {
             DesktopTrackLog.log("playlist sync: ${fresh.size} new tracks in '${record.title}', waiting for a yes")
             return
         }
-        _asks.update { it - record.id }
+        if (listing.complete || approved) _asks.update { it - record.id }
         // Already on this computer for some other reason: joins the playlist without being fetched again.
         val saved = DesktopAppUiHost.downloaded.value
         val (onDisk, missing) = fresh.partition { it.videoId in saved }
@@ -355,11 +432,17 @@ internal object ForkPlaylistSync {
         val fetch = missing.map { song ->
             if (song.thumbnailUrl.isNullOrBlank() && cover != null) song.copy(thumbnailUrl = cover) else song
         }
-        val arrived = downloadNow(fetch)
+        inFlight[record.id] = fetch.mapTo(HashSet()) { it.videoId }
+        val arrived = try {
+            downloadNow(fetch, (deadline - System.currentTimeMillis()).coerceAtLeast(0L))
+        } finally {
+            inFlight.remove(record.id)
+        }
         val handled = onDisk.mapTo(HashSet()) { it.videoId } + arrived.handled
         writeRecord(record, listing, handled)
         DesktopTrackLog.log("playlist sync: '${record.title}': ${fresh.size} new, ${arrived.saved} downloaded, ${onDisk.size} already here")
-        if (arrived.saved > 0) {
+        // Deleted meanwhile ("Delete download"): there is nothing it was added to.
+        if (arrived.saved > 0 && records.value[record.id] != null) {
             ForkNotice.show(DesktopStrings.format("playlist_sync_done_title", record.title, arrived.saved, fallback = "Added to %1\$s: %2\$d"))
         }
     }
@@ -395,7 +478,7 @@ internal object ForkPlaylistSync {
      * off by the listener, or already queued from a click. A track that failed is not among them,
      * so the next check tries it again.
      */
-    private suspend fun downloadNow(songs: List<Song>): Batch {
+    private suspend fun downloadNow(songs: List<Song>, waitMillis: Long): Batch {
         if (songs.isEmpty()) return Batch(emptySet(), 0)
         val before = DesktopDownloadQueue.active.value
         val alreadyGoing = songs.filter { before[it.videoId]?.state.let { s -> s == DesktopDownloadState.Queued || s is DesktopDownloadState.Running } }
@@ -409,7 +492,7 @@ internal object ForkPlaylistSync {
         }
         try {
             DesktopDownloadQueue.enqueueAll(ours)
-            val settled = withTimeoutOrNull(DOWNLOAD_WAIT_MILLIS) {
+            val settled = withTimeoutOrNull(minOf(DOWNLOAD_WAIT_MILLIS, waitMillis)) {
                 DesktopDownloadQueue.active.first { active ->
                     ours.all { song ->
                         val state = active[song.videoId]?.state
@@ -417,7 +500,7 @@ internal object ForkPlaylistSync {
                     }
                 }
             }
-            if (settled == null) DesktopTrackLog.log("playlist sync: downloads still unsettled after ${DOWNLOAD_WAIT_MILLIS / 3_600_000} h; those wait for the next check")
+            if (settled == null) DesktopTrackLog.log("playlist sync: downloads still unsettled when the check's time ran out; those wait for the next check")
             // The last finished emission can land a moment after its row leaves [active].
             delay(500)
         } finally {
@@ -455,7 +538,7 @@ internal object ForkPlaylistSync {
      *   failed; [songs] is then whatever came before it, still worth acting on since a check only
      *   ever adds.
      */
-    private class Listing(val songs: List<Song>, val complete: Boolean, val cover: String? = null)
+    private class Listing(val songs: List<Song>, val complete: Boolean, val cover: String? = null, val opened: Boolean = true)
 
     /**
      * Every track in a playlist, however many pages it runs to; the phone's own walk rather than
@@ -464,21 +547,41 @@ internal object ForkPlaylistSync {
      * suggestions are never taken for part of it.
      */
     private suspend fun readWholePlaylist(browseId: String): Listing {
-        val opening = YtMusicRepository.browseSongs(browseId).getOrNull() ?: return Listing(emptyList(), complete = false)
-        val cover = opening.header?.thumbnailUrl
+        val opening = YtMusicRepository.browseSongs(browseId).getOrNull() ?: return Listing(emptyList(), complete = false, opened = false)
+        val (songs, complete) = walkPages(
+            opening.songs,
+            opening.continuation,
+            more = { token -> YtMusicRepository.moreSongs(token).getOrNull()?.let { it.songs to it.continuation } },
+            pause = { delay(PAUSE_MILLIS) },
+        )
+        return Listing(songs, complete, opening.header?.thumbnailUrl)
+    }
+
+    /**
+     * The walk itself: [first] and then every page [more] hands back for a token, each track once.
+     * Complete only when a page came back with no token. A page with nothing new but a token
+     * still attached (a feed looped back on itself, or a page that came back short) stops the walk
+     * as incomplete: taken as the end, the record was cut to what had been read and the tracks
+     * after it, deleted by the listener, came back as new ones and were downloaded again.
+     */
+    internal suspend fun walkPages(
+        first: List<Song>,
+        token: String?,
+        more: suspend (String) -> Pair<List<Song>, String?>?,
+        pause: suspend () -> Unit = {},
+    ): Pair<List<Song>, Boolean> {
         val songs = LinkedHashMap<String, Song>()
-        opening.songs.forEach { songs.putIfAbsent(it.videoId, it) }
-        var next = opening.continuation
+        first.forEach { songs.putIfAbsent(it.videoId, it) }
+        var next = token
         while (next != null) {
-            delay(PAUSE_MILLIS)
-            val page = YtMusicRepository.moreSongs(next).getOrNull() ?: return Listing(songs.values.toList(), complete = false, cover)
+            pause()
+            val (pageSongs, pageToken) = more(next) ?: return songs.values.toList() to false
             val before = songs.size
-            page.songs.forEach { songs.putIfAbsent(it.videoId, it) }
-            // A page with nothing new is a feed looped back on itself with a token still attached.
-            if (songs.size == before) break
-            next = page.continuation
+            pageSongs.forEach { songs.putIfAbsent(it.videoId, it) }
+            if (songs.size == before) return songs.values.toList() to false
+            next = pageToken
         }
-        return Listing(songs.values.toList(), complete = true, cover)
+        return songs.values.toList() to true
     }
 
     // ---- The ask --------------------------------------------------------------
@@ -559,6 +662,7 @@ internal object ForkPlaylistSync {
         thumbnailUrl?.let { put("thumbnailUrl", it) }
         put("videoIds", buildJsonArray { videoIds.forEach { add(JsonPrimitive(it)) } })
         put("files", buildJsonObject { files.forEach { (k, v) -> put(k, v) } })
+        if (!followed) put("followed", false)
     }
 
     private fun parse(array: JsonArray?): Map<String, Record> = array.orEmpty().mapNotNull { element ->
@@ -571,6 +675,7 @@ internal object ForkPlaylistSync {
             thumbnailUrl = o.str("thumbnailUrl"),
             videoIds = (o["videoIds"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
             files = (o["files"] as? JsonObject).orEmpty().mapNotNull { (k, v) -> (v as? JsonPrimitive)?.contentOrNull?.let { k to it } }.toMap(),
+            followed = (o["followed"] as? JsonPrimitive)?.contentOrNull != "false",
         )
     }.associateBy { it.id }
 

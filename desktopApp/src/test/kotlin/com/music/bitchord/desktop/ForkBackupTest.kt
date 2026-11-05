@@ -121,8 +121,12 @@ class ForkBackupTest {
         val out = exported()
         assertEquals(ForkBackupFormat.APP_TAG, out["app"]!!.jsonPrimitive.content)
         // Every setting, the phone-only ones carried through; the month untouched on the PC goes
-        // back exactly as it came.
-        assertEquals(phone["settings"], out["settings"])
+        // back exactly as it came. The settings whose defaults differ between the apps, which the
+        // phone left unset, come back spelled out with the phone's default (what it was using).
+        val spelledOut = phoneDefaultsTheFileLeftOut.mapValues { (_, value) ->
+            ForkBackupFormat.json.encodeToJsonElement(ForkBackupFormat.PrefValue.serializer(), ForkBackupFormat.PrefValue.of(value)!!)
+        }
+        assertEquals(JsonObject(phone["settings"]!!.jsonObject + spelledOut), out["settings"])
         assertEquals(phone["listening"], out["listening"])
         val phoneFork = phone["fork"]!!.jsonObject
         val outFork = out["fork"]!!.jsonObject
@@ -247,6 +251,90 @@ class ForkBackupTest {
         )
         assertNull(main.get(ForkUpgradeLength.KEY, null))
         assertNull(main.get(ForkAppFont.KEY, null))
+    }
+
+    /** Mapped settings whose defaults differ between the apps and which `fork-phone-backup.json` leaves unset. */
+    private val phoneDefaultsTheFileLeftOut = mapOf(
+        "filter_non_music_audio" to true, "full_bleed_artwork" to true, "spotify_canvas_auto_hide" to true,
+        "lastfm_now_playing" to false, "lastfm_scrobble_enabled" to false,
+    )
+
+    @Test
+    fun `a default that differs travels as the value in force, both ways`() {
+        // PC -> phone: nothing stored on the PC is its own default spelled out, not "absent" (which
+        // the phone would read as its own, different default).
+        val settings = exported()["settings"]!!.jsonObject
+        val of = ForkBackupFormat.PrefValue.Companion::of
+        fun encoded(value: Any) = ForkBackupFormat.json.encodeToJsonElement(ForkBackupFormat.PrefValue.serializer(), of(value)!!)
+        assertEquals(encoded(false), settings["full_bleed_artwork"])
+        assertEquals(encoded(true), settings["lastfm_scrobble_enabled"])
+        // Phone -> PC: a backup without it is the phone's default.
+        ForkBackup.apply(ForkBackupFormat.BackupFile(settings = emptyMap()))
+        assertEquals("true", main.get("full_bleed_artwork", null))
+        assertEquals("false", main.get("lastfm_scrobble_enabled", null))
+        // A setting the defaults agree on stays unset.
+        assertNull(main.get("autoplay", null))
+    }
+
+    @Test
+    fun `NetEase keeps its tick and place in the lyrics sources`() {
+        main.put("lyrics_source_order", "NetEase,BiniLyrics")
+        main.put("lyrics_sources", "BiniLyrics,NetEase")
+        val settings = exported()["settings"]!!.jsonObject
+        val order = ForkBackupFormat.json.decodeFromJsonElement(ForkBackupFormat.PrefValue.serializer(), settings["lyrics_source_order"]!!)
+        assertEquals("NetEase,BINI_LYRICS", order.value)
+        main.clear()
+        ForkBackup.apply(ForkBackupFormat.BackupFile(settings = mapOf("lyrics_sources" to ForkBackupFormat.PrefValue.of("BINI_LYRICS,NetEase")!!)))
+        assertEquals("BiniLyrics,NetEase", main.get("lyrics_sources", null))
+    }
+
+    @Test
+    fun `the shared signature, alignment and direct-stream settings travel`() {
+        main.put("signature_api_enabled", "true")
+        main.put("signature_api_url", "https://sig.example.com")
+        main.put("smart_version_alignment", "false")
+        main.put("direct_source_stream", "true")
+        val settings = exported()["settings"]!!.jsonObject
+        listOf("signature_api_enabled", "signature_api_url", "smart_version_alignment", "direct_source_stream")
+            .forEach { assertTrue(settings[it] != null, it) }
+        assertFalse(ForkBackup.pcOnly("signature_api_enabled"))
+    }
+
+    @Test
+    fun `the yt-dlp path is this machine's`() {
+        assertFalse(ForkBackup.pcOnly("fork_ytdlp_path"))
+    }
+
+    @Test
+    fun `an old quality is exported as the rung it means`() {
+        assertEquals("LOSSLESS", ForkBackup.migratedQuality("HIGH", hasFourRungs = false))
+        assertEquals("HIGH", ForkBackup.migratedQuality("HIGH", hasFourRungs = true))
+        assertEquals("MEDIUM", ForkBackup.migratedQuality("STANDARD", hasFourRungs = true))
+    }
+
+    @Test
+    fun `an export replaces the target through a temporary file`() {
+        val target = scratch.resolve("backup.json")
+        Files.writeString(target, "old")
+        ForkBackup.writeReplacing(target, "new")
+        assertEquals("new", Files.readString(target))
+        assertFalse(Files.exists(scratch.resolve("backup.json.tmp")))
+        // A target that can't be replaced (a non-empty folder in the way) fails and leaves no temp behind.
+        val blocked = scratch.resolve("blocked.json")
+        Files.createDirectories(blocked.resolve("inside"))
+        kotlin.test.assertFails { ForkBackup.writeReplacing(blocked, "x") }
+        assertFalse(Files.exists(scratch.resolve("blocked.json.tmp")))
+    }
+
+    @Test
+    fun `an import reports a part that failed instead of throwing`() {
+        // The carried file's place is a non-empty folder: writing the phone-only settings fails.
+        val inTheWay = scratch.resolve("carried-dir")
+        Files.createDirectories(inTheWay.resolve("inside"))
+        ForkBackup.carriedFile = { inTheWay.toFile() }
+        val problems = ForkBackup.apply(ForkBackupFormat.BackupFile(settings = mapOf("autoplay" to ForkBackupFormat.PrefValue.of(false)!!)))
+        assertEquals(listOf("phone-only settings"), problems)
+        assertEquals("false", main.get("autoplay", null))
     }
 
     @Test

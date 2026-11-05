@@ -450,7 +450,7 @@ object NavidromeOffline {
      * A playlist can change on the server after it was kept: songs added,
      * removed or moved (a smart playlist changes by itself), renamed, or
      * deleted. Changed, it is kept again as it is now ([keep] fetches what is
-     * new, the [sweep] after it drops what left). Deleted, it stays on the
+     * new; a song the server stopped listing stays kept, see [syncedSongs]). Deleted, it stays on the
      * phone marked [Page.gone] ("Deleted on server") until it is removed here;
      * the songs are still the user's to play. Albums aren't checked: an album
      * changing on the server is a retag, not something to follow.
@@ -477,14 +477,10 @@ object NavidromeOffline {
                         continue
                     }
                     val songs = with(NavidromeRepository) { client.playlistSongs(row.id).map { it.toSong(client) } }
-                    val same = !page.gone && row.name == page.title && songs.map { it.videoId } == page.songs.map { it.videoId }
                     if (page.id !in _pages.value) continue // removed while this asked the server
-                    // Much shorter than what's kept reads as a server mid-rescan, not as an edit: the
-                    // sweep after a keep would delete files only a new download can bring back.
-                    if (!same && songs.isNotEmpty() && songs.size * 2 >= page.songs.size) {
-                        Log.d(TAG, "offline ${page.title}: changed on the server, keeping it again")
-                        keep(page.id, row.name, page.subtitle, page.cover, songs)
-                    }
+                    val next = syncedSongs(page.songs, songs, renamed = page.gone || row.name != page.title) ?: continue
+                    Log.d(TAG, "offline ${page.title}: changed on the server, keeping it again")
+                    keep(page.id, row.name, page.subtitle, page.cover, next)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -492,6 +488,29 @@ object NavidromeOffline {
                 Log.d(TAG, "offline playlists sync: ${e.message}")
             }
         }
+    }
+
+    /**
+     * What an automatic sync keeps a playlist as, or null when there is nothing to do.
+     *
+     * A kept song the server no longer lists stays kept (after the server's own songs): an
+     * automatic sync never sweeps. A server mid-rescan lists a playlist short for a while, and the
+     * old guard (re-keep only when at least half was listed) still swept up to half of a kept
+     * playlist's files, which only a new download could bring back. A song really removed on the
+     * server is let go when the user keeps the playlist again (or removes it); a song the server
+     * lists again simply takes its place in the server's order. Nothing changes, so no re-keep,
+     * when the server's songs are the kept ones in the same order apart from the ones held back,
+     * so a held-back song doesn't re-keep the playlist on every Home load.
+     */
+    internal fun syncedSongs(kept: List<Song>, server: List<Song>, renamed: Boolean): List<Song>? {
+        if (server.isEmpty()) return null
+        val serverIds = server.mapTo(HashSet()) { it.videoId }
+        val held = kept.filter { it.videoId !in serverIds }
+        val unchanged = server.map { it.videoId } == kept.map { it.videoId }.filter { it in serverIds }
+        if (unchanged && !renamed) return null
+        // Not distinct over the server's part: a playlist listing one song twice would then never
+        // compare [unchanged] with what was kept, and every Home load would keep it again.
+        return server + held.distinctBy { it.videoId }
     }
 
     /** Pages stopped with [cancelAll]`(keepDone = true)`: recorded as far as they got, not swept. */

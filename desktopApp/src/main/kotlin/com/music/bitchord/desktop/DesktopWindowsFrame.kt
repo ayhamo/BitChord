@@ -56,8 +56,26 @@ internal object DesktopWindowsFrame {
      * Fills the whole monitor — taskbar included — with a frameless window above it, or puts the
      * caption window back. False without the native frame, and the caller falls back to maximize.
      */
-    fun setFullscreen(on: Boolean): Boolean =
-        installed && runCatching { nativeSetFullscreen(on) }.getOrDefault(false)
+    fun setFullscreen(on: Boolean): Boolean {
+        if (!installed) return false
+        val before = fullscreenActive
+        // fork: raised before the call, so a placement AWT reports while the popup goes up already
+        // finds it set (see [fullscreenActive]); put back if the call fails.
+        if (on) fullscreenActive = true
+        val done = runCatching { nativeSetFullscreen(on) }.getOrDefault(false)
+        fullscreenActive = if (done) on else before
+        return done
+    }
+
+    /**
+     * Fork: whether the native borderless fullscreen is on, by this side's own record of the
+     * calls that succeeded. While it is, AWT reports the popup as a plain floating window (its
+     * WS_MAXIMIZE is gone), which [DesktopWindowMode.adopt] must not take for the user leaving
+     * full screen; see there.
+     */
+    @Volatile
+    var fullscreenActive: Boolean = false
+        private set
 
     @JvmStatic
     private external fun nativeSetFullscreen(on: Boolean): Boolean

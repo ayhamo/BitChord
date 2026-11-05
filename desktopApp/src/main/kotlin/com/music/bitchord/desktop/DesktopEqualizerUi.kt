@@ -129,6 +129,7 @@ internal fun DesktopEqualizerDialog(onDismiss: () -> Unit) {
                 color = DesktopSecondary,
                 modifier = Modifier.padding(horizontal = panelInset(22.dp), vertical = 6.dp),
             )
+            ForkKaraokeRow() // fork: karaoke switch (ForkKaraoke)
             Spacer(Modifier.height(8.dp))
         }
 

@@ -207,7 +207,7 @@ class ForkHandoffTest {
         assertTrue(ForkHandoff.shouldOffer(n, "pc-1", 5_000L, null, now))
         assertFalse(ForkHandoff.shouldOffer(n, "phone-1", 5_000L, null, now)) // this device's own
         assertFalse(ForkHandoff.shouldOffer(n, "pc-1", 10_000L, null, now)) // not newer than our save
-        assertFalse(ForkHandoff.shouldOffer(n, "pc-1", 5_000L, n.key, now)) // dismissed
+        assertFalse(ForkHandoff.shouldOffer(n, "pc-1", 5_000L, n.dismissKey, now)) // dismissed
         assertFalse(ForkHandoff.shouldOffer(n, "pc-1", 5_000L, null, 10_000L + ForkHandoff.OFFER_MAX_AGE_MS + 1))
         assertFalse(ForkHandoff.shouldOffer(note(emptyList(), at = 10_000L), "pc-1", 0L, null, now))
         assertFalse(ForkHandoff.shouldOffer(null, "pc-1", 0L, null, now))
@@ -270,6 +270,216 @@ class ForkHandoffTest {
         } finally {
             scope.cancel()
         }
+    }
+
+    @Test
+    fun `not now lasts while that device plays on with the same queue and song`() {
+        val items = listOf(yt(1), yt(2))
+        val playingNote = note(items, index = 0, at = 10_000L).copy(playing = true)
+        val dismissed = playingNote.dismissKey
+        assertTrue(ForkHandoff.isDismissed(playingNote, dismissed))
+        // The next tick of the same queue and song: still dismissed (keyed by the time alone, it came back).
+        assertTrue(ForkHandoff.isDismissed(playingNote.copy(savedAt = 200_000L, positionMs = 300_000L), dismissed))
+        // A pause there, a new song, a changed queue: offered again.
+        assertFalse(ForkHandoff.isDismissed(playingNote.copy(savedAt = 200_000L, playing = false), dismissed))
+        assertFalse(ForkHandoff.isDismissed(playingNote.copy(savedAt = 200_000L, index = 1), dismissed))
+        assertFalse(ForkHandoff.isDismissed(playingNote.copy(savedAt = 200_000L, items = items + yt(3)), dismissed))
+        assertFalse(ForkHandoff.isDismissed(playingNote.copy(device = phone.copy(id = "phone-2")), dismissed))
+        // An older build's "device@time" matches nothing.
+        assertFalse(ForkHandoff.isDismissed(playingNote, playingNote.key))
+        assertFalse(ForkHandoff.isDismissed(playingNote, null))
+    }
+
+    @Test
+    fun `whether the device was playing travels in the note`() {
+        val n = note(listOf(yt(1))).copy(playing = true)
+        assertEquals(n, ForkHandoff.decode(ForkHandoff.encode(n)))
+        assertFalse(ForkHandoff.decode(ForkHandoff.encode(n.copy(playing = false)))!!.playing)
+    }
+
+    private fun saverFor(
+        scope: CoroutineScope,
+        now: () -> Long,
+        writes: MutableList<ForkHandoff.Note>,
+        fail: () -> Boolean = { false },
+        offline: () -> Boolean = { false },
+        held: () -> Boolean = { false },
+        position: () -> Long = { 134_000L },
+    ) = ForkHandoff.Saver(
+        scope = scope,
+        enabled = { true },
+        snapshot = { note(listOf(yt(1)), at = now()).copy(positionMs = position()) },
+        write = { writes += it; !fail() },
+        clock = now,
+        offline = offline,
+        held = held,
+    )
+
+    @Test
+    fun `an unchanged note is not written again, and nothing is written while held`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        var now = 100_000L
+        var holding = false
+        var position = 134_000L
+        val writes = mutableListOf<ForkHandoff.Note>()
+        val saver = saverFor(scope, { now }, writes, held = { holding }, position = { position })
+        try {
+            assertTrue(saver.save("pause"))
+            now += 60_000 // backgrounded later, still paused at the same second
+            assertTrue(saver.save("background"))
+            assertEquals(1, writes.size, "the same queue and second, newer than the other device's note, was written again")
+            position = 150_000L // a seek while paused is a change
+            assertTrue(saver.save("background"))
+            assertEquals(2, writes.size)
+            position = 170_000L
+            holding = true // the other device's newer note is on offer here
+            assertFalse(saver.save("background"))
+            assertEquals(2, writes.size)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `offline nothing is tried and the back-off starts over once back`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        var now = 100_000L
+        var fail = true
+        var off = false
+        var position = 1_000L
+        val writes = mutableListOf<ForkHandoff.Note>()
+        val saver = saverFor(scope, { now }, writes, fail = { fail }, offline = { off }, position = { position })
+        try {
+            assertFalse(saver.save("tick"))
+            assertEquals(1, writes.size)
+            off = true
+            now += 10_000
+            position += 10_000
+            assertFalse(saver.save("pause", bypassBackoff = true))
+            assertEquals(1, writes.size, "nothing goes out offline")
+            off = false
+            fail = false
+            position += 10_000
+            // Still inside the old back-off, but that was before going offline: tried at once.
+            assertTrue(saver.save("tick"))
+            assertEquals(2, writes.size)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `a pause or the background gets one try inside a back-off, a tick does not`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        var now = 100_000L
+        var position = 1_000L
+        val writes = mutableListOf<ForkHandoff.Note>()
+        val saver = saverFor(scope, { now }, writes, fail = { true }, position = { position })
+        try {
+            assertFalse(saver.save("tick"))
+            now += 1_000
+            position += 1_000
+            assertFalse(saver.save("tick"))
+            assertEquals(1, writes.size)
+            assertFalse(saver.save("pause", bypassBackoff = true))
+            assertEquals(2, writes.size, "the pause was dropped by the back-off")
+            now += 1_000
+            position += 1_000
+            assertFalse(saver.save("tick"))
+            assertEquals(2, writes.size)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `a pause that playback leaves within the debounce is not written`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        var now = 100_000L
+        val writes = mutableListOf<ForkHandoff.Note>()
+        val saver = saverFor(scope, { now }, writes)
+        try {
+            saver.onPlayingChanged(true)
+            saver.onPlayingChanged(false) // a rebuffer
+            assertTrue(saver.hasPending)
+            saver.onPlayingChanged(true)
+            assertFalse(saver.hasPending)
+            delay(ForkHandoff.Saver.DEBOUNCE_MS + 400)
+            assertTrue(writes.isEmpty())
+            saver.onPlayingChanged(false) // a real pause
+            delay(ForkHandoff.Saver.DEBOUNCE_MS + 400)
+            assertEquals(1, writes.size)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `a song change is still written when the new song buffers inside its debounce`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        var now = 100_000L
+        val writes = mutableListOf<ForkHandoff.Note>()
+        val saver = saverFor(scope, { now }, writes)
+        try {
+            saver.onPlayingChanged(true)
+            saver.onSongChanged() // a skip
+            saver.onPlayingChanged(false) // the new song buffering
+            saver.onPlayingChanged(true)
+            assertTrue(saver.hasPending)
+            delay(ForkHandoff.Saver.DEBOUNCE_MS + 400)
+            assertEquals(1, writes.size, "the song change went with the rebuffer")
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `a pause still waiting when the player goes is written with the note read then`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val writes = mutableListOf<ForkHandoff.Note>()
+        val saver = saverFor(scope, { 100_000L }, writes)
+        try {
+            saver.onPlayingChanged(true)
+            saver.onPlayingChanged(false)
+            saver.flushPending(note(listOf(yt(7)), at = 100_000L))
+            assertFalse(saver.hasPending)
+            delay(400)
+            assertEquals(listOf(yt(7)), writes.single().items)
+            delay(ForkHandoff.Saver.DEBOUNCE_MS)
+            assertEquals(1, writes.size, "the debounced write was not also made")
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `a quit writes once, only after this device has played`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val writes = mutableListOf<ForkHandoff.Note>()
+        val saver = saverFor(scope, { 100_000L }, writes)
+        try {
+            assertFalse(saver.saveFinal(note(listOf(yt(1)))))
+            saver.onPlayingChanged(true)
+            assertTrue(saver.saveFinal(note(listOf(yt(1)))))
+            assertTrue(saver.saveFinal(note(listOf(yt(1)), at = 200_000L)))
+            assertEquals(1, writes.size)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `notes go in the address only after repeated refusals of the body`() {
+        val transport = ForkHandoffStore.Transport()
+        repeat(ForkHandoffStore.Transport.REFUSALS - 1) { assertFalse(transport.record(ForkHandoffStore.Way.GET)) }
+        assertFalse(transport.addressOnly)
+        transport.record(ForkHandoffStore.Way.POST) // a body taken: the count starts over
+        repeat(ForkHandoffStore.Transport.REFUSALS - 1) { transport.record(ForkHandoffStore.Way.GET) }
+        assertFalse(transport.addressOnly)
+        assertTrue(transport.record(ForkHandoffStore.Way.GET))
+        assertTrue(transport.addressOnly)
+        transport.reset() // another server or login
+        assertFalse(transport.addressOnly)
     }
 
     @Test

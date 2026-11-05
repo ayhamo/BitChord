@@ -51,7 +51,13 @@ object AppleCatalogue {
     /**
      * Whether Apple artist [artistId] has a song or release whose [titleKey] is
      * in [keys]. One lookup covers both: each track row carries its album's
-     * name. A failed request counts as no — not borrowing is the safe answer.
+     * name.
+     *
+     * Fork: a failed request (an HTTP error, iTunes' 403/429 rate limit, no body) throws instead
+     * of answering no. As "no", the callers (phone `AppleArtistArt`, shared `ForkAppleArtistArt`,
+     * `AppleArtistPhotos`) settled on "Apple has no art for this artist" and cached that until the
+     * app restarted; thrown, their `runCatching` treats it as the network miss it is, not
+     * remembered, so the artist is asked again next time. Nothing is borrowed either way.
      */
     fun sharesTitles(artistId: Long, keys: Set<String>): Boolean {
         if (keys.isEmpty()) return false
@@ -60,7 +66,8 @@ object AppleCatalogue {
             .header("User-Agent", USER_AGENT)
             .build()
         val body = Http.client.newCall(request).execute()
-            .use { if (it.isSuccessful) it.body?.string() else null } ?: return false
+            .use { if (it.isSuccessful) it.body?.string() else throw java.io.IOException("iTunes lookup: http ${it.code}") } // fork: was null, read as "no"
+            ?: throw java.io.IOException("iTunes lookup: empty body") // fork: was `return false`
         val rows = json.parseToJsonElement(body).jsonObject["results"]?.jsonArray ?: return false
         return rows.any { row ->
             val o = row.jsonObject

@@ -13,6 +13,10 @@
  * Built with MinGW (docker/pc-launcher.sh): -municode -mwindows, so the entry is wWinMain and
  * every path is UTF-16, which is what makes a folder like "BitChord Portable" or a non-ASCII
  * user name work.
+ *
+ * Java's own launcher is not: javaw.exe reads its arguments and its own location in the ANSI code
+ * page, so a folder with characters outside it (Cyrillic on a Western system, say) reached Java as
+ * question marks and Java did not start. See java_folder().
  */
 #define WIN32_LEAN_AND_MEAN
 #ifndef UNICODE
@@ -145,6 +149,36 @@ static wchar_t *read_arguments(const wchar_t *path) {
 
 static int is_space(wchar_t c) { return c == L' ' || c == L'\t' || c == L'\r' || c == L'\n'; }
 
+/* Whether text survives the ANSI code page unchanged, as Java's launcher will read it. */
+static int ansi_safe(const wchar_t *text) {
+    /* A system set to UTF-8 as its code page loses nothing (and refuses the flags below). */
+    if (GetACP() == CP_UTF8) return 1;
+    BOOL lossy = FALSE;
+    int bytes = WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, text, -1, NULL, 0, NULL, &lossy);
+    return bytes > 0 && !lossy;
+}
+
+/*
+ * fork: the folder as Java gets to see it. Unchanged when the ANSI code page can spell it;
+ * otherwise its 8.3 short name (all ASCII) for javaw.exe, the working folder and "{app}", which
+ * Windows keeps for most folders on the system drive. Where the volume has no short names,
+ * "{app}" becomes "." instead: the working folder is this folder, and Java resolves relative paths
+ * against it (ForkPortable.absolutePaths makes them absolute first thing). Java's own launcher may
+ * still fail there, since it finds jvm.dll from its own ANSI path; nothing here can change that.
+ */
+static const wchar_t *java_folder(const wchar_t *folder, const wchar_t **app) {
+    static wchar_t shortFolder[PATH_CAP];
+    *app = folder;
+    if (ansi_safe(folder)) return folder;
+    DWORD got = GetShortPathNameW(folder, shortFolder, PATH_CAP);
+    if (got > 0 && got < PATH_CAP && ansi_safe(shortFolder)) {
+        *app = shortFolder;
+        return shortFolder;
+    }
+    *app = L".";
+    return folder;
+}
+
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR commandLine, int show) {
     (void)instance;
     (void)previous;
@@ -159,6 +193,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR commandLine, i
     if (!slash) fail(L"BitChord could not find its own folder.", folder);
     *slash = 0;
 
+    /* fork: what Java is started from and what "{app}" becomes; see java_folder. */
+    const wchar_t *app = folder;
+    const wchar_t *home = java_folder(folder, &app);
+
     int argc = 0;
     wchar_t **argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     int logMode = 0;
@@ -167,7 +205,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR commandLine, i
     }
 
     Buffer path = {0};
-    append_z(&path, folder);
+    append_z(&path, home);
     append_z(&path, logMode ? L"\\runtime\\bin\\java.exe" : L"\\runtime\\bin\\javaw.exe");
     if (GetFileAttributesW(path.text) == INVALID_FILE_ATTRIBUTES) {
         fail(L"BitChord's Java is missing (the runtime folder). Unzip the whole folder again.", path.text);
@@ -186,7 +224,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR commandLine, i
         wchar_t *first = line, *last = end;
         while (first < last && is_space(*first)) first++;
         while (last > first && is_space(last[-1])) last--;
-        if (last > first && *first != L'#') append_line(&command, first, (size_t)(last - first), folder);
+        if (last > first && *first != L'#') append_line(&command, first, (size_t)(last - first), app);
         line = *end ? end + 1 : end;
     }
     free(lines);
@@ -221,7 +259,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR commandLine, i
         flags = CREATE_NO_WINDOW;
     }
 
-    if (!CreateProcessW(path.text, command.text, NULL, NULL, logMode ? TRUE : FALSE, flags, NULL, folder, &startup, &process)) {
+    if (!CreateProcessW(path.text, command.text, NULL, NULL, logMode ? TRUE : FALSE, flags, NULL, home, &startup, &process)) {
         wchar_t detail[64];
         _snwprintf(detail, 63, L"Windows error %lu", (unsigned long)GetLastError());
         detail[63] = 0;

@@ -102,6 +102,7 @@ suspend fun loadAutoplayTracks(
     limit: Int = MAX_QUEUED_AUTOPLAY,
     forkStation: Boolean = false, // fork: asked for by "Start radio", not AutoPlay
 ): Result<List<Song>> {
+    if (com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(seedSong.videoId) && com.music.bitchord.data.navidrome.NavidromePlatform.offline.value) return Result.success(emptyList()) // fork: offline the queue ends with what is kept (the server's songs wouldn't play), as on the PC
     if (forkStation && com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(seedSong.videoId)) return com.music.bitchord.data.navidrome.NavidromeRepository.instantMix(seedSong)
     // fork: a Navidrome song's AutoPlay comes from the same library, not a YouTube radio
     val forkServerSong = com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(seedSong.videoId)

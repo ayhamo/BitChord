@@ -52,6 +52,31 @@ internal object ForkLibraryRefresh {
 
     fun due(now: Long = System.currentTimeMillis()): Boolean = now - lastAt >= FOCUS_GAP_MS
 
+    /**
+     * Whether a fetch shows a loading page or keeps the rows shown. Only a quiet fetch with rows
+     * already there keeps them: a quiet one over an error page used to turn it into the skeleton
+     * and, failing again, never put anything back (the Refresh button still showing above it).
+     * The same answer decides whether a failure shows the error.
+     */
+    fun keepsRows(quiet: Boolean, showingRows: Boolean): Boolean = quiet && showingRows
+
+    /** How long a quiet refresh leaves the walk past Liked Music's first pages alone. */
+    const val LIKED_WALK_GAP_MS = 6L * 60 * 60 * 1000
+
+    @Volatile private var lastLikedWalkAt = 0L
+
+    /**
+     * Whether this fetch follows Liked Music past its first pages (for the ids alone), and if so
+     * notes it. A focus refresh re-walked every page of a long Liked Music each time the window came
+     * back; quietly, it now does so only when the last walk is [LIKED_WALK_GAP_MS] old. A start,
+     * sign-in or Refresh button walks always.
+     */
+    fun likedWalkDue(quiet: Boolean, now: Long = System.currentTimeMillis()): Boolean {
+        if (quiet && now - lastLikedWalkAt < LIKED_WALK_GAP_MS) return false
+        lastLikedWalkAt = now
+        return true
+    }
+
     /** Asks for a refresh through [bump] (the app's own reload), quietly or with the spinner. */
     fun request(quietly: Boolean, bump: () -> Unit) {
         quiet = quietly

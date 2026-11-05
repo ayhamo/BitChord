@@ -11,7 +11,12 @@ internal enum class DesktopBackdrop(
 ) {
     OFF(0, "Off"),
     MICA(2, "Mica"),
+    TINT(0, "Wallpaper tint"), // fork: solid, no DWM material (ForkWallpaperTint); owner, 2026-11-05: second, Acrylic last
     ACRYLIC(3, "Acrylic"),
+    ;
+
+    /** fork: whether DWM draws a see-through material for this choice (Off and the tint are solid). */
+    val isMaterial: Boolean get() = nativeKind == 2 || nativeKind == 3
 }
 
 /**
@@ -78,7 +83,8 @@ internal object DesktopWindowBackdrop {
             DesktopPlatform.isMac -> DesktopMacFrame.setBackdrop(wanted.nativeKind)
             else -> false
         }
-        _active.value = if (applied) wanted else DesktopBackdrop.OFF
+        // fork: the wallpaper tint is painted by Compose, so it holds even where DWM said no
+        _active.value = if (applied || wanted == DesktopBackdrop.TINT) wanted else DesktopBackdrop.OFF
         if (!applied && wanted != DesktopBackdrop.OFF) {
             DesktopTrackLog.log("window backdrop: system declined ${wanted.label}")
         }

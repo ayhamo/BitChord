@@ -122,15 +122,29 @@ object SpotifyCanvasQuery {
         @Volatile private var hash: String? = null
         @Volatile private var checkedAt = 0L
 
+        /** Whether the last lookup came back with a hash other than the one already held. */
+        @Volatile private var lastFoundNew = false
+
+        /**
+         * [forceRefresh] (a stale-hash answer) is rate-limited. Fork fix: it used to re-scrape on
+         * every call, so with a stale hash that the scripts didn't fix (or a scrape that failed)
+         * every song fetched open.spotify.com and up to [maxScripts] bundles (several MB) again.
+         * Now a forced look waits [FORCE_MIN_MS] after the last one, and [MISSED_TTL_MS] after a
+         * look that found nothing new: asking again that soon would read the same scripts.
+         */
         @Synchronized
         fun canvasHash(forceRefresh: Boolean = false): String {
             val current = hash
             val age = now() - checkedAt
-            if (!forceRefresh && checkedAt != 0L && age < (if (current != null) FOUND_TTL_MS else MISSED_TTL_MS)) {
-                return current ?: KNOWN_CANVAS_HASH
+            val fresh = checkedAt != 0L && if (forceRefresh) {
+                age < FORCE_MIN_MS || (!lastFoundNew && age < MISSED_TTL_MS)
+            } else {
+                age < (if (current != null) FOUND_TTL_MS else MISSED_TTL_MS)
             }
+            if (fresh) return current ?: KNOWN_CANVAS_HASH
             checkedAt = now()
             val found = lookUp()
+            lastFoundNew = found != null && found != current
             if (found != null) hash = found
             return hash ?: KNOWN_CANVAS_HASH
         }
@@ -147,6 +161,7 @@ object SpotifyCanvasQuery {
         private companion object {
             const val FOUND_TTL_MS = 12L * 60 * 60 * 1000
             const val MISSED_TTL_MS = 30L * 60 * 1000
+            const val FORCE_MIN_MS = 5L * 60 * 1000
         }
     }
 

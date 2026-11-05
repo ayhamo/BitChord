@@ -31,6 +31,9 @@ sealed interface AppRoute {
     /** A Library shelf's "Show all" — its own cards laid out again as a grid. */
     data class LibraryShowAll(val shelf: HomeShelf) : AppRoute
 
+    /** Fork: a Home shelf heading's See all feed, as a grid (ForkShelfMorePage). */
+    data class HomeShelfMore(val shelf: HomeShelf) : AppRoute
+
     /**
      * An artist page's "Show all" for one shelf. Not a page of its own: the
      * artist page draws the shelf in place, so this only records that it is

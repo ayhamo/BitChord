@@ -147,6 +147,12 @@ object Downloads {
      */
     private val running = LinkedHashMap<String, Job?>()
 
+    /**
+     * fork: the claims in [running] that belong to a [downloadNow] batch (a playlist check's own
+     * job), not to [DownloadService]. The service going away says nothing about those. Guarded by [lock].
+     */
+    private val batchClaims = HashSet<String>()
+
     fun init(context: Context) {
         prefs = context.getSharedPreferences("bitchord_settings", Context.MODE_PRIVATE)
         _saved.value = runCatching {
@@ -291,6 +297,7 @@ object Downloads {
                     false
                 } else {
                     running[id] = null
+                    batchClaims += id // fork
                     true
                 }
             }
@@ -323,6 +330,7 @@ object Downloads {
         } finally {
             claimed.forEach { song ->
                 val id = song.videoId
+                synchronized(lock) { batchClaims -= id } // fork
                 onIdle(id)
                 // A failure stays up to be read; a track this batch never got
                 // to the end of has nothing to report.
@@ -514,11 +522,30 @@ object Downloads {
      * would take it out of that release as well.
      */
     suspend fun deleteCollection(context: Context, id: String): Boolean {
+        // fork: what is still queued or running for it goes first: left alone, a "Download" half-way
+        // through kept going after the delete and its tracks came back with nothing listing them.
+        inFlightOnlyIn(id, _collections.value, _requested.value[id].orEmpty(), _active.value).forEach(::cancel)
         var any = false
         tracksOnlyIn(id, _collections.value, _saved.value)
             .forEach { videoId -> if (delete(context, videoId)) any = true }
         forgetCollection(id)
         return any
+    }
+
+    /**
+     * fork: release [id]'s tracks (its record and what its own tap asked for, [requested]) that are
+     * queued or running and that no other release names, so [deleteCollection] can call them off.
+     */
+    internal fun inFlightOnlyIn(
+        id: String,
+        collections: Map<String, SavedCollection>,
+        requested: Set<String>,
+        active: Map<String, DownloadState>,
+    ): List<String> {
+        val others = collections.values.filter { it.id != id }.flatMapTo(HashSet()) { it.videoIds }
+        return (collections[id]?.videoIds.orEmpty() + requested).distinct().filter { videoId ->
+            videoId !in others && active[videoId].let { it is DownloadState.Queued || it is DownloadState.Running }
+        }
     }
 
     /**
@@ -917,9 +944,22 @@ object Downloads {
      * void, and leaving one behind would have [enqueue] refuse that track
      * forever as already in flight.
      */
-    internal fun onStopped() {
-        synchronized(lock) { running.clear() }
+    internal fun onStopped(reason: String = STOPPED_BY_ANDROID) { // fork: + reason
+        // fork: what was still queued or running fails with a reason, rather than staying "Queued" in
+        // [pending] for good (Android 15+ ends the service when the day's data-sync time is used up),
+        // where [enqueue] refused it as already in flight and a re-tap did nothing.
+        val left = synchronized(lock) {
+            val services = running.keys.filter { it !in batchClaims }
+            val all = pending.keys.toList() + services
+            pending.clear()
+            services.forEach(running::remove)
+            all
+        }
+        left.forEach { fail(it, reason) }
     }
+
+    /** fork: [onStopped]'s reason when no context is at hand to read the translated one. */
+    internal const val STOPPED_BY_ANDROID = "Stopped by Android; tap to retry"
 
     /**
      * Fetch one track, start to finish.
@@ -963,7 +1003,7 @@ object Downloads {
             DownloadSession.retitle(id, plan.track)
             transfer(context, song, plan)
         } catch (e: CancellationException) {
-            clear(id)
+            _active.update { if (it[id] is DownloadState.Failed) it else it - id } // fork: was clear(id); keeps [onStopped]'s "tap to retry"
             throw e
         } catch (e: Exception) {
             Log.w(TAG, "download failed for $id: ${e.message}", e)

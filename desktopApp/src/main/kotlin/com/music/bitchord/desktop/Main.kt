@@ -29,6 +29,8 @@ import kotlin.math.roundToInt
 import org.jetbrains.compose.resources.painterResource
 
 fun main() {
+    ForkStartup.mainEntered() // fork: start of the "startup: first frame" timing
+    ForkPortable.absolutePaths() // fork: a portable folder named outside the ANSI code page gets relative paths (BitChord.c)
     ForkSingleInstance.claimOrExit() // fork: a second start shows the running window and exits
     ForkPortable.install() // fork: the portable folder's own settings store, before anything reads one
     // Before any WebView exists, so the sign-in window can start over with an empty jar.
@@ -57,6 +59,7 @@ fun main() {
     StreamResolver.maxKbps = {
         DesktopStreamClient.ceiling.get() ?: DesktopSourceRegistry.ceiling(null).maxKbps
     }
+    ForkYtDlp.applyPrewarm() // fork: no InnerTubeX prewarm (WebKit, QuickJS) while the owner's yt-dlp answers first
     InnerTubeXResolver.init(
         filesDir = DesktopMediaCache.directory.toFile(),
         store = DesktopInnerTubeXStore,
@@ -108,7 +111,7 @@ private fun desktopMain() = application {
         }
     }
     Window(
-        onCloseRequest = { if (DesktopWindowVisibility.onCloseRequest()) exitApplication() },
+        onCloseRequest = { if (DesktopWindowVisibility.onCloseRequest()) { ForkSingleInstance.release(); exitApplication() } }, // fork: release() — a start made while quitting no longer hands over to this window
         visible = visible,
         title = "BitChord",
         icon = painterResource(Res.drawable.logo),
@@ -170,7 +173,13 @@ private fun desktopMain() = application {
                     if (!DesktopWindowsFrame.minimize()) state.isMinimized = true
                 },
                 toggleMaximize = {
-                    if (!DesktopWindowsFrame.toggleMaximize()) {
+                    // fork: in full screen this (a double click on the player's caption) leaves full
+                    // screen. The native toggle went first and never reached
+                    // DesktopWindowMode.toggleMaximized, so it maximized the borderless popup itself:
+                    // still flagged full screen, taskbar band unpainted.
+                    if (DesktopWindowMode.fullScreen.value || DesktopWindowsFrame.fullscreenActive) {
+                        DesktopWindowMode.exit()
+                    } else if (!DesktopWindowsFrame.toggleMaximize()) {
                         // An undecorated AWT window otherwise maximizes to the monitor bounds on
                         // Windows when the native frame bridge is unavailable. Give AWT the
                         // monitor's usable work area before Compose switches the placement.
@@ -191,7 +200,7 @@ private fun desktopMain() = application {
                 },
                 // The same door the system's close button went through, so the tray keeps the
                 // process alive exactly as it did before.
-                close = { if (DesktopWindowVisibility.onCloseRequest()) exitApplication() },
+                close = { if (DesktopWindowVisibility.onCloseRequest()) { ForkSingleInstance.release(); exitApplication() } }, // fork: release(), as above
             )
         }
         CompositionLocalProvider(
@@ -199,6 +208,7 @@ private fun desktopMain() = application {
             LocalDesktopWindowScope provides this,
             LocalDensity provides ForkUiScale.density(), // fork: the UI scale setting (Desktop Revived 8782585b)
         ) {
+            ForkFirstFrameProbe() // fork: logs the first frame, and lets deferred start-up work go (ForkStartup)
             BitChordDesktopApp()
         }
     }

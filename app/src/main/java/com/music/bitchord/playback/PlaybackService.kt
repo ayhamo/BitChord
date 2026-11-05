@@ -2843,14 +2843,13 @@ class PlaybackService : MediaLibraryService() {
             emptyList()
         }
         val userQueue = upcoming.filter { it.queueTier == QueueTier.USER_QUEUE }.map(MediaItem::toSong)
-        val autoplay = upcoming.filter { it.queueTier == QueueTier.AUTOPLAY }.map(MediaItem::toSong)
         val repeatAll = exoPlayer.repeatMode == Player.REPEAT_MODE_ALL
         val plan = BoundedQueuePlanner.buildInitialPlan(
             contextSnapshot = registered,
             selectedIndex = selectedIndex,
             queueWindow = window,
             preservedUserQueue = userQueue,
-            existingAutoplay = if (repeatAll) emptyList() else autoplay,
+            existingAutoplay = emptyList(), // fork: a new album/playlist gets its own AutoPlay, not the last song's (owner-approved, FORK.md)
             repeatAll = repeatAll,
         )
 

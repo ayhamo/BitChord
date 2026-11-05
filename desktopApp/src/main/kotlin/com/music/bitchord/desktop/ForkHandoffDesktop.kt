@@ -28,6 +28,7 @@ import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.navidrome.ForkHandoff
 import com.music.bitchord.data.navidrome.ForkHandoffStore
+import com.music.bitchord.data.navidrome.NavidromePlatform
 import com.music.bitchord.data.navidrome.NavidromeSettings
 import com.music.bitchord.playback.QueueTimeline.asQueueEntry
 import java.util.UUID
@@ -37,6 +38,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -44,7 +46,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -89,6 +93,8 @@ internal object ForkHandoffDesktop {
 
     @Volatile private var lastCheckAt = 0L
     @Volatile private var checkBlockedUntil = 0L
+    @Volatile private var restoring: ForkHandoff.Note? = null
+    @Volatile private var playingHere = false // the engine's, for the saver's hold
 
     private val deviceId: String by lazy {
         prefs.get(KEY_DEVICE, null) ?: UUID.randomUUID().toString().also {
@@ -110,7 +116,25 @@ internal object ForkHandoffDesktop {
         snapshot = { val all = configs(); withContext(Dispatchers.Main) { snapshot(all) } },
         write = { note -> ForkHandoffStore.write(note, DesktopTrackLog::log).also { if (it) markSaved(note.savedAt) } },
         log = DesktopTrackLog::log,
+        offline = { NavidromePlatform.offline.value },
+        held = { _offer.value != null && !playingHere }, // the phone's newer queue is on offer: writing now would bury it (not while this PC plays on, whose saves are real)
     )
+
+    /** How long quitting waits for the last note ([saveOnQuit]). */
+    private const val QUIT_SAVE_MS = 2_000L
+
+    /**
+     * Quitting (the tray's Quit, closing the window when it doesn't go to the tray): the queue as it
+     * stands is written once more, waiting at most [QUIT_SAVE_MS]. A quit within the pause's or a
+     * skip's debounce, or minutes into a song (the tick), left the phone an older song and second.
+     * Read here, on the caller's thread, before the engine is shut down (its position goes then).
+     */
+    fun saveOnQuit() {
+        if (!saver.armed) return
+        val note = runCatching { snapshot(configs()) }.getOrNull()?.copy(playing = false) ?: return
+        val writing = scope.async { saver.saveFinal(note) }
+        runCatching { runBlocking { withTimeoutOrNull(QUIT_SAVE_MS) { writing.await() } } }
+    }
 
     fun setEnabled(on: Boolean) {
         _enabled.value = on
@@ -150,7 +174,11 @@ internal object ForkHandoffDesktop {
             engine.state.map { it.isPlaying to it.song?.videoId }.distinctUntilChanged().collect { (isPlaying, id) ->
                 if (isPlaying != playing) {
                     playing = isPlaying
-                    if (isPlaying) markSaved(System.currentTimeMillis()) // playing here: an older note is not "newer"
+                    playingHere = isPlaying // fork
+                    if (isPlaying) {
+                        markSaved(System.currentTimeMillis()) // playing here: an older note is not "newer"
+                        _offer.value = null // and the banner offering the phone's queue is out of date
+                    }
                     saver.onPlayingChanged(isPlaying)
                 }
                 if (id != song) {
@@ -223,6 +251,7 @@ internal object ForkHandoffDesktop {
             positionMs = position,
             origin = ForkHandoff.originOf(playing),
             items = items,
+            playing = state?.isPlaying == true,
         )
     }
 
@@ -308,6 +337,7 @@ internal object ForkHandoffDesktop {
 
     private fun checkOffer() {
         if (!_enabled.value || !NavidromeSettings.isConfigured()) return
+        if (NavidromePlatform.offline.value) return // offline mode (or the server not answering): nothing goes to it
         val now = System.currentTimeMillis()
         if (now - lastCheckAt < CHECK_GAP_MS || now < checkBlockedUntil) return
         lastCheckAt = now
@@ -327,27 +357,47 @@ internal object ForkHandoffDesktop {
         }
     }
 
+    /**
+     * "Not now": the phone's queue is not offered again while it plays on with it; a new song or
+     * queue there, or a pause, is ([ForkHandoff.isDismissed]). Keyed by the note's time, it came
+     * back with the phone's next note, every few minutes while it played.
+     */
     fun dismiss() {
         val note = _offer.value ?: return
-        prefs.put(KEY_DISMISSED, note.key)
+        prefs.put(KEY_DISMISSED, note.dismissKey)
         flush()
         _offer.value = null
     }
 
-    /** The banner's Continue: the restore runs off the UI thread ([restore] reads the source list on IO). */
+    /** The banner's Continue: the restore runs off the UI thread ([restore] reads the source list on IO); the banner stays when it fails. */
     private fun restoreOffered() {
         val note = _offer.value ?: return
-        _offer.value = null
+        if (restoring === note) return // a second click while the first is on its way
+        restoring = note
         scope.launch {
-            if (!restore(note)) withContext(Dispatchers.Main) { ForkNotice.show("Could not continue that queue here") }
+            val ok = try { restore(note) } finally { restoring = null }
+            if (ok) {
+                _offer.compareAndSet(note, null)
+            } else {
+                withContext(Dispatchers.Main) { ForkNotice.show("Could not continue that queue here") }
+            }
         }
     }
 
     /** The menu row: the server's note from another device, whatever its age. */
     fun restoreLatest() {
         scope.launch {
-            val note = runCatching { ForkHandoffStore.read() }.getOrNull()?.takeIf { it.device.id != deviceId && it.items.isNotEmpty() }
+            val read = try {
+                Result.success(ForkHandoffStore.read())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                DesktopTrackLog.log("handoff: could not read the note (${e.javaClass.simpleName}: ${e.message})")
+                Result.failure(e)
+            }
+            val note = read.getOrNull()?.takeIf { it.device.id != deviceId && it.items.isNotEmpty() }
             val message = when {
+                read.isFailure -> DesktopStrings["fork_handoff_unreachable", "Couldn't reach the server"] // was "Nothing to continue", which read as no note
                 note == null -> "Nothing to continue from another device"
                 !restore(note) -> "Could not continue that queue here"
                 else -> null

@@ -464,18 +464,20 @@ internal object DesktopListenTogether {
 
     private suspend fun runSocketLoop() {
         var backoffMs = 1_000L
+        var failures = 0 // fork
         while (currentCoroutineContext().isActive) {
             val code = _state.value.code ?: return
             val held = token ?: return
+            val server = activePartyServerBase ?: return
             try {
                 _state.update { it.copy(connection = Connection.CONNECTING) }
-                val server = activePartyServerBase ?: return
                 http.webSocket(
                     urlString = "${wsBase(server)}/ws/parties/$code",
                     request = { header("Authorization", "Bearer $held") },
                 ) {
                     session = this
                     backoffMs = 1_000L
+                    failures = 0
                     _state.update { it.copy(connection = Connection.LIVE, error = null) }
                     launch { pingLoop() }
                     launch { reportLoop() }
@@ -487,6 +489,19 @@ internal object DesktopListenTogether {
                 throw cancelled
             } catch (failure: Exception) {
                 DesktopTrackLog.log("listen together: socket dropped: ${redact(failure.message)}")
+                // fork (PC-Continued aaaaee54): backoff alone can run for minutes with only
+                // "Reconnecting…" on screen. The room already renders state.error, so it gets the
+                // reason once retrying looks futile; a successful connect clears it.
+                failures++
+                if (failures >= 3) {
+                    val error = DesktopStrings.format(
+                        "lt_lost_party_retrying",
+                        server,
+                        backoffMs / 1000,
+                        fallback = "Lost the party at %1\$s. Retrying every %2\$ds.",
+                    )
+                    _state.update { it.copy(error = error) }
+                }
             } finally {
                 session = null
             }

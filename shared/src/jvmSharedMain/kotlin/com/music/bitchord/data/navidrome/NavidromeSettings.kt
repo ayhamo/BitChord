@@ -71,6 +71,8 @@ object NavidromeSettings {
         salt = newSalt()
         prefs.putStrings(mapOf(KEY_URL to _url.value, KEY_USERNAME to _username.value, KEY_PASSWORD to password, KEY_SALT to salt))
         NavidromeRepository.invalidate()
+        ForkHandoffStore.forget() // the old server's mailbox id and transport were never forgotten: a new account wrote into a playlist id it doesn't own
+        NavidromeStars.forgetAll() // the old account's stars stayed hearts until a restart
         _saved.value++
     }
 

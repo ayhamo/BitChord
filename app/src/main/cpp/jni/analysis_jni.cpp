@@ -34,6 +34,9 @@
 
 #include <jni.h>
 
+#include <iomanip>
+#include <locale>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -63,9 +66,22 @@ void AppendNumber(std::string& out, double value) {
     out += "null";
     return;
   }
-  char buffer[32];
-  snprintf(buffer, sizeof(buffer), "%.6g", value);
-  out += buffer;
+  // fork: JSON needs '.' whatever the process LC_NUMERIC says. snprintf("%.6g")
+  // follows the C locale of whichever C runtime this library links, so a
+  // comma-decimal locale used to emit {"duration":279,3} and the Kotlin parser
+  // failed every otherwise good analysis. A stream imbued with the classic
+  // locale always writes '.', and default floatfield + precision 6 prints
+  // exactly what %.6g printed, so Android output is unchanged byte for byte.
+  // How it gets there differs: libc++ (NDK) and MSVC format with the stream's
+  // own locale, but MinGW's libstdc++ (the "generic" locale model, the PC
+  // build) switches the C runtime's global locale to "C" around its vsnprintf
+  // and back. That switch is process-wide; harmless here, since nothing else
+  // in BitChord formats numbers through that runtime's locale meanwhile.
+  // (Desktop Revived 9dcd4818; our non-finite guard above is kept as it was.)
+  std::ostringstream formatted;
+  formatted.imbue(std::locale::classic());
+  formatted << std::setprecision(6) << value;
+  out += formatted.str();
 }
 
 void AppendDoubles(std::string& out, const std::vector<double>& values) {

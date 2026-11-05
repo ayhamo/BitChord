@@ -146,6 +146,7 @@ object SpotifyCanvas {
         val (code, body) = canvasGetWithStatus(url, headers)
         if (body == null) {
             Log.w(TAG, "pathfinder search failed, http $code")
+            ForkCanvasLookup.fail("Spotify: pathfinder search http $code") // fork: no answer is not "no clip" (REST may still answer; found wins)
             return null
         }
         val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
@@ -291,7 +292,7 @@ object SpotifyCanvas {
     }
 
     private fun isMatch(gotName: String, gotArtists: List<String>, wantName: String, wantArtist: String): Boolean {
-        if (gotName.normalizeForMatch() != wantName.normalizeForMatch()) return false
+        if (!titlesMatch(gotName, wantName)) return false // fork: was normalizeForMatch() !=, "" == "" for non-Latin titles
         val wanted = splitArtists(wantArtist)
         val credited = gotArtists.map { it.normalizeForMatch() }.filter { it.isNotBlank() }
         if (wanted.isEmpty() || credited.isEmpty()) return false
@@ -347,7 +348,9 @@ object SpotifyCanvas {
 
         val answer = SpotifyCanvasQuery.parse(body)
         // A rebuilt web player retires the old hash: look it up again once.
-        if (answer is SpotifyCanvasQuery.Answer.Failed && answer.staleHash && !isRetry) {
+        if (answer is SpotifyCanvasQuery.Answer.Failed && answer.staleHash && !isRetry &&
+            queryHashes.canvasHash(forceRefresh = true) != hash // fork: only when the look found another hash (it is rate-limited now); the same one would fail again
+        ) {
             return fetchCanvasViaPathfinder(trackUri, token, isRetry = true)
         }
         return answer

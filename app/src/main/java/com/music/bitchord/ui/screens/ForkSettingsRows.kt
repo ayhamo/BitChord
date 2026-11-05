@@ -305,17 +305,18 @@ internal fun ForkAnimatedCoversRow() = ForkSwitchRow(
 /** The "Navidrome" group, after "Account & integrations": what the Navidrome library adds. */
 @Composable
 internal fun SettingsGroupScope.forkNavidromeRows() {
-    row(stringResource(R.string.fork_navidrome_scrobble), "fork", "navidrome", "scrobbling", "now playing") { ForkNavidromeScrobbleRow() }
-    row(stringResource(R.string.fork_navidrome_home_shelves), "fork", "navidrome", "home", "shelves") { ForkNavidromeHomeShelvesRow() }
-    row(stringResource(R.string.fork_navidrome_yt_history), "fork", "navidrome", "youtube", "history") { ForkNavidromeYouTubeHistoryRow() }
-    row(stringResource(R.string.fork_offline_mode), "fork", "navidrome", "offline") { ForkOfflineModeRow() }
-    row(stringResource(R.string.fork_offline_storage), "fork", "navidrome", "offline", "storage", "downloads") { ForkOfflineStorageRow() }
-    row(stringResource(R.string.fork_download_mobile), "fork", "navidrome", "offline", "mobile", "metered", "download") { ForkDownloadOnMobileRow() }
-    row(stringResource(R.string.fork_preload), "fork", "navidrome", "preload", "cache", "next") { ForkPreloadRow() }
-    // Rides on the server, so greyed (never hidden) while none is set up: the owner's rule for dependent rows.
+    // All ride on the server, so greyed (never hidden) while none is set up: the owner's rule for
+    // dependent rows, and the Fork settings page's condition for the same rows.
     val url by com.music.bitchord.data.navidrome.NavidromeSettings.url.collectAsStateWithLifecycle()
     val user by com.music.bitchord.data.navidrome.NavidromeSettings.username.collectAsStateWithLifecycle()
-    forkDisabledWhen(url.isBlank() || user.isBlank()) {
+    forkDisabledWhen(forkNoNavidromeServer(url, user)) {
+        row(stringResource(R.string.fork_navidrome_scrobble), "fork", "navidrome", "scrobbling", "now playing") { ForkNavidromeScrobbleRow() }
+        row(stringResource(R.string.fork_navidrome_home_shelves), "fork", "navidrome", "home", "shelves") { ForkNavidromeHomeShelvesRow() }
+        row(stringResource(R.string.fork_navidrome_yt_history), "fork", "navidrome", "youtube", "history") { ForkNavidromeYouTubeHistoryRow() }
+        row(stringResource(R.string.fork_offline_mode), "fork", "navidrome", "offline") { ForkOfflineModeRow() }
+        row(stringResource(R.string.fork_offline_storage), "fork", "navidrome", "offline", "storage", "downloads") { ForkOfflineStorageRow() }
+        row(stringResource(R.string.fork_download_mobile), "fork", "navidrome", "offline", "mobile", "metered", "download") { ForkDownloadOnMobileRow() }
+        row(stringResource(R.string.fork_preload), "fork", "navidrome", "preload", "cache", "next") { ForkPreloadRow() }
         row(stringResource(R.string.fork_handoff_setting), "fork", "navidrome", "continue", "handoff", "pc", "device") { ForkHandoffRow() }
     }
 }
@@ -366,20 +367,42 @@ internal fun SettingsGroupScope.forkCacheRows() {
  */
 @Composable
 internal fun SettingsGroupScope.forkSettingsRows() {
+    // Greyed (never hidden) on the same conditions as their rows in their own sections: here they
+    // were always live, so a switch could be flipped with nothing under it (audit 2026-11-05).
+    val crossfade by com.music.bitchord.data.settings.AppSettings.crossfadeSeconds.collectAsStateWithLifecycle()
+    val smartFade by com.music.bitchord.data.settings.AppSettings.smartFadeEnabled.collectAsStateWithLifecycle()
+    val animatedCanvas by com.music.bitchord.data.settings.AppSettings.animatedCanvas.collectAsStateWithLifecycle()
+    val url by com.music.bitchord.data.navidrome.NavidromeSettings.url.collectAsStateWithLifecycle()
+    val user by com.music.bitchord.data.navidrome.NavidromeSettings.username.collectAsStateWithLifecycle()
+    val noServer = forkNoNavidromeServer(url, user)
     run {
-        row(stringResource(R.string.fork_crossfade_on_skip), "fork", "fade", "skip") { ForkCrossfadeOnSkipRow() }
-        row(stringResource(R.string.fork_animated_covers), "fork", "apple", "animated", "cover") { ForkAnimatedCoversRow() }
-        row(stringResource(R.string.fork_backdrop_clips), "fork", "spotify", "backdrop", "video") { ForkBackdropClipsRow() }
-        row(stringResource(R.string.fork_navidrome_scrobble), "fork", "navidrome", "scrobbling") { ForkNavidromeScrobbleRow() }
-        row(stringResource(R.string.fork_navidrome_home_shelves), "fork", "navidrome", "home", "shelves") { ForkNavidromeHomeShelvesRow() }
-        row(stringResource(R.string.fork_navidrome_yt_history), "fork", "navidrome", "youtube", "history") { ForkNavidromeYouTubeHistoryRow() }
+        forkDisabledWhen(!forkCrossfadeOnSkipAvailable(crossfade, smartFade)) {
+            row(stringResource(R.string.fork_crossfade_on_skip), "fork", "fade", "skip") { ForkCrossfadeOnSkipRow() }
+        }
+        forkDisabledWhen(!animatedCanvas) {
+            row(stringResource(R.string.fork_animated_covers), "fork", "apple", "animated", "cover") { ForkAnimatedCoversRow() }
+            row(stringResource(R.string.fork_backdrop_clips), "fork", "spotify", "backdrop", "video") { ForkBackdropClipsRow() }
+        }
+        forkDisabledWhen(noServer) {
+            row(stringResource(R.string.fork_navidrome_scrobble), "fork", "navidrome", "scrobbling") { ForkNavidromeScrobbleRow() }
+            row(stringResource(R.string.fork_navidrome_home_shelves), "fork", "navidrome", "home", "shelves") { ForkNavidromeHomeShelvesRow() }
+            row(stringResource(R.string.fork_navidrome_yt_history), "fork", "navidrome", "youtube", "history") { ForkNavidromeYouTubeHistoryRow() }
+        }
         row(stringResource(R.string.fork_clip_cache_size), "fork", "cache", "video", "clips") { ForkClipCacheSizeRow() }
         row(stringResource(R.string.fork_clear_backdrops), "fork", "cache", "backdrop") { ForkClearBackdropsRow() }
         row(stringResource(R.string.fork_clear_cover_clips), "fork", "cache", "cover") { ForkClearCoverClipsRow() }
         row(stringResource(R.string.fork_clear_lyrics), "fork", "cache", "lyrics") { ForkClearLyricsRow() }
-        row(stringResource(R.string.fork_offline_mode), "fork", "navidrome", "offline") { ForkOfflineModeRow() }
-        row(stringResource(R.string.fork_offline_storage), "fork", "navidrome", "offline", "storage") { ForkOfflineStorageRow() }
-        row(stringResource(R.string.fork_download_mobile), "fork", "offline", "mobile") { ForkDownloadOnMobileRow() }
-        row(stringResource(R.string.fork_preload), "fork", "navidrome", "preload") { ForkPreloadRow() }
+        forkDisabledWhen(noServer) {
+            row(stringResource(R.string.fork_offline_mode), "fork", "navidrome", "offline") { ForkOfflineModeRow() }
+            row(stringResource(R.string.fork_offline_storage), "fork", "navidrome", "offline", "storage") { ForkOfflineStorageRow() }
+            row(stringResource(R.string.fork_download_mobile), "fork", "offline", "mobile") { ForkDownloadOnMobileRow() }
+            row(stringResource(R.string.fork_preload), "fork", "navidrome", "preload") { ForkPreloadRow() }
+        }
     }
 }
+
+/** Crossfade on skip has something to blend with: a crossfade length, or Automix's own fallback (its home row's condition). */
+internal fun forkCrossfadeOnSkipAvailable(crossfadeSeconds: Int, smartFade: Boolean): Boolean = crossfadeSeconds > 0 || smartFade
+
+/** No Navidrome server set up: its rows are greyed (the handoff row's condition). */
+internal fun forkNoNavidromeServer(url: String, user: String): Boolean = url.isBlank() || user.isBlank()

@@ -135,7 +135,7 @@ object NavidromeHome {
         // The stars too: otherwise only a page listing a song says it is starred, and the song
         // restored at start shows an empty star until one is opened.
         try {
-            NavidromeStars.seed(client.starredSongIds().mapTo(HashSet()) { NavidromeSettings.ID_PREFIX + it })
+            NavidromeStars.seedAll(client.starredSongIds().mapTo(HashSet()) { NavidromeSettings.ID_PREFIX + it }) // every star the server has: one taken off elsewhere goes here too
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

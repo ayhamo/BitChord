@@ -1,24 +1,14 @@
 package com.music.bitchord.data.navidrome
 
-import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.canvas.CanvasSource
 import com.music.bitchord.data.model.Song
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.put
 import okhttp3.HttpUrl
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Interceptor
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
  * Video clips from the owner's server (fork-only), as in the psysonic fork: a song file could have
@@ -32,27 +22,14 @@ import okhttp3.RequestBody.Companion.toRequestBody
  *
  * What stays in use: [init] plugs the HTTP layer's fork interceptor in, which answers kept covers
  * and clips from the device and adds the Subsonic login to this server's `/rest/` requests
- * ([withSubsonicLogin]). The Navidrome login token ([token]) is only for its native API, which
- * nothing calls now.
+ * ([withSubsonicLogin]). Nothing goes to the server outside `/rest/`.
  */
 object NavidromeClips {
 
-    private const val TAG = "BitChordNavidrome"
-
     private lateinit var prefs: NavidromePlatform.Store
-    private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     /** The two clips a song can have, in the order they are tried. */
     enum class Kind(val suffix: String) { COVER(".cover.mp4"), BACKDROP(".background.mp4") }
-
-    @Volatile private var token: String? = null
-    private val tokenLock = Any()
-
-    /** The login in flight, which every other caller needing a token waits on; see [token]. */
-    private var login: java.util.concurrent.CompletableFuture<String?>? = null
-
-    /** How long a caller waits on another's login before going on without a token. */
-    private const val LOGIN_WAIT_S = 20L
 
     fun init(store: NavidromePlatform.Store) {
         prefs = store
@@ -67,7 +44,6 @@ object NavidromeClips {
 
     /** The settings changed: a different server or account answers differently. */
     fun reset() {
-        token = null
         if (::prefs.isInitialized) prefs.clear()
     }
 
@@ -130,89 +106,19 @@ object NavidromeClips {
             .build()
     }
 
-    private fun base(): HttpUrl? = NavidromeSettings.url.value.toHttpUrlOrNull()
+    /**
+     * The HTTP layer's fork interceptor: the Subsonic login added to this server's `/rest/` requests.
+     * It also logged in to Navidrome's native API (`/auth/login`) and sent that token with `/api/`
+     * requests, which nothing has made since the clips left the server; that code stayed installed
+     * on every request and is gone: this fork talks to the server through `/rest/` only.
+     */
+    private val interceptor = Interceptor { chain -> chain.proceed(chain.request().withSubsonicLogin()) }
 
-    /** Requests that need Navidrome's login: its native API and the x-clip route, on the configured server. */
-    private fun needsLogin(url: HttpUrl): Boolean {
-        val base = base() ?: return false
-        if (url.host != base.host || url.port != base.port) return false
-        val path = url.encodedPath
-        // Not x-clip any more: a kept clip whose file is gone would otherwise log in to ask a server that has none.
-        return "/api/" in path
-    }
-
-    private val interceptor = Interceptor { chain ->
-        val request = chain.request().withSubsonicLogin()
-        if (!needsLogin(request.url)) return@Interceptor chain.proceed(request)
-        val used = token(failed = null)
-        val first = chain.proceed(request.withToken(used))
-        if (first.code != 401) return@Interceptor first
-        // Expired login: once more with a new one (one login for every request that failed on it).
-        first.close()
-        chain.proceed(request.withToken(token(failed = used)))
-    }
-
-    /** The login a song's address leaves out (see [NavidromeClient.withLogin]), for this server only. */
+    /** The login a song's address leaves out ([NavidromeClient.withLogin] checks host, port and base path), for this server only. */
     private fun Request.withSubsonicLogin(): Request {
         if ("/rest/" !in url.encodedPath || url.queryParameter("t") != null || !NavidromeSettings.isConfigured()) return this
         val plain = url.toString()
         val signed = NavidromeRepository.withLogin(plain)
         return if (signed == plain) this else newBuilder().url(signed).build()
-    }
-
-    private fun Request.withToken(token: String?): Request =
-        if (token == null) this else newBuilder().header("X-ND-Authorization", "Bearer $token").build()
-
-    /**
-     * Navidrome's login token, logging in when there is none, or when the one there is [failed]
-     * (a 401). The login runs outside [tokenLock]: held across the network, every request needing
-     * a token queued behind one slow login, and each that had failed on the old token then logged
-     * in again in turn. One caller logs in; the others wait on its answer ([login]).
-     */
-    private fun token(failed: String?): String? {
-        token?.takeIf { it != failed }?.let { return it }
-        val mine = java.util.concurrent.CompletableFuture<String?>()
-        val running = synchronized(tokenLock) {
-            token?.takeIf { it != failed }?.let { return it }
-            login ?: mine.also { login = it }
-        }
-        if (running !== mine) {
-            return runCatching { running.get(LOGIN_WAIT_S, java.util.concurrent.TimeUnit.SECONDS) }.getOrNull()
-        }
-        val fresh = try {
-            logIn()
-        } finally {
-            synchronized(tokenLock) { login = null }
-        }
-        synchronized(tokenLock) { token = fresh }
-        mine.complete(fresh)
-        return fresh
-    }
-
-    private fun logIn(): String? {
-        val base = base() ?: return null
-        val body = buildJsonObject {
-            put("username", NavidromeSettings.username.value)
-            put("password", NavidromeSettings.password.value)
-        }.toString().toRequestBody("application/json".toMediaType())
-        val url = base.newBuilder().addPathSegment("auth").addPathSegment("login").build()
-        return try {
-            Http.client.newCall(Request.Builder().url(url).post(body).build()).execute().use { response ->
-                if (!response.isSuccessful) {
-                    Log.d(TAG, "login: HTTP ${response.code}")
-                    null
-                } else {
-                    (json.parseToJsonElement(response.body.string()).jsonObject["token"] as? JsonPrimitive)?.contentOrNull
-                }
-            }
-        } catch (e: java.io.IOException) {
-            Log.d(TAG, "login: ${e.message}")
-            null
-        } catch (e: IllegalArgumentException) {
-            // Not JSON (a proxy's HTML page): inside an interceptor anything but an IOException
-            // escapes OkHttp's handling, so it is a failed login like any other.
-            Log.d(TAG, "login: ${e.message}")
-            null
-        }
     }
 }

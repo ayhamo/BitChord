@@ -111,7 +111,7 @@ internal object ForkClipSource {
                 plan(url)
             } catch (unsupported: ForkClipHls.Unsupported) {
                 DesktopTrackLog.log("canvas: the clip's playlist can't be saved (${unsupported.message}); streaming it")
-                return Source.Stream(url)
+                return Source.Stream(unsupported.streamUrl ?: url)
             }
             Files.newOutputStream(part).buffered().use { out ->
                 for (piece in ForkClipHls.merged(plan)) fetch(piece, out)
@@ -135,7 +135,15 @@ internal object ForkClipSource {
         if (variants.isEmpty()) return ForkClipHls.media(first, url)
         val chosen = ForkClipHls.choose(variants) ?: throw ForkClipHls.Unsupported("no rendition")
         val mediaUrl = URI(url).resolve(chosen.uri).toString()
-        return ForkClipHls.media(text(mediaUrl), mediaUrl)
+        // A rendition that can't be saved is streamed on its own, not through the master: handed
+        // the master, FFmpeg probes every rendition (HEVC and 4K ones included, a segment of each)
+        // and decodes the biggest. Choosing from the master first is PC-Continued 5e9dbcbd's
+        // selectCanvasVariant; the saved path above already chose the same way.
+        return try {
+            ForkClipHls.media(text(mediaUrl), mediaUrl)
+        } catch (unsupported: ForkClipHls.Unsupported) {
+            throw ForkClipHls.Unsupported(unsupported.message ?: "unsupported", streamUrl = mediaUrl)
+        }
     }
 
     private fun text(url: String): String {
@@ -230,8 +238,11 @@ internal class ForkClipRetry(private val windowMs: Long, private val now: () -> 
  */
 internal object ForkClipHls {
 
-    /** Not saveable as one file; the caller streams it instead. */
-    class Unsupported(message: String) : Exception(message)
+    /**
+     * Not saveable as one file; the caller streams it instead: [streamUrl] when a rendition was
+     * already chosen from a master playlist, else the address it was given.
+     */
+    class Unsupported(message: String, val streamUrl: String? = null) : Exception(message)
 
     data class Variant(val uri: String, val width: Int, val height: Int, val codecs: String, val bandwidth: Long) {
         val edge: Int get() = maxOf(width, height)

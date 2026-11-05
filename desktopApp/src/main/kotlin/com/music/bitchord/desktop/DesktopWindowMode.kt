@@ -29,14 +29,17 @@ internal object DesktopWindowMode {
     private val fillsScreen: WindowPlacement =
         if (DesktopPlatform.drawsOwnWindowFrame) WindowPlacement.Maximized else WindowPlacement.Fullscreen
 
-    fun toggle() = setFullScreen(!_fullScreen.value)
+    fun toggle() = setFullScreen(!isFullScreen()) // fork: was !_fullScreen.value; the native state counts too
+
+    /** Fork: either flag; F11, Esc and [exit] must leave a native fullscreen even if the two disagree. */
+    private fun isFullScreen(): Boolean = _fullScreen.value || DesktopWindowsFrame.fullscreenActive
 
     /**
      * Maximize or restore, which is what the caption button in the corner does and what
      * double-clicking the title bar has always done.
      */
     fun toggleMaximized() {
-        if (DesktopPlatform.isWindows && _fullScreen.value && DesktopWindowsFrame.setFullscreen(false)) {
+        if (DesktopPlatform.isWindows && isFullScreen() && DesktopWindowsFrame.setFullscreen(false)) { // fork: was _fullScreen.value
             DesktopWindowBackdrop.apply()
         }
         _fullScreen.value = false
@@ -48,14 +51,19 @@ internal object DesktopWindowMode {
      * the window being put away to the tray.
      */
     fun exit() {
-        if (_fullScreen.value) setFullScreen(false)
+        if (isFullScreen()) setFullScreen(false) // fork: was _fullScreen.value
     }
 
     /** Takes the window's word for how it is sitting, rather than this object's. */
     fun adopt(placement: WindowPlacement) {
-        if (placement == _placement.value) return
-        if (placement == WindowPlacement.Floating) _fullScreen.value = false
-        set(placement)
+        // fork: adoptPlacement — ignored while the native fullscreen is on. Entered from a
+        // maximized window, the popup lost WS_MAXIMIZE, AWT called that Floating, and this cleared
+        // the full-screen flag under a window still borderless and on top: F11 then asked for
+        // full screen again (a no-op natively), Esc saw nothing to leave, and only quitting got
+        // out.
+        val adopted = adoptPlacement(placement, _placement.value, _fullScreen.value, DesktopWindowsFrame.fullscreenActive) ?: return
+        _fullScreen.value = adopted.fullScreen
+        set(adopted.placement)
     }
 
     private fun setFullScreen(on: Boolean) {
@@ -77,4 +85,22 @@ internal object DesktopWindowMode {
         _placement.value = placement
         _maximized.value = placement == WindowPlacement.Maximized
     }
+}
+
+/** Fork: what [DesktopWindowMode.adopt] takes from the window, or null to leave things as they are. */
+internal data class AdoptedPlacement(val placement: WindowPlacement, val fullScreen: Boolean)
+
+/**
+ * Fork: [reported] is what the window says, [current] and [fullScreen] what DesktopWindowMode
+ * holds, [nativeFullscreen] whether the Windows borderless popup is up. While it is up the window's
+ * word is about the popup, not the user's choice, so nothing is taken from it.
+ */
+internal fun adoptPlacement(
+    reported: WindowPlacement,
+    current: WindowPlacement,
+    fullScreen: Boolean,
+    nativeFullscreen: Boolean,
+): AdoptedPlacement? {
+    if (nativeFullscreen || reported == current) return null
+    return AdoptedPlacement(reported, fullScreen && reported != WindowPlacement.Floating)
 }

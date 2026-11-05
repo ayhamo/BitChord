@@ -153,7 +153,8 @@ internal class DesktopCanvasDecoder(
         fun edge(index: Int) = context.streams(index).codecpar().let { maxOf(it.width(), it.height()) }
         val sized = videos.filter { edge(it) > 0 }
         if (sized.isEmpty()) return null
-        return sized.filter { edge(it) >= MAX_EDGE }.minByOrNull(::edge) ?: sized.maxByOrNull(::edge)
+        // Against this decoder's own edge, not the cover default (size per call, as PC-Continued 5e9dbcbd).
+        return sized.filter { edge(it) >= forkMaxEdge }.minByOrNull(::edge) ?: sized.maxByOrNull(::edge)
     }
 
     /** Fork: every other stream is dropped, so the HLS demuxer stops downloading the renditions not shown. */

@@ -61,7 +61,7 @@ internal object DesktopSpotifyCanvas {
             url = canvasUrl,
             title = hit.title,
             artist = hit.artist,
-            album = hit.album,
+            album = forkAlbumOf(hit, album), // fork: was hit.album
             source = DesktopCanvasSource.SPOTIFY,
         )
     }
@@ -98,9 +98,34 @@ internal object DesktopSpotifyCanvas {
     }
 
     private fun searchTrack(title: String, artist: String, album: String?, token: String): TrackHit? =
-        forkSearchViaPathfinder(title, artist, album, token) ?: searchViaRest(title, artist, album, token) // fork
+        forkSearchViaPathfinder(title, artist, album, token) ?: forkSearchWithoutAlbum(title, artist, album, token) ?: searchViaRest(title, artist, album, token) // fork
 
     // ── fork: Pathfinder search, as on the phone ─────────────────────────
+
+    /**
+     * Fork: the Pathfinder search again without the album, when the album was asked with and
+     * nothing matched (Desktop Revived ad164a5d). YouTube Music often names the release differently
+     * from Spotify ("Song (From X)" singles, "Deluxe" editions, a compilation the upload sits on),
+     * and an album word Spotify doesn't know pushes the right track out of the top ten. Only the
+     * Pathfinder search is asked again, not the REST one: REST is the search that answers this kind
+     * of token with 429s, and two of those per song would only bring its backoff on sooner.
+     */
+    private fun forkSearchWithoutAlbum(title: String, artist: String, album: String?, token: String): TrackHit? {
+        if (album.isNullOrBlank()) return null
+        return forkSearchViaPathfinder(title, artist, null, token)
+            ?.also { DesktopTrackLog.log("canvas: Spotify matched '$title' only without the album") }
+    }
+
+    /**
+     * Fork: the album a Spotify hit is reported under: the one asked for, when there was one
+     * (Desktop Revived f432c745). The hit's title and artists are already checked against the song
+     * ([canvasMatches]); its album was then held to the asked one too (`DesktopCanvasArtwork.matches`
+     * here and in `DesktopCanvasClient.firstHit`, `CanvasArtwork.matches` in the shared player), so
+     * the same recording on another release ("Deluxe", a single, a "Best of") was found and turned
+     * away. The phone's Pathfinder hit already carries the names asked for
+     * (`SpotifyCanvas.searchViaPathfinder`); this does the same for the PC's.
+     */
+    private fun forkAlbumOf(hit: TrackHit, asked: String?): String? = asked?.takeIf { it.isNotBlank() } ?: hit.album
 
     /**
      * Fork: the web player's own track search, tried before the REST one, as the phone does
@@ -146,11 +171,11 @@ internal object DesktopSpotifyCanvas {
             )
         }.getOrElse {
             DesktopTrackLog.log("canvas: Spotify search threw: ${it.message}")
-            return null
+            return com.music.bitchord.data.canvas.ForkCanvasLookup.failed("Spotify: pathfinder search threw") // fork: no answer is not "no clip"
         }
         if (response.statusCode() !in 200..299) {
             DesktopTrackLog.log("canvas: Spotify search answered HTTP ${response.statusCode()}")
-            return null
+            return com.music.bitchord.data.canvas.ForkCanvasLookup.failed("Spotify: pathfinder search http ${response.statusCode()}") // fork: as above
         }
         val items = runCatching { json.parseToJsonElement(response.body()).jsonObject }.getOrNull()
             ?.get("data")?.jsonObject?.get("searchV2")?.jsonObject?.get("tracksV2")?.jsonObject
@@ -236,7 +261,9 @@ internal object DesktopSpotifyCanvas {
 
         val answer = SpotifyCanvasQuery.parse(response.body())
         // A rebuilt web player retires the old hash: look it up again once.
-        if (answer is SpotifyCanvasQuery.Answer.Failed && answer.staleHash && !isRetry) {
+        if (answer is SpotifyCanvasQuery.Answer.Failed && answer.staleHash && !isRetry &&
+            queryHashes.canvasHash(forceRefresh = true) != hash // fork: only when the look found another hash (it is rate-limited now); the same one would fail again
+        ) {
             return fetchCanvasViaPathfinder(trackUri, token, isRetry = true)
         }
         return answer
@@ -420,7 +447,19 @@ internal object DesktopSpotifyToken {
         cachedAccessToken = null
         accessTokenExpiresAtMs = 0L
         retryAfterMs = 0L
+        forkClientTokenBackoff.clear() // fork: a new sign-in mints its client token at once
         com.music.bitchord.data.canvas.ForkCanvasLookup.clearNotes() // fork: songs held back by the old sign-in's backoff are asked again
+    }
+
+    /** Fork: the cached tokens and the 30-minute backoff dropped, for a Retry (ForkSpotifyLibraryRetry). */
+    fun forkForgetTokens() {
+        cachedAccessToken = null
+        accessTokenExpiresAtMs = 0L
+        retryAfterMs = 0L
+        cachedClientToken = null
+        clientTokenExpiresAtMs = 0L
+        forkClientTokenBackoff.clear()
+        com.music.bitchord.data.canvas.ForkCanvasLookup.clearNotes()
     }
 
     @Synchronized
@@ -457,9 +496,27 @@ internal object DesktopSpotifyToken {
     /**
      * The second header these endpoints demand alongside the bearer. Best-effort: a caller with no
      * client token sends the bearer alone and takes whatever the endpoint does with that.
+     *
+     * Fork: a failed mint (or session read) is held for 10 minutes ([ForkSpotifyClientTokenBackoff]);
+     * every canvas request's headers call this, so a refusing clienttoken endpoint cost ~5 POSTs a song.
      */
     @Synchronized
     fun clientToken(): String? {
+        val clientId = cachedClientId
+        if (clientId != null && forkClientTokenBackoff.blocks(clientId)) return null
+        return mintClientToken() ?: null.also {
+            if (clientId != null && cachedClientId == clientId) forkClientTokenBackoff.failed(clientId)
+        }
+    }
+
+    /** Fork: see [clientToken]. */
+    private val forkClientTokenBackoff = com.music.bitchord.data.canvas.ForkSpotifyClientTokenBackoff()
+
+    /** Fork: one client for the client-token POSTs; upstream built a new HttpClient (and its threads) per call. */
+    private val forkHttp: HttpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build()
+
+    @Synchronized
+    private fun mintClientToken(): String? { // fork: was `fun clientToken()`, now wrapped by the backoff above
         val now = System.currentTimeMillis()
         cachedClientToken?.let { if (now < clientTokenExpiresAtMs - 30_000) return it }
         val clientId = cachedClientId ?: return null
@@ -480,8 +537,7 @@ internal object DesktopSpotifyToken {
             }
         }
         val body = runCatching {
-            val client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build()
-            val response = client.send(
+            val response = forkHttp.send( // fork: was a new HttpClient per call
                 HttpRequest.newBuilder(URI.create("https://clienttoken.spotify.com/v1/clienttoken"))
                     .timeout(Duration.ofSeconds(15))
                     .header("Accept", "application/json")

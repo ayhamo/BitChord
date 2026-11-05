@@ -59,8 +59,15 @@ internal object ForkDownloadTags {
     /** Tags [file] (the finished download of [song]) with what [tags] found. */
     suspend fun write(tags: Deferred<Tags>, file: Path, song: Song) {
         val found = withTimeoutOrNull(LOOKUP_MS) { tags.await() } ?: Tags(null, null, null)
-        runCatching { lock.withLock { withContext(Dispatchers.IO) { embed(file, song, found) } } }
-            .onFailure { DesktopTrackLog.log("could not tag the download of '${song.title}': ${it.message}") }
+        // A cancel (the listener calling the download off mid-tagging) goes through: swallowed by a
+        // runCatching here, the download carried on to its real name and was recorded as done.
+        try {
+            lock.withLock { withContext(Dispatchers.IO) { embed(file, song, found) } }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            DesktopTrackLog.log("could not tag the download of '${song.title}': ${failure.message}")
+        }
     }
 
     /** The rewrite itself, by what the file is rather than by its name. */

@@ -158,7 +158,7 @@ class DownloadService : Service() {
 
     override fun onDestroy() {
         scope.cancel()
-        Downloads.onStopped()
+        Downloads.onStopped(getString(R.string.fork_download_stopped)) // fork: + the reason the rows show
         super.onDestroy()
     }
 

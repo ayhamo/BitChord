@@ -33,10 +33,12 @@ import kotlinx.coroutines.withContext
  */
 internal object ForkDesktopCanvas {
 
-    private class Answer(val artwork: DesktopCanvasArtwork?, val atMs: Long)
+    /** [untilMs]: when a miss may be asked again (a found clip is kept regardless). */
+    private class Answer(val artwork: DesktopCanvasArtwork?, val untilMs: Long)
 
     /**
-     * Spotify's answer per song, the last 64; a miss is asked again after ten minutes. Locked on
+     * Spotify's answer per song, the last 64; a miss is asked again after ten minutes, a failed
+     * search (see [spotifyFor]) after a minute or the provider's own backoff. Locked on
      * itself, not with [spotifyFor]'s lock: [cached] reads it on the UI thread, and that lock is
      * held for the whole Spotify request.
      */
@@ -75,7 +77,8 @@ internal object ForkDesktopCanvas {
         if (ForkSpotifyCanvasFirst.prioritized.value) return shown // Spotify was asked first already (see asksSpotify)
         if (com.music.bitchord.data.navidrome.NavidromeClips.canvasFor(playing) != null) return shown
         val song = com.music.bitchord.data.navidrome.NavidromeCanvasQuery.searchable(playing)
-        val backdrop = withContext(Dispatchers.IO) { spotifyFor(song) }
+        val scope = com.music.bitchord.data.canvas.ForkCanvasLookup.Scope() // where the Spotify provider reports a failed search
+        val backdrop = withContext(Dispatchers.IO + scope.context) { spotifyFor(song, scope) }
         DesktopTrackLog.log("canvas: '${song.title}': ${if (backdrop != null) "+ Spotify backdrop" else "no Spotify backdrop"}")
         return forkWithBackdrop(shown, backdrop?.toShared()).answering(playing)
     }
@@ -111,11 +114,21 @@ internal object ForkDesktopCanvas {
     /** Spotify's backdrop for the song when already found, without asking (null: none, or not asked yet). */
     private fun known(videoId: String): DesktopCanvasArtwork? = synchronized(spotify) { spotify[videoId] }?.artwork
 
-    /** One Spotify search at a time (the object's lock), each answer kept in [spotify]. */
+    /**
+     * One Spotify search at a time (the object's lock), each answer kept in [spotify].
+     *
+     * A miss is kept for ten minutes only when Spotify really answered. A search that never got an
+     * answer (HTTP 429, a token that would not mint, a timeout, a throw: what the provider reports to
+     * [scope]) is held off for a minute, or until the token's own backoff ends, and then asked
+     * again. Before, every miss was kept ten minutes "either way", so one refused request left the
+     * song with no backdrop for ten minutes after Spotify was answering again. From Desktop Revived
+     * 1432c5af (its Spotify-only lookup caches only hits); ours keeps the short hold so a queue
+     * skipped through doesn't re-ask a refusing service per track.
+     */
     @Synchronized
-    private fun spotifyFor(song: Song): DesktopCanvasArtwork? {
+    private fun spotifyFor(song: Song, scope: com.music.bitchord.data.canvas.ForkCanvasLookup.Scope): DesktopCanvasArtwork? {
         synchronized(spotify) { spotify[song.videoId] }?.let { known ->
-            if (known.artwork != null || System.currentTimeMillis() - known.atMs < 10L * 60 * 1000) return known.artwork
+            if (known.artwork != null || System.currentTimeMillis() < known.untilMs) return known.artwork
         }
         // Without a sign-in nothing is asked and nothing remembered, so signing in later counts.
         if (DesktopSpotifyToken.accessToken() == null) return null
@@ -126,9 +139,16 @@ internal object ForkDesktopCanvas {
         val found = runCatching {
             DesktopSpotifyCanvas.search(title, artist, song.albumName)?.takeIf { it.matches(title, artist, song.albumName) }
         }
-        // Remembered for a while either way: the search itself can't tell "no Canvas" from HTTP 429.
         val artwork = found.getOrNull()
-        if (found.isSuccess) synchronized(spotify) { spotify[song.videoId] = Answer(artwork, System.currentTimeMillis()) }
+        val now = System.currentTimeMillis()
+        val failed = artwork == null && (found.isFailure || scope.failure != null)
+        val until = if (failed) {
+            DesktopTrackLog.log("canvas: Spotify backdrop search failed (${scope.failure ?: found.exceptionOrNull()?.message}); asking again later")
+            maxOf(now + com.music.bitchord.data.canvas.ForkCanvasLookup.RETRY_AFTER_MS, scope.retryAtMs)
+        } else {
+            now + 10L * 60 * 1000
+        }
+        synchronized(spotify) { spotify[song.videoId] = Answer(artwork, until) }
         return artwork
     }
 

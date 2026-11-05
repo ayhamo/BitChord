@@ -35,6 +35,8 @@ import com.music.bitchord.ui.screens.LibraryLink
 import com.music.bitchord.ui.screens.LibraryScreen
 import com.music.bitchord.ui.screens.MoodGenrePlaylistsScreen
 import com.music.bitchord.ui.screens.SearchScreen
+import com.music.bitchord.ui.screens.ForkShelfMorePage // fork
+import com.music.bitchord.ui.screens.forkMoreOpensPage // fork
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.playback.PlaybackPosition
 import com.music.bitchord.playback.QueueSource
@@ -367,7 +369,7 @@ private val LocalDesktopBottomInset = staticCompositionLocalOf { 0.dp }
 
 /** Android's own edge on these bars: `Color.White.copy(alpha = 0.10f)`. */
 private val DesktopBarEdge = Color(0x1AFFFFFF)
-internal val DesktopAccent = Color.White
+internal val DesktopAccent: Color get() = ForkAccent.current // fork: was Color.White; Appearance > Accent colour (ForkAccent)
 
 /** Deleting, signing out, and anything that failed — the one place a colour survives, as on Android. */
 internal val DesktopDestructive = Color(0xFFFF453A)
@@ -531,10 +533,7 @@ fun BitChordDesktopApp() {
             onDismissRequest = { availableUpdate = null },
             title = { Text(DesktopStrings["d_update_available", "Update available"]) },
             text = {
-                Text(
-                    "BitChord ${update.version} is out — you have ${DesktopUpdateChecker.currentVersion}." +
-                        (update.notes?.takeIf { it.isNotBlank() }?.let { "\n\n${it.take(600)}" } ?: ""),
-                )
+                ForkUpdateNotes(update.version, DesktopUpdateChecker.currentVersion, update.notes) // fork: was a Text with the notes cut at 600 characters
             },
             confirmButton = {
                 TextButton(onClick = {
@@ -585,6 +584,7 @@ fun BitChordDesktopApp() {
     val libraryGridState = rememberLazyGridState()
     /** A Library shelf's "Show all", open as a grid in place of the page. */
     var libraryShowAll by remember { mutableStateOf<HomeShelf?>(null) }
+    var forkShelfMore by remember { mutableStateOf<HomeShelf?>(null) } // fork: a Home shelf's See all grid (ForkShelfMore.kt)
     /** What the Spotify grid is waiting on, or why it is empty; null once its playlists are in. */
     var spotifyLibraryStatus by remember { mutableStateOf<String?>(null) }
     var spotifyImportOpen by remember { mutableStateOf(false) }
@@ -638,7 +638,7 @@ fun BitChordDesktopApp() {
     var statsRevision by remember { mutableStateOf(0L) }
     var replayPeriod by remember { mutableStateOf(DesktopReplayPeriod.ALL_TIME) }
     val replayHolder = remember { DesktopAccounts.active()?.name.orEmpty() }
-    var replaySummary by remember { mutableStateOf(DesktopListeningStats.summary()) }
+    var replaySummary by remember { mutableStateOf(DesktopReplaySummary()) } // fork: was DesktopListeningStats.summary(), a preference read and sort in the first composition; LaunchedEffect(statsRevision) reads it on IO right after (Desktop Revived 3d73286b)
     var statsCountedSongs by remember { mutableStateOf<Set<String>>(emptySet()) }
     var playlistTarget by remember { mutableStateOf<Song?>(null) }
     // One busy flag and one message for every playlist edit: only one of them can be in flight,
@@ -1013,7 +1013,8 @@ fun BitChordDesktopApp() {
     startSong = ::playSong
 
     /** Applies a rating locally and carries it to the account. */
-    fun rate(song: Song, status: LikeStatus) {
+    fun rate(song: Song, status: LikeStatus, forkSend: Boolean = true) { // fork: + forkSend (a Navidrome star's roll-back is local only)
+        val forkPrevious = when (song.videoId) { in likedIds -> LikeStatus.LIKE; in dislikedIds -> LikeStatus.DISLIKE; else -> LikeStatus.INDIFFERENT } // fork
         likedIds = if (status == LikeStatus.LIKE) likedIds + song.videoId else likedIds - song.videoId
         dislikedIds = if (status == LikeStatus.DISLIKE) {
             dislikedIds + song.videoId
@@ -1022,6 +1023,8 @@ fun BitChordDesktopApp() {
         }
         persistence.saveLikedIds(likedIds)
         persistence.saveDislikedIds(dislikedIds)
+        if (!forkSend) return // fork
+        if (ForkNavidrome.owns(song)) { com.music.bitchord.data.navidrome.NavidromeStars.tap(song.videoId, status, forkPrevious, scope) { back -> rate(song, back, forkSend = false) }; return } // fork: in tap order, rolled back when the server refuses (it stayed a heart)
         scope.launch {
             (if (ForkNavidrome.owns(song)) com.music.bitchord.data.navidrome.NavidromeStars.rate(song.videoId, status) else DesktopSearchClient.rate(song.videoId, status)) // fork: a Navidrome song's heart is its star on the server
                 .onFailure { DesktopTrackLog.log("youtube: rating ${song.videoId} failed: ${it.message}") }
@@ -1227,7 +1230,8 @@ fun BitChordDesktopApp() {
     /** Deletes the file a download saved and forgets the record. */
     fun removeDownload(song: Song) {
         scope.launch {
-            withContext(Dispatchers.IO) { DesktopDownloadManager.delete(song) }
+            val forkRecord = downloads.firstOrNull { it.videoId == song.videoId } ?: song // fork: the record names the file; a page's row (off the Downloads page) carries none, so the file stayed
+            withContext(Dispatchers.IO) { DesktopDownloadManager.delete(forkRecord) } // fork: was song
             downloads = downloads.filterNot { it.videoId == song.videoId }
             persistence.saveDownloads(downloads)
         }
@@ -1624,7 +1628,9 @@ fun BitChordDesktopApp() {
                 }
             },
             onCrossfaded = { song ->
+                val forkEnded = playbackEngine.forkEndedNaturally(song.videoId) // fork: on the audio thread, once per hand-off (ForkFinishedListens)
                 scope.launch {
+                    if (forkEnded) selectedSong?.let { DesktopScrobbling.onPlaybackEnded(it, forkLastFm = false) } // fork: Last.fm keeps its timer-only rule here; the selection is still the outgoing song here; the outgoing song ran out (a skip-mix isn't): its finished listen, which only the queue's last song used to get
                     // The queue moves with the audio. Only the selection used to, which left the
                     // queue on the track that had just finished — so Next "advanced" onto the song
                     // already playing, and every later skip landed one behind.
@@ -1880,6 +1886,7 @@ fun BitChordDesktopApp() {
         }
     }
     val playback by playbackEngine.state.collectAsState()
+    val forkRadioCaptions by ForkRadioNowPlaying.captions.collectAsState() // fork: what a radio station is playing now
     LaunchedEffect(liveQueue, playback.isPlaying) { ForkPreload.around(liveQueue.current, liveQueue.upcoming, playback.isPlaying) } // fork: "Pre-load next songs"
 
     // The shared player reads the playhead off this one object, and only where it
@@ -2026,9 +2033,10 @@ fun BitChordDesktopApp() {
         shuffle,
         repeatMode,
         playbackSpeed,
+        forkRadioCaptions[playback.song?.videoId], // fork: a station's new title
     ) {
         mprisController.update(
-            playback = playback,
+            playback = ForkRadioNowPlaying.shown(playback, forkRadioCaptions), // fork: was playback
             shuffle = shuffle,
             loopStatus = when (repeatMode) {
                 DesktopRepeatMode.OFF -> "None"
@@ -2040,8 +2048,9 @@ fun BitChordDesktopApp() {
     }
     LaunchedEffect(playback.song?.videoId, playback.isPlaying, playback.durationMs) {
         DesktopScrobbling.onPlaybackStateChanged(playback)
-        DesktopWindowsMedia.publish(playback)
+        DesktopWindowsMedia.publish(ForkRadioNowPlaying.shown(playback, forkRadioCaptions)) // fork: was playback
     }
+    LaunchedEffect(forkRadioCaptions[playback.song?.videoId]) { if (com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(playback.song?.videoId)) DesktopWindowsMedia.publish(ForkRadioNowPlaying.shown(playback, forkRadioCaptions)) } // fork: a station's new title, without a second scrobble call
     // Refetched on opening the page rather than cached for the session: the
     // point of it is that something played elsewhere shows up here.
     LaunchedEffect(destination, youtubeSignedIn, sessionRevision) {
@@ -2386,6 +2395,7 @@ fun BitChordDesktopApp() {
         overlays.settingsPage = null
         selectedMoodGenre = null
         libraryShowAll = null
+        forkShelfMore = null // fork
         if (next == DesktopDestination.SEARCH) searchFocusRequested = true
         destination = next
     }
@@ -2447,6 +2457,7 @@ fun BitChordDesktopApp() {
     fun openSpotifyLibrary() {
         libraryShowAll = HomeShelf(SPOTIFY_SHELF, emptyList())
         spotifyLibraryStatus = "Loading your Spotify playlists…"
+        ForkSpotifyLibraryRetry.failed = false // fork
         scope.launch {
             runCatching { SpotifyLibrary.playlists() }
                 .onSuccess { found ->
@@ -2458,6 +2469,7 @@ fun BitChordDesktopApp() {
                 .onFailure {
                     DesktopTrackLog.log("spotify: playlists failed: ${it.message}")
                     spotifyLibraryStatus = "Could not load your Spotify playlists: ${it.message}"
+                    ForkSpotifyLibraryRetry.failed = true // fork: offers Retry / Reconnect
                 }
         }
     }
@@ -2645,6 +2657,8 @@ fun BitChordDesktopApp() {
                 openSettings()
             },
             onQuit = {
+                ForkSingleInstance.release() // fork: a start made while quitting no longer hands over to this window
+                ForkHandoffDesktop.saveOnQuit() // fork: the last song and second for the phone, read before the engine stops
                 // Native work first: the audio thread and the media controls are inside FFmpeg,
                 // WASAPI and WinRT, and exitProcess would unload those libraries under them.
                 playbackEngine.shutdown()
@@ -2653,8 +2667,8 @@ fun BitChordDesktopApp() {
             },
         )
     }
-    LaunchedEffect(selectedSong, playback.isPlaying) {
-        val title = selectedSong?.let { "${it.title} — ${it.artist}" }
+    LaunchedEffect(selectedSong, playback.isPlaying, forkRadioCaptions) { // fork: + forkRadioCaptions
+        val title = ForkRadioNowPlaying.shown(selectedSong, forkRadioCaptions)?.let { "${it.title} — ${it.artist}" } // fork: was selectedSong
         tray.update(title = title, isPlaying = playback.isPlaying)
         DesktopTrayMenu.publish(title = title, playing = playback.isPlaying)
     }
@@ -2663,19 +2677,27 @@ fun BitChordDesktopApp() {
         // Unpacks the analyser and its models on first run.
         DesktopAnalysisRuntime.ensureStarted()
         DesktopHorizontalScroll.install()
-        localSongs = withContext(Dispatchers.IO) { DesktopLocalMusic.scan() }
+        loadHome() // fork: first; was after the Local Music scan and the download check, so Home's spinner waited on the disk (ForkStartup, Desktop Revived 3d73286b)
+        ForkStartup.awaitFirstFrame() // fork: the disk work below waits for the window's first frame
+        launch { // fork: Local Music when its page opens, else a few seconds in; was scanned here before Home (Desktop Revived 3d73286b)
+            withTimeoutOrNull(ForkStartup.LOCAL_MUSIC_DELAY_MS) { snapshotFlow { destination == DesktopDestination.LOCAL_MUSIC }.first { it } }
+            localSongs = withContext(Dispatchers.IO) { DesktopLocalMusic.scan() }
+            DesktopLocalMusicWatcher.restart() // fork: moved here from the watcher's collector below, after the first scan
+        }
         // A download record is a claim about a folder this app does not own, so it can outlive the
         // file it names. Checked once at startup rather than trusted: a stale entry showed the
         // track as downloaded, refused to fetch it again, and then would not play.
-        val onDisk = withContext(Dispatchers.IO) { DesktopDownloadManager.verified(downloads) }
-        if (onDisk.size != downloads.size) {
+        val forkRecorded = downloads // fork: the list checked; a download that finishes during the check is not in it
+        val onDisk = withContext(Dispatchers.IO) { DesktopDownloadManager.verified(forkRecorded) } // fork: was downloads
+        val forkFolderThere = withContext(Dispatchers.IO) { java.nio.file.Files.isDirectory(java.nio.file.Path.of(ForkPortable.userHome, "Music", "BitChord")) } // fork: a missing Music drive is not deleted files
+        if (onDisk.size != forkRecorded.size && forkMayPruneDownloads(forkRecorded, onDisk, forkFolderThere)) { // fork: was downloads.size; skipped when the folder is missing or every record failed
+            val gone = forkRecorded - onDisk.toSet() // fork: only the records found gone; a download that finished meanwhile stays (Home no longer waits here)
             DesktopTrackLog.log(
-                "downloads: ${downloads.size - onDisk.size} recorded file(s) are gone; forgetting them",
+                "downloads: ${gone.size} recorded file(s) are gone; forgetting them", // fork: was downloads.size - onDisk.size
             )
-            downloads = onDisk
-            persistence.saveDownloads(onDisk)
+            downloads = downloads.filterNot { it in gone } // fork: was onDisk
+            persistence.saveDownloads(downloads) // fork: was onDisk
         }
-        loadHome()
     }
 
     // The feed is the account's: signing in, out or across to another channel is a different Home,
@@ -2698,7 +2720,7 @@ fun BitChordDesktopApp() {
     // every row's tick read from.
     LaunchedEffect(Unit) {
         DesktopDownloadQueue.finished.collect { saved ->
-            downloads = (listOf(saved) + downloads.filterNot { it.videoId == saved.videoId }).take(200)
+            downloads = listOf(saved) + downloads.filterNot { it.videoId == saved.videoId } // fork: no 200 cap; older downloads lost their record and tick
             persistence.saveDownloads(downloads)
         }
     }
@@ -2717,7 +2739,7 @@ fun BitChordDesktopApp() {
 
     // A track dropped into the folder appears without a relaunch.
     LaunchedEffect(Unit) {
-        DesktopLocalMusicWatcher.restart()
+        // fork: DesktopLocalMusicWatcher.restart() moved to the deferred first scan (ForkStartup); it walked the same folders at launch
         DesktopLocalMusicWatcher.changes.collect {
             localSongs = withContext(Dispatchers.IO) { DesktopLocalMusic.scan() }
         }
@@ -2921,8 +2943,10 @@ fun BitChordDesktopApp() {
             libraryState = UiState.Success(LibraryPage(emptyList(), emptyList(), emptyList()))
             return@LaunchedEffect
         }
+        ForkStartup.awaitFirstFrame() // fork: the start fetch (kept: refresh on start) goes after the first frame; at once afterwards (ForkStartup)
         val forkQuiet = ForkLibraryRefresh.started() // fork: the focus refresh counts from here (ForkLibraryRefresh)
-        if (!forkQuiet || libraryState !is UiState.Success) libraryState = UiState.Loading // fork: a background refresh keeps the page's rows; was unconditional
+        val forkKeep = ForkLibraryRefresh.keepsRows(forkQuiet, libraryState is UiState.Success) // fork: a quiet refresh keeps rows only when there are rows to keep
+        if (!forkKeep) libraryState = UiState.Loading // fork: a background refresh keeps the page's rows; was unconditional
         DesktopSearchClient.library().fold(
             onSuccess = { page ->
                 // The continuation is a job to run, not page state — it is consumed below.
@@ -2943,7 +2967,7 @@ fun BitChordDesktopApp() {
                 // Tied to the account it was fetched for: the liked set is one shared map, and a
                 // sync still running after a switch would seed it with a stranger's likes.
                 val syncingFor = activeAccountId
-                page.likedContinuation?.let { token ->
+                page.likedContinuation?.takeIf { ForkLibraryRefresh.likedWalkDue(forkQuiet) }?.let { token -> // fork: a focus refresh doesn't re-walk every Liked page
                     likedSyncJob?.cancel()
                     likedSyncJob = scope.launch {
                         val extra = HashSet<String>()
@@ -2957,7 +2981,7 @@ fun BitChordDesktopApp() {
                     }
                 }
             },
-            onFailure = { if (!forkQuiet) libraryState = UiState.Error(it.message ?: "Could not load your library") }, // fork: a failed background refresh keeps what is shown
+            onFailure = { if (!forkKeep) libraryState = UiState.Error(it.message ?: "Could not load your library") }, // fork: a failed background refresh keeps what is shown; was !forkQuiet, which left a quiet retry after an error on the skeleton for good
         )
         // A session refused mid-flight is dropped by the request itself, so the answer to "are we
         // signed in" is only settled once the call is over.
@@ -2972,6 +2996,7 @@ fun BitChordDesktopApp() {
         showAll = libraryShowAll,
         replay = overlays.replay,
         settings = overlays.settingsPage,
+        forkShelfMore = forkShelfMore, // fork
     )
 
     // Every move between places is a visit, however it was made — the sidebar, a card, a search
@@ -3005,6 +3030,7 @@ fun BitChordDesktopApp() {
         collectionError = null
         openedCollection = entry.collection
         libraryShowAll = entry.showAll
+        forkShelfMore = entry.forkShelfMore // fork
         if (entry.mood != selectedMoodGenre) {
             selectedMoodGenre = entry.mood
             moodGenreShelves = UiState.Loading
@@ -3081,6 +3107,7 @@ fun BitChordDesktopApp() {
 
     ForkNotice.Host() // fork
     ForkSongInfoDialog.Host() // fork: the song menu's "Song info", above the player too
+    LaunchedEffect(overlays.nowPlaying, overlays.replay) { ForkArtistHeader.covered = overlays.nowPlaying || overlays.replay } // fork: the artist page's moving picture holds still under them (ForkArtistHeader)
     // What the shared player reads as settings, kept in step with the window's own.
     SideEffect {
         DesktopPlayerSettings.animatedCanvas.value = animatedCanvas
@@ -3212,6 +3239,7 @@ fun BitChordDesktopApp() {
         partySyncHolder[0]?.onLocalIntent()
     }
 
+    ForkAccentSource(selectedSong?.thumbnailUrl) // fork: the accent can follow the song (ForkAccent)
     MaterialTheme(
         colorScheme = desktopColorScheme(),
         typography = forkTypography(desktopTypography()), // fork: the phone's Font choice (ForkAppFont.kt)
@@ -3308,7 +3336,7 @@ fun BitChordDesktopApp() {
                 topBar = { compact ->
                     DesktopTopBar(
                         compact = compact,
-                        song = selectedSong,
+                        song = ForkRadioNowPlaying.shown(selectedSong, forkRadioCaptions), // fork: was selectedSong
                         isPlaying = playback.isPlaying,
                         isLoading = playback.isLoading,
                         previousEnabled = liveQueue.hasPrevious ||
@@ -3381,7 +3409,7 @@ fun BitChordDesktopApp() {
                     DesktopBottomChrome(
                         compact = compact,
                         destination = destination,
-                        song = selectedSong,
+                        song = ForkRadioNowPlaying.shown(selectedSong, forkRadioCaptions), // fork: was selectedSong
                         isPlaying = playback.isPlaying,
                         onDestinationSelected = ::selectDestination,
                         onExpand = { overlays.nowPlaying = true },
@@ -3446,7 +3474,7 @@ fun BitChordDesktopApp() {
                             }
                             ?: current
                         NowPlayingScreen(
-                            song = playerSong,
+                            song = ForkRadioNowPlaying.shown(playerSong, forkRadioCaptions)!!, // fork: was playerSong; a station shows what it plays
                             isPlaying = playback.isPlaying,
                             isLoading = playback.isLoading,
                             position = playerPosition,
@@ -4156,7 +4184,7 @@ fun BitChordDesktopApp() {
                             Box(Modifier.fillMaxSize()) {
                                 val error = collectionError
                                 if (error != null) {
-                                    DesktopErrorPage(error) { collectionReloads++ }
+                                    DesktopErrorPage(error) { ForkSpotifyLibraryRetry.beforeRetry(openedCollection?.browseId); collectionReloads++ } // fork: + beforeRetry, fresh Spotify tokens
                                 } else {
                                     val title = openedCollection?.title.orEmpty()
                                     DesktopLoadingPage(if (title.isBlank()) "Loading…" else "Loading $title…")
@@ -4197,6 +4225,14 @@ fun BitChordDesktopApp() {
                             forkOpenArtist = ::openArtist, // fork
                             forkAddSuggested = { song -> openedCollection?.let { c -> ForkCollectionExtras.addSuggested(scope, c, song) { change -> openedCollection?.takeIf { it.browseId == c.browseId }?.let { openedCollection = change(it) } } } }, // fork
                         )
+                        destination == DesktopDestination.LISTEN_NOW && forkShelfMore != null -> ForkCardMenuHost { forkCardMenu -> val forkGrid = rememberLazyGridState(); ForkScrollbarBox(forkGrid, Modifier.fillMaxSize(), sharedPagePadding) { ForkShelfMorePage( // fork: a Home shelf's See all (ForkShelfMore.kt)
+                            shelf = forkShelfMore!!,
+                            gridState = forkGrid,
+                            onItemClick = { item, shelfTitle -> openShelfItem(item, shelfTitle) },
+                            onItemLongPress = { item -> if (item.videoId != null) openMenu(item.toSong()) else if (ForkCollectionActions.hasMenu(item)) forkCardMenu(item) },
+                            contentPadding = sharedPagePadding,
+                            title = forkShelfMore!!.title,
+                        ) } }
                         destination == DesktopDestination.LISTEN_NOW -> ForkCardMenuHost { forkCardMenu -> ForkScrollbarBox(homeListState, Modifier.fillMaxSize(), sharedPagePadding) { HomeScreen( // fork: the overlay scrollbar (PC-Continued e16ed1f8); ForkCardMenuHost, a release card's right-click menu
                             state = ForkDesktopHome.present(homeState), // fork: was homeState; the Navidrome / YouTube / Spotify sections
                             listState = homeListState,
@@ -4214,6 +4250,11 @@ fun BitChordDesktopApp() {
                             loadingMore = homeLoadingMore,
                             recentlyPlayedLoading = homeRecentsLoading,
                             leadHero = false,
+                            onShelfOpen = { shelf -> // fork: a heading's See all — the album / playlist / artist page itself, else the grid
+                                val more = shelf.moreBrowseId
+                                if (more != null && shelf.forkMoreOpensPage()) openShelfItem(ShelfItem(shelf.title, "", null, null, more))
+                                else { forkShelfMore = shelf }
+                            },
                         ) } } // fork
                         destination == DesktopDestination.EXPLORE && selectedMoodGenre != null -> Column(Modifier.fillMaxSize()) {
                             ForkScrollbarBox(moodGenreListState, Modifier.weight(1f), sharedPagePadding) { MoodGenrePlaylistsScreen( // fork: the overlay scrollbar
@@ -4349,6 +4390,7 @@ fun BitChordDesktopApp() {
                                     style = MaterialTheme.typography.bodyMedium,
                                     modifier = Modifier.padding(horizontal = PAGE_GUTTER, vertical = 12.dp),
                                 )
+                                ForkSpotifyLibraryRetryRow(onRetry = ::openSpotifyLibrary, onReconnect = { overlays.settingsPage = DesktopSettingsPage.INTEGRATIONS }) // fork
                             }
                             ForkScrollbarBox(libraryGridState, Modifier.weight(1f), sharedPagePadding) { LibraryGridPage( // fork: the overlay scrollbar
                                 shelf = libraryShowAll!!,
@@ -5299,8 +5341,18 @@ private fun DesktopFrame(
     // gray ground.
     val material by DesktopWindowBackdrop.active.collectAsState()
     val appBackground by DesktopWindowBackdrop.appBackground.collectAsState()
-    val glass = material != DesktopBackdrop.OFF
+    val glass = material.isMaterial // fork: was material != OFF; the wallpaper tint is solid
     val materialBehindApp = glass && appBackground
+    val wallpaperGround = ForkWallpaperTint.ground(containerColor) // fork: the "Wallpaper tint" choice
+    // fork: the ground the page and side column get over the material. Acrylic (DWM's transient
+    // material) is a live blur of whatever lies behind the window: over a light window it came
+    // out light gray, and the page, which had no tint at all, put white text straight on it
+    // (washed out, the owner's screenshots of 2026-11-05). Mica is dark by itself and stays bare.
+    val pageGround: Color? = when {
+        glass && !materialBehindApp -> containerColor
+        materialBehindApp && material == DesktopBackdrop.ACRYLIC -> Color.Black.copy(alpha = ACRYLIC_PAGE_TINT)
+        else -> null
+    }
     val maximized by DesktopWindowMode.maximized.collectAsState()
     val roundCorners = DesktopPlatform.isMac && !maximized
     CompositionLocalProvider(LocalDesktopHaze provides haze) {
@@ -5308,11 +5360,15 @@ private fun DesktopFrame(
             modifier
                 .fillMaxSize()
                 .then(if (roundCorners) Modifier.clip(RoundedCornerShape(10.dp)) else Modifier)
-                .then(if (glass) Modifier else Modifier.background(containerColor)),
+                .then(if (glass) Modifier else Modifier.background(wallpaperGround ?: containerColor)), // fork: wallpaperGround
         ) {
             // Both sources of the same state: the chrome blurs the backdrop behind it, and the
             // floating bottom bar blurs the page scrolling under it.
-            if (!glass) Box(Modifier.fillMaxSize().hazeSource(haze)) { backdrop(false) }
+            if (!glass) Box(Modifier.fillMaxSize().hazeSource(haze)) {
+                // fork: under the wallpaper tint the page's solid base is left clear so the tint shows
+                if (wallpaperGround != null) Box(Modifier.fillMaxSize().background(wallpaperGround))
+                backdrop(wallpaperGround != null)
+            }
             Column(Modifier.fillMaxSize()) {
                 // Above everything, and outside the box the rest of the window is drawn in, because
                 // that is what a title bar is.
@@ -5332,13 +5388,7 @@ private fun DesktopFrame(
                                     Modifier
                                         .weight(1f)
                                         .fillMaxHeight()
-                                        .then(
-                                            if (glass && !materialBehindApp) {
-                                                Modifier.background(containerColor)
-                                            } else {
-                                                Modifier
-                                            },
-                                        ),
+                                        .then(if (pageGround != null) Modifier.background(pageGround) else Modifier),
                                 ) {
                                     Box(Modifier.fillMaxSize().hazeSource(haze)) {
                                         if (glass) backdrop(materialBehindApp)
@@ -5359,13 +5409,7 @@ private fun DesktopFrame(
                                 Box(
                                     Modifier
                                         .fillMaxHeight()
-                                        .then(
-                                            if (glass && !materialBehindApp) {
-                                                Modifier.background(containerColor)
-                                            } else {
-                                                Modifier
-                                            },
-                                        ),
+                                        .then(if (pageGround != null) Modifier.background(pageGround) else Modifier),
                                 ) { trailing() }
                             }
                             }
@@ -5392,7 +5436,7 @@ private fun DesktopPageBackdrop(artworkUrl: String?, transparentBase: Boolean) {
             .then(if (transparentBase) Modifier else Modifier.background(DesktopBackground)),
     ) {
         if (artworkUrl == null) return@Box
-        DesktopMesh(artworkUrl)
+        ForkAmbientMesh(artworkUrl) // fork: was DesktopMesh(artworkUrl); the playing cover video's colours while one plays (ForkClipColours)
         Box(
             Modifier.fillMaxSize().background(
                 Brush.verticalGradient(
@@ -5691,10 +5735,11 @@ private data class DesktopNavEntry(
     val showAll: HomeShelf?,
     val replay: Boolean,
     val settings: DesktopSettingsPage?,
+    val forkShelfMore: HomeShelf? = null, // fork: a Home shelf's See all grid
 ) {
     /** What makes two entries the same place: an album that paged in more tracks has not moved. */
     val key: List<Any?>
-        get() = listOf(destination, artist?.browseId, collection?.browseId, mood?.browseId, mood?.params, showAll?.title, replay, settings)
+        get() = listOf(destination, artist?.browseId, collection?.browseId, mood?.browseId, mood?.params, showAll?.title, replay, settings, forkShelfMore?.moreBrowseId, forkShelfMore?.moreParams) // fork: + forkShelfMore
 }
 
 /** Deep enough for any way back anyone takes; the oldest fall off. */
@@ -6467,6 +6512,7 @@ private fun DesktopSettingsScreen(
                 SettingsGroup(DesktopStrings["appearance", "Appearance"]) {
                     ForkUiScaleRow() // fork: UI scale (Desktop Revived 8782585b)
                     ForkAppFontRow() // fork: the phone's Font, before Reduce animation
+                    ForkAccentRow() // fork: Accent colour (ForkAccent)
                     ForkReduceAnimationRow() // fork
                     val reduceDynamicBlur by DesktopAppearanceSettings.reduceDynamicBlur.collectAsState()
                     SettingsToggle(
@@ -6504,7 +6550,7 @@ private fun DesktopSettingsScreen(
                                 Text(materialSubtitle, color = DesktopSecondary, style = MaterialTheme.typography.bodySmall)
                                 Spacer(Modifier.height(10.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    DesktopBackdrop.entries.forEach { option ->
+                                    DesktopBackdrop.entries.filter { it != DesktopBackdrop.TINT || DesktopPlatform.isWindows }.forEach { option -> // fork: the tint reads the Windows wallpaper
                                         FilterChip(
                                             colors = desktopChipColors(),
                                             selected = backdropChoice == option,
@@ -6522,6 +6568,8 @@ private fun DesktopSettingsScreen(
                                         backdropChoice == DesktopBackdrop.MICA ->
                                             if (DesktopPlatform.isMac) "A subtle blur of your desktop wallpaper"
                                             else "A soft tint taken from your wallpaper"
+                                        backdropChoice == DesktopBackdrop.TINT -> // fork
+                                            "Solid, with a little of your wallpaper's colour"
                                         backdropChoice == DesktopBackdrop.ACRYLIC ->
                                             "A frosted blur of whatever is behind the window"
                                         else -> "Solid, as the rest of the app"
@@ -6532,7 +6580,7 @@ private fun DesktopSettingsScreen(
                             }
                         }
                         val appBackground by DesktopWindowBackdrop.appBackground.collectAsState()
-                        SettingsToggle(
+                        ForkDisabledWhen(!backdropChoice.isMaterial) { SettingsToggle( // fork: greyed under Off and the solid tint
                             DesktopStrings["d_app_background", "App background"],
                             DesktopStrings[
                                 "d_app_background_subtitle",
@@ -6540,7 +6588,7 @@ private fun DesktopSettingsScreen(
                             ],
                             appBackground,
                             DesktopWindowBackdrop::setAppBackground,
-                        )
+                        ) }
                         val ambientBackdrop by DesktopAppearanceSettings.ambientBackdrop.collectAsState()
                         SettingsToggle(
                             DesktopStrings["d_ambient_backdrop", "Ambient artwork glow"],
@@ -6565,6 +6613,7 @@ private fun DesktopSettingsScreen(
                         legacyMeshGradient,
                         onLegacyMeshGradientChange,
                     )
+                    ForkBackdropPulseRow() // fork: Backdrop pulse (ForkBackdropPulseMeter)
                     SettingsToggle(
                         DesktopStrings["d_animated_canvas", "Animated canvas"],
                         DesktopStrings["d_show_motion_artwork_when_it_is_available", "Show motion artwork when it is available"],
@@ -6767,6 +6816,7 @@ private fun DesktopSettingsScreen(
                         )
                     }
                     ForkDirectSourceRow() // fork: the phone's Direct Source Stream, under Sources
+                    ForkYtDlpRows() // fork: the owner's yt-dlp as YouTube's first resolver (ForkYtDlp)
                     ForkSourcesFooter(sourceConfigs, audioQuality) // fork: the phone's footer (order note, quality cap or no lossless source)
                 }
             }
@@ -7616,7 +7666,7 @@ internal fun Modifier.desktopWindowGlass(
     fade: Float = 0.2f,
 ): Modifier {
     val backdrop by DesktopWindowBackdrop.active.collectAsState()
-    return if (backdrop == DesktopBackdrop.OFF) {
+    return if (!backdrop.isMaterial) { // fork: was backdrop == OFF; the wallpaper tint keeps the in-app glass
         desktopChromeGlass(edge, fade)
     } else {
         val base = background(Color.Black.copy(alpha = WINDOW_GLASS_TINT))
@@ -7640,6 +7690,12 @@ internal fun Modifier.desktopWindowGlass(
 private const val WINDOW_GLASS_TINT = 0.28f
 
 /**
+ * fork: the page's own tint over Acrylic, darker than the chrome's as the solid page is darker than
+ * the glass: white text keeps about 5:1 even with a white window blurred behind it.
+ */
+private const val ACRYLIC_PAGE_TINT = 0.42f
+
+/**
  * The separators in the window's chrome. Acrylic lets the wallpaper through bright, and the solid
  * dark divider cut across it as a black line; a faint white one reads as an edge in the glass
  * instead. Mica is dark enough for the usual one.
@@ -7649,7 +7705,7 @@ internal fun desktopChromeDivider(): Color {
     val backdrop by DesktopWindowBackdrop.active.collectAsState()
     return when {
         backdrop == DesktopBackdrop.ACRYLIC -> Color.White.copy(alpha = 0.14f)
-        DesktopPlatform.isMac && backdrop != DesktopBackdrop.OFF -> Color.White.copy(alpha = 0.10f)
+        DesktopPlatform.isMac && backdrop.isMaterial -> Color.White.copy(alpha = 0.10f) // fork: was != OFF
         else -> DesktopDivider
     }
 }

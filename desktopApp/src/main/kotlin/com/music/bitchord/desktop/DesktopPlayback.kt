@@ -183,6 +183,7 @@ data class DesktopStreamFormat(
  */
 internal object DesktopStreamClient {
     suspend fun resolve(song: Song, maxKbps: Int = Int.MAX_VALUE): Result<DesktopStream> = runCatching {
+        ForkYtDlp.resolve(song, maxKbps)?.let { return@runCatching it } // fork: the owner's yt-dlp first when it's on; this resolver is the fallback
         val url = withContext(Dispatchers.IO) {
             ceiling.set(maxKbps)
             try {

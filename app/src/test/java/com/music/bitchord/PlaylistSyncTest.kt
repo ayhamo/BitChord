@@ -130,4 +130,14 @@ class PlaylistSyncTest {
         val saved = mapOf("video" to "file:x", "track" to "file:x", "a" to "file:a")
         assertEquals(listOf("a"), Downloads.tracksOnlyIn("one", collections, saved))
     }
+
+    @Test
+    fun `a playlist that always fails doesn't make every app open a catch-up`() {
+        // Fork: the last attempt counts as well as the last complete check.
+        val hour = 60L * 60 * 1000
+        val now = 100 * hour
+        assertFalse(PlaylistSync.catchUpDue(now, lastComplete = 0L, lastAttempt = now - hour))
+        assertTrue(PlaylistSync.catchUpDue(now, lastComplete = 0L, lastAttempt = now - 6 * hour))
+        assertFalse(PlaylistSync.catchUpDue(now, lastComplete = now - hour, lastAttempt = 0L))
+    }
 }

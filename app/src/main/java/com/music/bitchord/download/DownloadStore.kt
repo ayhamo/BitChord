@@ -92,7 +92,49 @@ object DownloadStore {
             title.isEmpty() -> artist
             else -> "$artist - $title"
         }.ifEmpty { song.videoId }
-        return "${stem.take(MAX_STEM_CHARS).trimEnd()}.$extension"
+        return "${forkTakeUtf8(stem.take(MAX_STEM_CHARS), FORK_MAX_STEM_BYTES).trimEnd()}.$extension" // fork: + the byte cut
+    }
+
+    /**
+     * fork: the 255-byte ceiling is bytes, not characters: 120 CJK characters are 360 UTF-8 bytes and
+     * such a title failed to download at all. Cut to [FORK_MAX_STEM_BYTES], which leaves room for the
+     * extension, a " (2)" and the `.part`'s dot, timestamp and suffix ([forkPartFile]); never inside
+     * a surrogate pair.
+     */
+    internal fun forkTakeUtf8(text: String, maxBytes: Int): String {
+        var bytes = 0
+        var end = 0
+        while (end < text.length) {
+            val codePoint = text.codePointAt(end)
+            val size = when {
+                codePoint < 0x80 -> 1
+                codePoint < 0x800 -> 2
+                codePoint < 0x10000 -> 3
+                else -> 4
+            }
+            if (bytes + size > maxBytes) break
+            bytes += size
+            end += Character.charCount(codePoint)
+        }
+        return text.substring(0, end)
+    }
+
+    /** fork: see [forkTakeUtf8]. */
+    private const val FORK_MAX_STEM_BYTES = 200
+
+    /**
+     * fork: [name], or the first "stem (2).ext", "stem (3).ext"… that [taken] says is free. Two
+     * tracks that come to the same file name ("Intro" on two releases) can finish at once on two
+     * workers, and the second rename used to replace the first's file.
+     */
+    internal fun forkFreeName(name: String, taken: (String) -> Boolean): String {
+        if (!taken(name)) return name
+        val dot = name.lastIndexOf('.').takeIf { it > 0 } ?: name.length
+        val stem = name.substring(0, dot)
+        val extension = name.substring(dot)
+        var n = 2
+        while (taken("$stem ($n)$extension")) n++
+        return "$stem ($n)$extension"
     }
 
     /**
@@ -235,16 +277,22 @@ object DownloadStore {
         /** @return the uri the finished file can be reached at. */
         fun commit(): Uri {
             if (part != null && target != null) {
-                if (!part.renameTo(target)) error("Could not finish writing $name")
+                // fork: never over a file already there (another worker's track of the same name)
+                val landed = synchronized(DownloadStore) {
+                    val folder = target.parentFile ?: error("No download folder")
+                    val free = File(folder, DownloadStore.forkFreeName(target.name) { File(folder, it).exists() })
+                    if (!part.renameTo(free)) error("Could not finish writing $name")
+                    free
+                }
                 // Nothing indexes a file that simply appeared; without this it
                 // is on disk and invisible to every app that lists media.
                 MediaScannerConnection.scanFile(
                     context,
-                    arrayOf(target.absolutePath),
+                    arrayOf(landed.absolutePath), // fork: was target
                     null,
                     null,
                 )
-                return Uri.fromFile(target)
+                return Uri.fromFile(landed) // fork: was target
             }
             context.contentResolver.update(
                 uri,

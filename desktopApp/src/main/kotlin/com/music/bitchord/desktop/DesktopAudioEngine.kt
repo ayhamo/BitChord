@@ -366,6 +366,7 @@ class DesktopPlaybackEngine(
     private fun retryAfterFailure(song: Song, playWhenReady: Boolean, stream: DesktopStream, failure: Throwable) {
         if (retryingSongId != song.videoId) {
             retryingSongId = song.videoId
+            if (stream.sourceId == "youtube") ForkYtDlp.forget(stream.url) // fork: the retry must not get the same cached yt-dlp URL
             DesktopTrackLog.log("could not decode '${song.title}' from ${DesktopMusicSources.sourceNameFor(stream)}: ${failure.message}")
             stream.sourceId?.let { refusedSources[song.videoId] = it }
             loadInternal(song, playWhenReady, excludedSourceId = stream.sourceId, priorFailure = failure)
@@ -800,6 +801,7 @@ class DesktopPlaybackEngine(
     private var equalizer = DesktopEqualizer()
     private var equalizerIncoming = DesktopEqualizer()
     private var forkLoudness = ForkLoudnessStage() // fork: loudness normalization per deck, after its equaliser (ForkLoudness)
+    private val forkPulse = ForkBackdropPulseMeter() // fork: Backdrop pulse
     private var forkLoudnessIncoming = ForkLoudnessStage() // fork
     private var silence: DesktopSilenceSkipper? = null
 
@@ -890,6 +892,7 @@ class DesktopPlaybackEngine(
         if (track == null || paused) {
             if (paused) sink.pause()
             forkSilence.reset() // fork: ForkSilentTail
+            forkPulse.silence() // fork: the backdrop settles while nothing plays (ForkBackdropPulseMeter)
             if (paused && fadeRemaining > 0) publishBlend(playing = false)
             Thread.sleep(20)
             return
@@ -951,6 +954,7 @@ class DesktopPlaybackEngine(
             )
         }
         if (fadeRemaining <= 0 && forkLoopRun == null) forkSilence.meter(samples, count, sink.format.channels) // fork: ForkSilentTail
+        forkPulse.meter(samples, count, sink.format.channels, sink.format.sampleRate) // fork: the backdrop's meters (ForkBackdropPulseMeter)
         // fork (Desktop Revived 337653d8): only the frames the device accepted move the clock (ForkPcmWrite)
         forkWritePcmFully(samples, count, sink.format.channels.coerceAtLeast(1), sink.format.bytesPerSample, sink::write, { framesWritten += it })
         if (count > 0 && _state.value.awaitingAudio) _state.update { it.copy(awaitingAudio = false) }
@@ -977,7 +981,7 @@ class DesktopPlaybackEngine(
         val incoming = upcoming
         // Widened first, whether or not a mix is running, then equalised.
         widen(spatial, track, block, count)
-        equalise(equalizer, block, count)
+        equalise(equalizer, block, count, track)
         forkLoudness.process(block, count, sink.format.channels, sink.format.sampleRate, track.song, track.stream.url) // fork
         if (fadeRemaining <= 0 || incoming == null) return block to count
 
@@ -989,7 +993,7 @@ class DesktopPlaybackEngine(
         incomingSourceFrames += otherCount.toDouble() / sink.format.channels.coerceAtLeast(1) * incomingRate
         if (other != null) {
             widen(spatialIncoming, incoming, other, otherCount)
-            equalise(equalizerIncoming, other, otherCount)
+            equalise(equalizerIncoming, other, otherCount, incoming)
             forkLoudnessIncoming.process(other, otherCount, sink.format.channels, sink.format.sampleRate, incoming.song, incoming.stream.url) // fork
         }
         val channels = sink.format.channels.coerceAtLeast(1)
@@ -1017,6 +1021,8 @@ class DesktopPlaybackEngine(
                 out
             }
             val trim = 1f / kotlin.math.sqrt((outgoingLevel + into).coerceAtLeast(1f))
+            val forkTextureRamp = if (textureActive) ForkAutomixFx.textureRamp(progress) else 0f // fork: the texture's bell (ForkAutomixFx)
+            val forkFxTrim = ForkAutomixFx.fxTrim((outgoingLevel + into) * trim, forkTextureRamp) // fork: the sends give way, not the mix; decks as heard, after [trim]
             val stop = minOf(count, index + subBlock)
             val span = stop - index
             while (index < stop) {
@@ -1063,14 +1069,14 @@ class DesktopPlaybackEngine(
                         if (ramp > 0f) fxSend += reverb.process(channel, leaving) * ramp
                     }
                 }
-                if (textureActive) {
+                // fork (PC-Continued 8498b497): the texture rides a bell fed the summed dry, and only the
+                // sends are trimmed for its headroom (ForkAutomixFx). Was: a rising ramp on `leaving` alone.
+                val forkDry = leaving * out + arriving * into
+                if (forkTextureRamp > 0f) {
                     val texture = transitionTexture
-                    if (texture != null) {
-                        val ramp = ((progress - TEXTURE_START) / (1f - TEXTURE_START)).coerceIn(0f, 1f) * TEXTURE_SEND
-                        if (ramp > 0f) fxSend += texture.process(channel, leaving) * ramp
-                    }
+                    if (texture != null) fxSend += texture.process(channel, forkDry) * forkTextureRamp
                 }
-                mixed[index] = ((leaving * out + arriving * into) + fxSend) * trim
+                mixed[index] = (forkDry + fxSend * forkFxTrim) * trim
                 index++
             }
             fadeRemaining -= span
@@ -1196,9 +1202,9 @@ class DesktopPlaybackEngine(
     }
 
     /** The listener's own tuning, applied to one side of the mix. */
-    private fun equalise(processor: DesktopEqualizer, samples: FloatArray, count: Int) {
+    private fun equalise(processor: DesktopEqualizer, samples: FloatArray, count: Int, track: Track? = null) { // fork: track, for karaoke's mono bypass
         processor.setTuning(equalizerEnabled, equalizerCurve, equalizerBalance)
-        processor.process(samples, count)
+        processor.process(samples, count, track?.decoder?.measuredFormat?.channels) // fork: ForkVocalCanceller
     }
 
     private fun stretch(samples: FloatArray, count: Int): Pair<FloatArray, Int> {
@@ -1446,6 +1452,7 @@ class DesktopPlaybackEngine(
                     sink.flush()
                     framesWritten = sink.framesPlayed()
                     endBlend()
+                    forkSkipMixInto.set(null) // fork: a skip-mix cut short leaves no mark on a later hand-off
                 }
             }
         }
@@ -1479,7 +1486,14 @@ class DesktopPlaybackEngine(
         )
         DesktopTrackLog.log("skip-mix into '${incoming.song.title}': ${"%.1f".format(fade)}s")
         armIncomingBlend(incoming, plan)
+        forkSkipMixInto.set(incoming.song.videoId) // fork: its hand-off is a skip, not a finished listen (forkEndedNaturally)
     }
+
+    /** Fork: the song a skip-mix ([startSkipMix]) is blending into, for [forkEndedNaturally]. */
+    private val forkSkipMixInto = java.util.concurrent.atomic.AtomicReference<String?>(null)
+
+    /** Fork: from `onCrossfaded`, once per hand-off: whether the outgoing song ran out (not skipped), see ForkFinishedListens. */
+    fun forkEndedNaturally(incomingId: String): Boolean = ForkFinishedListens.endedNaturally(forkSkipMixInto.getAndSet(null), incomingId)
 
     /**
      * Installs a better rendition without treating it as a new queue item.
@@ -2086,7 +2100,7 @@ class DesktopPlaybackEngine(
         // fork (PC-Continued 18b6b3ae): a tail already gone silent starts the mix now (ForkSilentTail)
         if (!plan.shouldStart && !ForkSilentTail.mustLeave(plan.fadeSeconds, positionMs, duration, forkSilence.silentFrames, sink.format.sampleRate)) return
         if (!plan.shouldStart) DesktopTrackLog.log("'${track.song.title}' has gone silent ${(duration - positionMs) / 1000}s before its end; mixing now")
-        armIncomingBlend(incoming, plan)
+        armIncomingBlend(incoming, plan, forkAutomatic = true) // fork: an automatic handover (ForkAutomixFx)
     }
 
     /**
@@ -2094,8 +2108,9 @@ class DesktopPlaybackEngine(
      * by a manual skip that asks to mix now: the only difference is which [TransitionPlan] is handed
      * in, so both routes get the same cue, tempo, echo and texture arming.
      */
-    private fun armIncomingBlend(incoming: Track, plan: TransitionPlan) {
+    private fun armIncomingBlend(incoming: Track, plan: TransitionPlan, forkAutomatic: Boolean = false) { // fork: forkAutomatic (ForkAutomixFx)
         val seconds = plan.fadeSeconds.takeIf { it > 0 } ?: return
+        forkSkipMixInto.set(null) // fork: a new blend; startSkipMix marks its own after this
         forkMixEngaged = true // fork (PC-Continued be257dad)
         // A planned transition says where the incoming track should be entered, which is the whole
         // difference between Automix and a crossfade.
@@ -2122,7 +2137,7 @@ class DesktopPlaybackEngine(
         val noEcho = plan.echoSeconds <= 0.0
         beatRepeatActive = noEcho && djStyle && plan.beatSeconds > 0.0 && plan.transitionBeats >= 4
         reverbActive = noEcho && djStyle
-        val textureKind = if (noEcho && djStyle) chooseTexture(plan) else TransitionTexture.NONE
+        val textureKind = if (noEcho && djStyle) chooseTexture(plan) else ForkAutomixFx.fallbackTexture(plan, forkAutomatic && automixEnabled) // fork: was NONE
         textureActive = textureKind != TransitionTexture.NONE
         beatRepeatLatched = false
         transitionBeatRepeat = if (beatRepeatActive) {
@@ -2283,7 +2298,10 @@ class DesktopPlaybackEngine(
      * anything newer has replaced it. Everything on the way checks it rather than being cancelled:
      * a cancelled coroutine loses a decoder that finished opening under it, with its thread.
      */
-    @Volatile private var forkSkipTicket: Any? = null
+    private val forkSkipClaim = java.util.concurrent.atomic.AtomicReference<Any?>(null) // fork: claimed with compareAndSet, see ForkCrossfadeOnSkip.claim
+    private var forkSkipTicket: Any?
+        get() = forkSkipClaim.get()
+        set(value) = forkSkipClaim.set(value)
 
     /**
      * Next or Previous, the queue already moved onto [song] by the caller. The player moves at once
@@ -2352,13 +2370,13 @@ class DesktopPlaybackEngine(
 
     /** The cut, unless something newer has taken over; the failure itself is [load]'s to report. */
     private fun forkSkipPlainly(song: Song, ticket: Any) {
-        if (forkSkipTicket === ticket) load(song, playWhenReady = !paused)
+        if (ForkCrossfadeOnSkip.claim(forkSkipClaim, ticket)) load(song, playWhenReady = !paused)
     }
 
     /** On the audio thread: the blend [forkSkipTo] asked for, or the cut when it can't run now. */
     private fun forkStartSkip(command: Command.ForkSkip) {
         forkDropSwap() // fork: see promoteUpcoming
-        if (forkSkipTicket !== command.ticket) {
+        if (!ForkCrossfadeOnSkip.claim(forkSkipClaim, command.ticket)) {
             command.track?.decoder?.close()
             return
         }
@@ -2569,7 +2587,7 @@ class DesktopPlaybackEngine(
     /** A loop-mix block goes out as the song's own would: widened, equalised, played. */
     private fun forkLoopWrite(track: Track, block: FloatArray, count: Int) {
         widen(spatial, track, block, count)
-        equalise(equalizer, block, count)
+        equalise(equalizer, block, count, track)
         forkLoudness.process(block, count, sink.format.channels, sink.format.sampleRate, track.song, track.stream.url) // fork: ForkLoudness
         play(track, block, count)
     }
@@ -2862,6 +2880,7 @@ class DesktopPlaybackEngine(
         track.forkRecoveryRequested = true
         val resumeMs = atMs ?: (playhead.at(sink.framesPlayed()) / 1_000).coerceAtLeast(0L)
         val song = track.song
+        if (track.stream.sourceId == "youtube") ForkYtDlp.forget(track.stream.url) // fork: resolve afresh, not the cached URL that just failed
         DesktopTrackLog.log("decoder recovery $attempt/$FORK_RECOVERY_ATTEMPTS for '${song.title}' at ${resumeMs}ms: $reason")
         _state.update { if (it.song?.videoId == song.videoId) it.copy(awaitingAudio = true) else it }
         // Never cancelled: a decoder that finished opening under a cancel would be lost with its

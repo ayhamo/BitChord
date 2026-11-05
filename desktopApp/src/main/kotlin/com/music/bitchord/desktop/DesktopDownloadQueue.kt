@@ -1,10 +1,15 @@
 package com.music.bitchord.desktop
 
 import com.music.bitchord.data.model.Song
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -136,15 +141,26 @@ object DesktopDownloadQueue {
         repeat(toStart) { scope.launch { work() } }
     }
 
+    /**
+     * The transfer itself; a seam for tests, which can't reach the network or the Music folder.
+     */
+    internal var transfer: suspend (Song, (downloaded: Long, total: Long?) -> Unit) -> Result<Song> =
+        { song, progress -> DesktopDownloadManager.download(song, onProgress = progress) }
+
+    /**
+     * Each track runs in its own child job, and that is the job [cancel] stops, as Android's
+     * `DownloadService` does it. The worker's own job used to be the one registered, so a cancel
+     * killed the worker: the queue lost one of its [WORKERS] for good, and with every worker
+     * cancelled the rest of the queue sat there with nobody left to take it.
+     */
     private suspend fun work() {
         try {
             while (true) {
                 val item = takeNext() ?: return
                 val id = item.song.videoId
-                onRunning(id, currentJob())
                 _active.update { it + (id to item.copy(state = DesktopDownloadState.Running(0f))) }
-                val result = runCatching {
-                    DesktopDownloadManager.download(item.song) { downloaded, total ->
+                val track = scope.async(start = CoroutineStart.LAZY) {
+                    transfer(item.song) { downloaded, total ->
                         val fraction = if (total != null && total > 0L) {
                             (downloaded.toDouble() / total).toFloat().coerceIn(0f, 1f)
                         } else {
@@ -158,16 +174,22 @@ object DesktopDownloadQueue {
                         }
                     }
                 }
-                onIdle(id)
+                onRunning(id, track)
+                val result = try {
+                    track.await()
+                } catch (cancelled: CancellationException) {
+                    // The worker itself going is the only cancellation that ends it; a cancelled
+                    // track ends only that track, and its row leaves the manager.
+                    currentCoroutineContext().ensureActive()
+                    Result.failure(cancelled)
+                } catch (failure: Throwable) {
+                    Result.failure(failure)
+                }
+                onIdle(id, track)
                 result.fold(
-                    onSuccess = { outcome ->
-                        outcome.fold(
-                            onSuccess = { saved ->
-                                _active.update { it - id }
-                                _finished.tryEmit(saved)
-                            },
-                            onFailure = { failed(id, item, it) },
-                        )
+                    onSuccess = { saved ->
+                        _active.update { it - id }
+                        _finished.tryEmit(saved)
                     },
                     onFailure = { failed(id, item, it) },
                 )
@@ -178,8 +200,13 @@ object DesktopDownloadQueue {
     }
 
     private fun failed(id: String, item: DesktopDownloadItem, cause: Throwable) {
-        // A cancelled transfer already left the manager; it is not a failure to report.
-        if (cause is kotlinx.coroutines.CancellationException) return
+        // A cancelled transfer is not a failure to report: its row leaves the manager (a cancel
+        // landing before its job existed found no row to take away yet). Only this request's row:
+        // the track may already be queued again under a new one.
+        if (cause is CancellationException) {
+            _active.update { current -> if (current[id]?.sequence == item.sequence) current - id else current }
+            return
+        }
         if (id !in _active.value) return
         val reason = cause.message?.takeIf(String::isNotBlank) ?: "The download did not finish"
         _active.update { it + (id to item.copy(state = DesktopDownloadState.Failed(reason))) }
@@ -200,19 +227,21 @@ object DesktopDownloadQueue {
         entry.value
     }
 
-    /** Attaches the job fetching [videoId], unless it has been cancelled meanwhile. */
-    private fun onRunning(videoId: String, job: Job?) {
+    /** Attaches the job fetching [videoId] and starts it, unless it has been cancelled meanwhile. */
+    private fun onRunning(videoId: String, job: Job) {
         val cancelled = synchronized(lock) {
             if (videoId !in running) return@synchronized true
             running[videoId] = job
             false
         }
-        if (cancelled) job?.cancel()
+        if (cancelled) job.cancel() else job.start()
     }
 
-    private fun onIdle(videoId: String) {
-        synchronized(lock) { running.remove(videoId) }
+    /**
+     * Only [job]'s own claim: a track cancelled and asked for again at once is already running
+     * under a new job on another worker, and taking that claim away left its cancel nothing to stop.
+     */
+    private fun onIdle(videoId: String, job: Job) {
+        synchronized(lock) { if (running[videoId] === job) running.remove(videoId) }
     }
-
-    private suspend fun currentJob(): Job? = kotlin.coroutines.coroutineContext[Job]
 }

@@ -452,12 +452,19 @@ val windowsPortableAssemble by tasks.registering {
         val bundledJava = File(target, "runtime")
         bundledJava.deleteRecursively()
         javaRuntime?.let { File(it).copyRecursively(bundledJava, overwrite = true) }
+        // fork: AppCDS (below) needs the runtime's default archive and Java 19+ (-XX:+AutoCreateSharedArchive
+        // is an unknown option before 19, and an unknown -XX option stops the JVM from starting).
+        val forkAppCds = File(bundledJava, "lib/server/classes.jsa").isFile &&
+            (File(bundledJava, "release").takeIf { it.isFile }?.readLines()
+                ?.firstOrNull { it.startsWith("JAVA_VERSION=") }
+                ?.substringAfter('=')?.trim('"')?.substringBefore('.')?.toIntOrNull() ?: 0) >= 19
 
         // `lib\*` rather than a spelled-out classpath: the wildcard is what keeps this working when
         // a dependency is added, and the JVM is what expands it.
         // The same flags as the installers below: these are what the app's memory was measured with.
         // fork: one argument per line for BitChord.exe (desktopApp/native/launcher), `{app}` being
-        // its folder. The first five keep everything the app writes in data\ (ForkPortable): the
+        // its folder (its 8.3 short name, or `.`, when the ANSI code page cannot spell it: Java's
+        // launcher reads these in that code page; java_folder in BitChord.c). The first five keep everything the app writes in data\ (ForkPortable): the
         // settings file instead of the registry, the package opened so the old registry settings can
         // be read once, the folders under user.home, temp files, and no hsperfdata in %TEMP%.
         val launch = buildList {
@@ -465,6 +472,16 @@ val windowsPortableAssemble by tasks.registering {
             add("-Duser.home={app}\\data")
             add("-Djava.io.tmpdir={app}\\data\\tmp")
             add("-XX:-UsePerfData")
+            // fork: AppCDS, a dynamic archive of the app's own classes, written in data\ at the
+            // first exit and mapped at every start after (JDK 19+; the zip carries 21). It is
+            // layered on the runtime's default archive, so it is only asked for when the runtime
+            // has one. Never fatal: a missing, stale (new jars, new Java, moved folder) or
+            // unwritable archive is skipped with a warning and rewritten at exit where it can be.
+            // Start-up work deferral itself: ForkStartup (after Desktop Revived 3d73286b).
+            if (forkAppCds) {
+                add("-XX:SharedArchiveFile={app}\\data\\bitchord.jsa")
+                add("-XX:+AutoCreateSharedArchive")
+            }
             addAll(listOf("-Xmx512m", "-XX:+UseG1GC", "-XX:G1PeriodicGCInterval=20000", "-XX:G1PeriodicGCSystemLoadThreshold=0"))
             add("-Dbitchord.version=$version")
             if (moduleIndex.isNotBlank()) add("-Dbitchord.module.index=$moduleIndex")
@@ -531,6 +548,14 @@ val windowsPortableAssemble by tasks.registering {
             } else {
                 "windowsPortable: verified, but no bitchord_analysis.dll — Automix will not run in this archive. " +
                     "Rebuild with: nix-shell -p cmake pkgsCross.mingwW64.buildPackages.gcc"
+            },
+        )
+        // fork: whether BitChord.args asks for AppCDS (see the launch list above); pc-build.sh prints this line.
+        logger.lifecycle(
+            if (forkAppCds) {
+                "windowsPortable: AppCDS on — data\\bitchord.jsa is written at the first exit."
+            } else {
+                "windowsPortable: AppCDS off — the runtime has no lib/server/classes.jsa to layer it on, or is older than Java 19."
             },
         )
     }

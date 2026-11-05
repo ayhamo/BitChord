@@ -1,6 +1,7 @@
 package com.music.bitchord.desktop
 
 import com.music.bitchord.data.model.Song
+import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
 import java.nio.file.Files
 import kotlin.test.AfterTest
@@ -170,5 +171,20 @@ class ForkDownloadTagsTest {
     fun `a WAV keeps no tags, as on the phone`() {
         val wav = "RIFF".toByteArray() + le32(4 + audio.size) + "WAVE".toByteArray() + audio
         assertTrue(tagged("a.wav", wav).contentEquals(wav))
+    }
+
+    @Test
+    fun `a cancel while tagging is not swallowed`() = kotlinx.coroutines.runBlocking {
+        // Swallowed, the cancelled download went on to its real name and was recorded as done.
+        val file = scratch.resolve("cancelled.wav")
+        Files.write(file, "RIFF".toByteArray() + le32(4 + audio.size) + "WAVE".toByteArray() + audio)
+        var carriedOn = false
+        val job = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            coroutineContext[kotlinx.coroutines.Job]!!.cancel()
+            ForkDownloadTags.write(kotlinx.coroutines.CompletableDeferred(ForkDownloadTags.Tags(null, null, null)), file, song)
+            carriedOn = true
+        }
+        job.join()
+        assertTrue(!carriedOn, "the cancel reached the download")
     }
 }

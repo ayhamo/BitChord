@@ -5,6 +5,7 @@ import java.nio.file.Files
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -131,5 +132,39 @@ class ForkFilePreferencesTest {
         root.flush()
         File(scratch, "n/=node.properties").writeText("k=\\u00")
         assertNull(reopened().node("n").get("k", null))
+    }
+
+    /** Puts a non-empty folder where [node]'s values file goes, so the write's move fails. */
+    private fun block(name: String): File =
+        File(File(scratch, name), "=node.properties").also { File(it, "inside").mkdirs() }
+
+    @Test
+    fun aFailedFlushThrowsAndTheChangeIsKeptForTheNextTry() {
+        val node = ForkFilePreferences.rootAt(scratch).node("blocked")
+        val inTheWay = block("blocked")
+        node.put("k", "v")
+        assertFailsWith<java.util.prefs.BackingStoreException> { node.flush() }
+        assertTrue((node as ForkFilePreferences).unsaved)
+
+        inTheWay.deleteRecursively()
+        node.flush()
+        assertFalse(node.unsaved)
+        assertEquals("v", reopened().node("blocked").get("k", null))
+    }
+
+    @Test
+    fun aFailedTimedWriteIsRetriedOnItsOwn() {
+        val node = ForkFilePreferences.rootAt(scratch).node("retried")
+        val inTheWay = block("retried")
+        node.put("k", "v")
+        // The timed write (a second after the change) fails against the folder in the way...
+        Thread.sleep(1_500)
+        assertTrue((node as ForkFilePreferences).unsaved)
+        // ...and lands on a later pass once it is gone, with no flush or change to prompt it.
+        inTheWay.deleteRecursively()
+        val deadline = System.currentTimeMillis() + 20_000
+        while (node.unsaved && System.currentTimeMillis() < deadline) Thread.sleep(100)
+        assertFalse(node.unsaved)
+        assertEquals("v", reopened().node("retried").get("k", null))
     }
 }

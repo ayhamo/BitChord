@@ -79,6 +79,7 @@ internal class DesktopRangeStream(
             // A URL cleared before playback has been refused mid-track: tell the resolver, as the
             // phone's ChunkedDataSource does, so it forgets it and benches the client that minted it.
             StreamResolver.onPlaybackRefused(url, response.statusCode())
+            ForkYtDlp.forget(url) // fork: nor is a refused yt-dlp URL handed back to the recovery
             return false
         }
 

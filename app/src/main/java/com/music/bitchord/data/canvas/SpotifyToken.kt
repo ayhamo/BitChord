@@ -73,6 +73,7 @@ internal object SpotifyToken {
         cachedClientToken = null
         clientTokenExpiresAtMs = 0L
         forkHarvestRetryAfterMs = 0L // fork: a new sign-in is harvested at once
+        forkClientTokenBackoff.clear() // fork: and its client token minted at once
         ForkCanvasLookup.clearNotes() // fork: songs held back by the old sign-in's backoff are asked again
     }
 
@@ -305,9 +306,24 @@ internal object SpotifyToken {
      * no client token just sends the bearer alone and takes whatever the
      * endpoint does with that. Requires [accessToken] to have already
      * succeeded once, since the client id it needs comes off that response.
+     *
+     * Fork: a failed mint (or session read) is held for 10 minutes ([ForkSpotifyClientTokenBackoff]);
+     * every canvas request's headers call this, so a refusing clienttoken endpoint cost ~5 POSTs a song.
      */
     @Synchronized
     fun clientToken(): String? {
+        val clientId = cachedClientId
+        if (clientId != null && forkClientTokenBackoff.blocks(clientId)) return null
+        return mintClientToken() ?: null.also {
+            if (clientId != null && cachedClientId == clientId) forkClientTokenBackoff.failed(clientId)
+        }
+    }
+
+    /** Fork: see [clientToken]. */
+    private val forkClientTokenBackoff = ForkSpotifyClientTokenBackoff()
+
+    @Synchronized
+    private fun mintClientToken(): String? { // fork: was `fun clientToken()`, now wrapped by the backoff above
         val now = System.currentTimeMillis()
         cachedClientToken?.let { if (now < clientTokenExpiresAtMs - 30_000) return it }
 

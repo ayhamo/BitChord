@@ -1705,7 +1705,7 @@ fun NowPlayingScreen(
         movableContentOf<Modifier> { backdropModifier ->
             FullArtworkBlurBackdrop(
                 image = currentFullArtworkBlurImage.value,
-                modifier = backdropModifier,
+                modifier = backdropModifier.forkBackdropPulse(), // fork: PC-only pulse, a bare Modifier on the phone (ForkBackdropPulse)
             )
         }
     }
@@ -2300,7 +2300,7 @@ fun NowPlayingScreen(
                     MeshGradientBackground(
                         palette = rememberArtworkColors(remoteArt, canvasFrame),
                         trackKey = song.videoId,
-                        modifier = Modifier.graphicsLayer { alpha = 1f - fullArtworkBackdropAlpha },
+                        modifier = Modifier.graphicsLayer { alpha = 1f - fullArtworkBackdropAlpha }.forkBackdropPulse(), // fork: ForkBackdropPulse
                     )
                 }
                 fullArtworkBlurContent(

@@ -9,6 +9,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.prefs.AbstractPreferences
+import java.util.prefs.BackingStoreException
 import java.util.prefs.Preferences
 import java.util.prefs.PreferencesFactory
 
@@ -30,6 +31,11 @@ import java.util.prefs.PreferencesFactory
  * most settings, so a change is written a second after the last one, on `flush()`, and at exit.
  * Without the delay, a chunked value (DesktopPreferenceChunks, up to hundreds of KB) rewrote its
  * node's file once per chunk.
+ *
+ * A write that fails (OneDrive or an antivirus holding the file, a folder in the way) is not
+ * dropped: the node stays dirty and is tried again on a backoff, at exit, and on the next change,
+ * and an explicit `flush()` throws [BackingStoreException]. Before, a failed write was logged and
+ * forgotten, so the change, or a whole backup import, was lost at exit (audit 2026-11-05).
  */
 class ForkFilePreferencesFactory : PreferencesFactory {
     override fun userRoot(): Preferences = ForkFilePreferences.userRoot
@@ -104,26 +110,31 @@ internal class ForkFilePreferences private constructor(
 
     override fun flushSpi() {
         Store.forget(this)
-        writeNow()
+        if (!writeNow()) {
+            Store.retry(this)
+            throw BackingStoreException("could not save settings to ${folder.name}")
+        }
     }
 
     private fun changed() {
         version++
-        if (Store.changed(this)) writeNow()
+        if (Store.changed(this) && !writeNow()) Store.retry(this)
     }
 
     /**
      * Writes the node if it changed since the last write. The snapshot is taken under [lock] and
      * the file written under [writeLock] only, so a `flush()` (which holds [lock] and then wants
      * [writeLock]) and the timer thread can never wait on each other.
+     *
+     * False when the write failed: the caller keeps the node dirty ([Store.retry]).
      */
-    fun writeNow() {
+    fun writeNow(): Boolean {
         val (snapshot, at) = synchronized(lock) {
-            if (removed) return
+            if (removed) return true
             HashMap(values) to version
         }
-        synchronized(writeLock) {
-            if (removed || at <= written) return
+        return synchronized(writeLock) {
+            if (removed || at <= written) return true
             runCatching {
                 folder.mkdirs()
                 val temp = File(folder, TEMP_FILE)
@@ -139,12 +150,23 @@ internal class ForkFilePreferences private constructor(
                 }
                 written = at
             }.onFailure { System.err.println("BitChord: could not save settings to ${file.parentFile?.name}: ${it.message}") }
+                .isSuccess
         }
     }
+
+    /** Whether the node holds changes no write has landed yet; for the tests. */
+    internal val unsaved: Boolean get() = synchronized(lock) { !removed && version > synchronized(writeLock) { written } }
 
     /** The changed nodes and the one thread that writes them. */
     private object Store {
         private val dirty = LinkedHashSet<ForkFilePreferences>()
+
+        /**
+         * Every node changed this session. The exit hook writes each one that is still behind
+         * (`written < version`; [writeNow] skips the rest), not only those on [dirty]: a node whose
+         * timer write was failing as the hook ran had already been taken off it.
+         */
+        private val touched = LinkedHashSet<ForkFilePreferences>()
         private var pending: ScheduledFuture<*>? = null
         private val writer = Executors.newSingleThreadScheduledExecutor { task ->
             Thread(task, "bitchord-settings").apply { isDaemon = true }
@@ -171,6 +193,7 @@ internal class ForkFilePreferences private constructor(
         /** True when the caller is to write [node] now itself (the app is exiting). */
         @Synchronized
         fun changed(node: ForkFilePreferences): Boolean {
+            touched += node
             if (exiting) return true
             dirty += node
             if (pending == null) pending = writer.schedule({ writeAll(exit = false) }, WRITE_DELAY_MS, TimeUnit.MILLISECONDS)
@@ -182,13 +205,32 @@ internal class ForkFilePreferences private constructor(
             dirty -= node
         }
 
+        /** Consecutive timer passes that left a node unwritten; the next retry waits longer. */
+        private var failedPasses = 0
+
+        /**
+         * [node]'s write failed: kept dirty and tried again after a backoff (one, two, four... up
+         * to [MAX_RETRY_DELAY_MS] seconds while it keeps failing), and in any case by the exit hook.
+         * Not a loop: one scheduled pass at a time, as for any change.
+         */
+        @Synchronized
+        fun retry(node: ForkFilePreferences) {
+            touched += node
+            dirty += node
+            if (exiting || pending != null) return
+            val delay = (WRITE_DELAY_MS shl failedPasses.coerceAtMost(6)).coerceAtMost(MAX_RETRY_DELAY_MS)
+            pending = writer.schedule({ writeAll(exit = false) }, delay, TimeUnit.MILLISECONDS)
+        }
+
         fun writeAll(exit: Boolean) {
             val nodes = synchronized(this) {
                 if (exit) exiting = true
                 pending = null
-                dirty.toList().also { dirty.clear() }
+                (if (exit) (dirty + touched).toList() else dirty.toList()).also { dirty.clear() }
             }
-            nodes.forEach(ForkFilePreferences::writeNow)
+            val failed = nodes.filterNot(ForkFilePreferences::writeNow)
+            synchronized(this) { failedPasses = if (failed.isEmpty()) 0 else failedPasses + 1 }
+            failed.forEach(::retry)
         }
     }
 
@@ -196,6 +238,7 @@ internal class ForkFilePreferences private constructor(
         private const val VALUES_FILE = "=node.properties"
         private const val TEMP_FILE = "=node.tmp"
         private const val WRITE_DELAY_MS = 1_000L
+        private const val MAX_RETRY_DELAY_MS = 60_000L
 
         /** `data\prefs`, or a folder in the home when the factory is used without the portable launcher. */
         private val base: File by lazy {

@@ -152,7 +152,39 @@ class SpotifyCanvasQueryTest {
         hashes.canvasHash()
         assertEquals(2, calls, "and tries again after the back-off")
         hashes.canvasHash(forceRefresh = true)
-        assertEquals(3, calls, "a stale-hash answer forces a fresh look")
+        assertEquals(2, calls, "a forced look right after a look that found nothing is not sent")
+        now += 31L * 60 * 1000
+        hashes.canvasHash(forceRefresh = true)
+        assertEquals(3, calls, "a stale-hash answer forces a fresh look once the miss window is over")
+    }
+
+    @Test
+    fun `a stale hash forces at most one look per window, not one per song`() {
+        var now = 1_000L
+        var calls = 0
+        var served = hashB
+        val page = """https://open.spotifycdn.com/cdn/build/web-player/web-player.1.js"""
+        val hashes = SpotifyCanvasQuery.QueryHashes(fetch = { url ->
+            calls++
+            if (url == "https://open.spotify.com/") page else """new o.l("canvas","query","$served",null)"""
+        }, now = { now })
+        assertEquals(hashB, hashes.canvasHash())
+        assertEquals(2, calls)
+        // Spotify says the hash is stale; within the first minutes nothing is re-scraped.
+        repeat(5) { hashes.canvasHash(forceRefresh = true) }
+        assertEquals(2, calls, "forced looks inside the minimum gap are not sent")
+        // After the gap, the last look had found a new hash, so a forced one goes out ...
+        now += 6L * 60 * 1000
+        assertEquals(hashB, hashes.canvasHash(forceRefresh = true))
+        assertEquals(4, calls)
+        // ... and it found the same hash, so the next forced looks wait out the miss window.
+        now += 6L * 60 * 1000
+        repeat(5) { hashes.canvasHash(forceRefresh = true) }
+        assertEquals(4, calls, "a look that found nothing new holds forced looks for the miss window")
+        now += 31L * 60 * 1000
+        served = "c".repeat(64)
+        assertEquals(served, hashes.canvasHash(forceRefresh = true))
+        assertEquals(6, calls)
     }
 
     @Test

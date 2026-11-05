@@ -61,26 +61,40 @@ object NavidromeRepository {
         val startedAt = generation
         val client = client()
         val starred = mutableSetOf<String>()
-        val songs = buildList {
-            var offset = 0
-            while (true) {
-                val page = client.songs(offset, PAGE)
-                page.forEach { row ->
-                    add(row.toSong(client))
-                    if (row.starred) starred += NavidromeSettings.ID_PREFIX + row.id
+        val songs: List<Song> = try {
+            buildList<Song> {
+                var offset = 0
+                while (true) {
+                    val page = client.songs(offset, PAGE)
+                    page.forEach { row ->
+                        add(row.toSong(client))
+                        if (row.starred) starred += NavidromeSettings.ID_PREFIX + row.id
+                    }
+                    if (page.size < PAGE) break
+                    offset += PAGE
                 }
-                if (page.size < PAGE) break
-                offset += PAGE
             }
+        } catch (e: java.io.IOException) {
+            // The server down on a network that works (offline mode only follows the network on the
+            // phone): the library pages showed an error over songs kept on the device. Not cached,
+            // so the next look asks the server again.
+            keptInstead(e)?.let { return@withLock it }
+            throw e
         }
-        NavidromeStars.seed(starred)
-        // The settings changed while this was paging: it describes the old server.
+        // The settings changed while this was paging: it describes the old server (its stars too:
+        // seeded after the account switch's forgetAll, they came back as hearts).
         if (startedAt == generation) {
+            NavidromeStars.seedAll(starred) // the whole library: a star taken off elsewhere goes here too
             cached = songs
             cachedAt = (System.nanoTime() / 1_000_000)
         }
         songs
     }
+
+    /** The songs kept on the device when the server couldn't be read, or null when none are kept (the error stands). */
+    private fun keptInstead(e: java.io.IOException): List<Song>? =
+        NavidromePlatform.kept.keptSongs().takeIf { it.isNotEmpty() }
+            ?.also { com.music.bitchord.data.DebugLog.d("BitChordNavidrome", "library: server unreachable (${e.message}), showing ${it.size} kept songs") }
 
     /** A client for the saved server, with the saved salt so its URLs stay the same across starts. */
     /**
@@ -148,7 +162,7 @@ object NavidromeRepository {
                 playbackSourceId = seed.playbackSourceId,
             ).let { song -> with(QueueTimeline) { song.asQueueEntry(QueueTier.AUTOPLAY) } }
         }
-    }
+    }.onFailure { if (it is kotlin.coroutines.cancellation.CancellationException) throw it } // a cancelled radio start isn't "the server has no mix"
 
     /** Each recording once and never the seed's, in the server's order: one song can be in the library twice (a FLAC and an opus copy). */
     fun withoutRepeats(seed: Song, songs: List<Song>): List<Song> {

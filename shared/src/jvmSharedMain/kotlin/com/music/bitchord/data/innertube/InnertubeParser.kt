@@ -303,7 +303,8 @@ object InnertubeParser {
         if (items.isEmpty()) return null
         val shelfTitle = title.ifBlank { "For you" }
         val fromList = contents.firstOrNull().o("musicResponsiveListItemRenderer") != null
-        return HomeShelf(shelfTitle, items, strapline, layout = shelfLayoutFor(shelfTitle, items, fromList))
+        val more = ForkShelfMore.carousel(header) // fork: the heading's See all link (Revived 367bf58e)
+        return HomeShelf(shelfTitle, items, strapline, moreBrowseId = more?.browseId, moreParams = more?.params, layout = shelfLayoutFor(shelfTitle, items, fromList)) // fork: + more
     }
 
     private fun plainShelf(shelf: JsonObject): HomeShelf? {
@@ -313,7 +314,8 @@ object InnertubeParser {
         }.map { ShelfItem(it.title, it.artist, it.thumbnailUrl, it.videoId, null, isVideo = it.isVideo) }
         if (items.isEmpty()) return null
         val shelfTitle = title.ifBlank { "For you" }
-        return HomeShelf(shelfTitle, items, layout = shelfLayoutFor(shelfTitle, items, fromList = true))
+        val more = ForkShelfMore.plain(shelf) // fork: the heading's See all link (Revived e7affc8b)
+        return HomeShelf(shelfTitle, items, moreBrowseId = more?.browseId, moreParams = more?.params, layout = shelfLayoutFor(shelfTitle, items, fromList = true)) // fork: + more
     }
 
     /**

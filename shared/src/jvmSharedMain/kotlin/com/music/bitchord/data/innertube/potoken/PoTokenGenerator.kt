@@ -5,7 +5,12 @@ import com.metrolist.innertubex.extraction.TokenProviderCapabilities
 import com.metrolist.innertubex.extraction.strategy.PoTokenProviderKind
 import com.music.bitchord.data.TrackLog
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
@@ -55,6 +60,15 @@ class PoTokenGenerator(
     private var webPoTokenStreamingPot: String? = null
     private var webPoTokenGenerator: PoTokenMinter? = null
 
+    /**
+     * fork (PC-Continued c310d0e3): a page that is still loading, owned here rather than by the
+     * caller's job. Whichever request asked for it is routinely superseded while it loads, and a
+     * browser page has no dispose, so one abandoned mid-load stayed resident for the life of the
+     * process; the next request now adopts it instead of paying for a second page.
+     */
+    private val minterScope = CoroutineScope(SupervisorJob())
+    private var pendingMinter: Deferred<PoTokenMinter>? = null
+
     suspend fun getWebClientPoToken(videoId: String, sessionId: String): PoTokenResult? {
         val supported = available()
         TrackLog.d(TAG, "WebView state: supported=$supported, badImpl=$webViewBadImpl")
@@ -96,6 +110,12 @@ class PoTokenGenerator(
             webPoTokenGenerator = null
             webPoTokenStreamingPot = null
             webPoTokenSessionId = null
+            // fork: a page still loading is closed once it finishes, not left behind.
+            val loading = pendingMinter
+            pendingMinter = null
+            if (loading != null) {
+                minterScope.launch { runCatching { loading.await().close() } }
+            }
         }
     }
 
@@ -106,17 +126,45 @@ class PoTokenGenerator(
     private suspend fun getWebClientPoToken(videoId: String, sessionId: String, forceRecreate: Boolean): PoTokenResult {
         val (poTokenGenerator, streamingPot, hasBeenRecreated) =
             webPoTokenGenLock.withLock {
-                val shouldRecreate =
+                var shouldRecreate =
                     forceRecreate || webPoTokenGenerator == null || webPoTokenGenerator!!.isExpired ||
-                        webPoTokenGenerator!!.isDead ||
-                        webPoTokenSessionId != sessionId
+                        webPoTokenGenerator!!.isDead
+                if (!shouldRecreate && webPoTokenSessionId != sessionId) {
+                    // fork (PC-Continued c310d0e3): a loaded page mints a token for whatever
+                    // identifier it is handed, so a new session needs a new streaming token, not
+                    // a new browser page. Rebuilding the page is the expensive path (a WebEngine
+                    // has no dispose), and a launch browsing with two sessions paid for two.
+                    // A failed re-mint falls back to the old rebuild.
+                    val reminted = runCatching { webPoTokenGenerator!!.generatePoToken(sessionId) }
+                        .onFailure { if (it is CancellationException) throw it }
+                        .onFailure { TrackLog.e(TAG, "Re-minting the streaming PO token failed; rebuilding the page") }
+                        .getOrNull()
+                    if (reminted == null) {
+                        shouldRecreate = true
+                    } else {
+                        webPoTokenStreamingPot = reminted
+                        webPoTokenSessionId = sessionId
+                    }
+                }
                 if (shouldRecreate) {
                     TrackLog.d(TAG, "Creating new PoTokenWebView (forceRecreate=$forceRecreate)")
                     webPoTokenGenerator?.close()
                     webPoTokenGenerator = null
                     webPoTokenStreamingPot = null
                     webPoTokenSessionId = null
-                    val newGenerator = createMinter()
+                    val newGenerator = try {
+                        (pendingMinter ?: minterScope.async { createMinter() }.also { pendingMinter = it }).await()
+                    } catch (e: CancellationException) {
+                        // fork: leave the load running; whoever asks next adopts this page. Unless
+                        // the load itself is what got cancelled: a dead Deferred kept here would
+                        // fail every later request without ever loading a page again.
+                        if (pendingMinter?.isCancelled == true) pendingMinter = null
+                        throw e
+                    } catch (t: Throwable) {
+                        pendingMinter = null
+                        throw t
+                    }
+                    pendingMinter = null
                     val newStreamingPot = try {
                         newGenerator.generatePoToken(sessionId)
                     } catch (t: Throwable) {

@@ -157,11 +157,38 @@ object ForkHandoff {
         val positionMs: Long,
         val origin: Origin?,
         val items: List<Item>,
+        /** Whether the device was playing when it wrote this (a tick, a song change); false for a pause, a quit. */
+        val playing: Boolean = false,
     ) {
         val current: Item? get() = items.getOrNull(index)
 
-        /** Identifies this note for "dismissed": one device's save at one moment. */
+        /** Identifies this note: one device's save at one moment (the chip's state key). */
         val key: String get() = "${device.id}@$savedAt"
+
+        /**
+         * What "Not now" stores ([isDismissed]): the device, its queue and playing song, and this
+         * save. Keyed by the save alone, a dismissal lasted one tick: a device that keeps playing
+         * writes a new note every few minutes, and each was offered again.
+         */
+        val dismissKey: String get() = listOf(device.id, index.toString(), queueHash(), savedAt.toString(), if (playing) "1" else "0").joinToString(DISMISS_SEPARATOR)
+
+        internal fun queueHash(): String = Integer.toHexString(items.joinToString("\u0000") { it.kind.code + it.id }.hashCode())
+    }
+
+    private const val DISMISS_SEPARATOR = "|"
+
+    /**
+     * Whether [note] is covered by the "Not now" stored as [dismissed] ([Note.dismissKey]): the same
+     * device, queue and playing song, and either that very save or a later one written while that
+     * device plays on. A new song, a changed queue, or a pause there (a note written while not
+     * playing) is offered again.
+     */
+    fun isDismissed(note: Note, dismissed: String?): Boolean {
+        val parts = dismissed?.split(DISMISS_SEPARATOR) ?: return false
+        if (parts.size != 5) return false // an older build's "device@savedAt": nothing matches it
+        if (parts[0] != note.device.id || parts[1] != note.index.toString() || parts[2] != note.queueHash()) return false
+        if (parts[3] == note.savedAt.toString()) return true
+        return note.playing
     }
 
     // ── Which songs go ──────────────────────────────────────────────────
@@ -430,14 +457,15 @@ object ForkHandoff {
 
     /**
      * Whether [note] should be offered by itself on this device: it came from another device, it is
-     * newer than this device's own last save ([myLastSaveAt]), it wasn't dismissed ([dismissedKey]),
-     * it has something to play, and it is not older than [OFFER_MAX_AGE_MS].
+     * newer than this device's own last save ([myLastSaveAt]), it wasn't dismissed ([dismissedKey], a
+     * [Note.dismissKey]; see [isDismissed]), it has something to play, and it is not older than
+     * [OFFER_MAX_AGE_MS].
      */
     fun shouldOffer(note: Note?, myDeviceId: String, myLastSaveAt: Long, dismissedKey: String?, now: Long): Boolean {
         if (note == null || note.items.isEmpty()) return false
         if (note.device.id == myDeviceId) return false
         if (note.savedAt <= myLastSaveAt) return false
-        if (note.key == dismissedKey) return false
+        if (isDismissed(note, dismissedKey)) return false
         return now - note.savedAt <= OFFER_MAX_AGE_MS
     }
 
@@ -486,6 +514,7 @@ object ForkHandoff {
         })
         put("x", note.index)
         put("p", note.positionMs)
+        if (note.playing) put("pl", 1)
         note.origin?.let { o ->
             put("s", buildJsonObject {
                 o.name?.let { put("n", it) }
@@ -556,6 +585,7 @@ object ForkHandoff {
             positionMs = (o.long("p") ?: 0L).coerceAtLeast(0L),
             origin = (o["s"] as? JsonObject)?.let { s -> Origin(s.str("n"), s.str("t"), s.str("i"), s.str("r")) },
             items = items,
+            playing = o.int("pl") == 1,
         )
     }.getOrNull()
 
@@ -567,14 +597,25 @@ object ForkHandoff {
 
     /**
      * When each app writes its note, the same rules on both: on a pause, on a song change, when the
-     * app goes to the background or the tray, and at most every [TICK_MS] while playing. Each event
-     * is one try ([save]); a failure backs off ([BACKOFF_MS], doubling up to [BACKOFF_MAX_MS]) and the
-     * events in between are dropped, never queued and replayed.
+     * app goes to the background or the tray, on quitting (PC) and at most every [TICK_MS] while
+     * playing. Each event is one try ([save]); a failure backs off ([BACKOFF_MS], doubling up to
+     * [BACKOFF_MAX_MS]) and the events in between are dropped, never queued and replayed.
      *
      * Nothing is written until this device has played in this run ([armed]): both apps reopen their
      * own last queue at start, paused, and that reload (a song change to the player) would otherwise
      * overwrite the other device's newer note before it could be offered. A song change or a pause
-     * is written after [DEBOUNCE_MS], so a burst of skips is one write.
+     * is written after [DEBOUNCE_MS], so a burst of skips is one write; a pause that playback leaves
+     * again within it (a rebuffer, a seek) is not written at all.
+     *
+     * A note that says what the last written one said (same queue, song, second, playing or not;
+     * only the time differs) is not written again: going to the background while paused used to
+     * rewrite the old position, newer than the other device's note, so the queue that device had
+     * moved on to was offered nowhere. Nothing is written while [held] (another device's newer note
+     * is being offered here, or a restore is still seeking).
+     *
+     * Offline ([offline]) nothing is tried and the back-off doesn't grow; back online it starts
+     * over. A pause, the background and quitting are exact points worth one try inside a back-off
+     * (once per back-off window): a tick or a song change isn't.
      *
      * [snapshot] reads the player (the phone runs it on the main thread through its scope); [write]
      * sends the note. [enabled] is the setting and the server being configured.
@@ -586,6 +627,8 @@ object ForkHandoff {
         private val write: suspend (Note) -> Boolean,
         private val clock: () -> Long = System::currentTimeMillis,
         private val log: (String) -> Unit = {},
+        private val offline: () -> Boolean = { false },
+        private val held: () -> Boolean = { false },
     ) {
         @Volatile var armed = false
             private set
@@ -593,7 +636,15 @@ object ForkHandoff {
         @Volatile private var lastWriteAt = 0L
         @Volatile private var backoffUntil = 0L
         @Volatile private var backoffMs = BACKOFF_MS
-        private var pendingJob: Job? = null
+        @Volatile private var bypassUsed = false
+        @Volatile private var wasOffline = false
+
+        /** The last note written, its time left out: what an unchanged note is compared with. */
+        @Volatile private var lastWritten: Note? = null
+        @Volatile private var pendingJob: Job? = null
+
+        /** Why [pendingJob] is waiting, while it still is (null once its delay is over). */
+        @Volatile private var pendingWhy: String? = null
         private var tickJob: Job? = null
         private val lock = Mutex()
 
@@ -601,22 +652,49 @@ object ForkHandoff {
             playing = isPlaying
             if (isPlaying) {
                 armed = true
+                // Playing again within the pause's debounce (a rebuffer, a seek's reload): nothing to write.
+                if (pendingWhy == PAUSE) {
+                    pendingJob?.cancel()
+                    pendingJob = null
+                    pendingWhy = null
+                }
                 startTicker()
             } else {
                 tickJob?.cancel()
                 tickJob = null
-                if (armed) schedule("pause")
+                // Inside a song change's debounce (the new song buffering) the pause joins it, so the
+                // rebuffer rule above can't drop the song change with it.
+                if (armed) schedule(if (pendingWhy == SONG_CHANGE || pendingWhy == SONG_CHANGE_PAUSE) SONG_CHANGE_PAUSE else PAUSE)
             }
         }
 
         fun onSongChanged() {
-            if (armed) schedule("song change")
+            if (armed) schedule(SONG_CHANGE)
         }
 
         /** The app is leaving the screen (phone background, PC hidden to the tray): written at once. */
         fun onBackground() {
-            if (armed) schedule("background", delayMs = 0L)
+            if (armed) schedule(BACKGROUND, delayMs = 0L)
         }
+
+        /** Whether a pause or song change is still waiting out its debounce. */
+        val hasPending: Boolean get() = pendingWhy != null
+
+        /**
+         * The player is going (the phone's service closing): a pause or song change still waiting is
+         * written now with [note], taken by the caller while it could still read the player.
+         */
+        fun flushPending(note: Note?) {
+            val why = pendingWhy ?: return
+            pendingJob?.cancel()
+            pendingJob = null
+            pendingWhy = null
+            if (note == null) return
+            scope.launch { saveWith(why, bypassBackoff = true) { note } }
+        }
+
+        /** The app is quitting: [note] (the caller's, read before the player stops) is written once, if anything changed. */
+        suspend fun saveFinal(note: Note): Boolean = if (!armed) false else saveWith("quit", bypassBackoff = true) { note }
 
         private fun startTicker() {
             if (tickJob?.isActive == true) return
@@ -630,25 +708,43 @@ object ForkHandoff {
 
         private fun schedule(why: String, delayMs: Long = DEBOUNCE_MS) {
             pendingJob?.cancel()
+            pendingWhy = why
             pendingJob = scope.launch {
                 if (delayMs > 0) delay(delayMs)
-                save(why)
+                if (pendingWhy == why) pendingWhy = null
+                save(why, bypassBackoff = why != SONG_CHANGE)
             }
         }
 
-        /** One try. Not on a failure's back-off, not while switched off. */
-        suspend fun save(why: String): Boolean = lock.withLock {
+        /** One try. Not offline, not while held or switched off, not inside a failure's back-off (unless [bypassBackoff], once). */
+        suspend fun save(why: String, bypassBackoff: Boolean = false): Boolean = saveWith(why, bypassBackoff) { snapshot() }
+
+        private suspend fun saveWith(why: String, bypassBackoff: Boolean, take: suspend () -> Note?): Boolean = lock.withLock {
             if (!enabled()) return@withLock false
+            if (offline()) {
+                wasOffline = true // nothing tried, so nothing learnt: the back-off stays as it was
+                return@withLock false
+            }
+            if (wasOffline) {
+                wasOffline = false
+                resetBackoff() // the failures before going offline say nothing about the server now
+            }
+            if (held()) return@withLock false
             val now = clock()
-            if (now < backoffUntil) return@withLock false
+            if (now < backoffUntil) {
+                if (!bypassBackoff || bypassUsed) return@withLock false
+                bypassUsed = true
+            }
             val note = try {
-                snapshot()
+                take()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 log("handoff: snapshot failed (${e.javaClass.simpleName})")
                 null
             } ?: return@withLock false
+            val content = note.copy(savedAt = 0L)
+            if (content == lastWritten) return@withLock true // nothing changed since the last note
             lastWriteAt = now
             val ok = try {
                 write(note)
@@ -659,21 +755,34 @@ object ForkHandoff {
                 false
             }
             if (ok) {
-                backoffMs = BACKOFF_MS
+                resetBackoff()
+                lastWritten = content
                 log("handoff: saved on $why, ${note.items.size} songs, at ${ForkHandoff.clock(note.positionMs)}")
             } else {
                 backoffUntil = now + backoffMs
+                bypassUsed = false
                 log("handoff: not saved on $why; next try after ${backoffMs / 1000} s")
                 backoffMs = (backoffMs * 2).coerceAtMost(BACKOFF_MAX_MS)
             }
             ok
         }
 
+        private fun resetBackoff() {
+            backoffUntil = 0L
+            backoffMs = BACKOFF_MS
+            bypassUsed = false
+        }
+
         companion object {
-            const val TICK_MS = 30_000L
+            /** Pause, background and song change capture the exact points; the tick only covers long plays. */
+            const val TICK_MS = 3 * 60_000L
             const val DEBOUNCE_MS = 1_500L
             const val BACKOFF_MS = 2 * 60_000L
             const val BACKOFF_MAX_MS = 30 * 60_000L
+            private const val PAUSE = "pause"
+            private const val SONG_CHANGE = "song change"
+            private const val SONG_CHANGE_PAUSE = "song change and pause"
+            private const val BACKGROUND = "background"
         }
     }
 }

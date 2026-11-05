@@ -53,6 +53,7 @@ object DesktopScrobbling {
     private var remainingMs = 0L
     private var scrobbleJob: Job? = null
     private var lastFmScrobbled = false
+    private val forkListens = ForkFinishedListens() // fork: which play a finished report is about, once
 
     /** Whether this build can sign in at all — no key, no login. */
     val canSignInToLastFm: Boolean
@@ -148,6 +149,7 @@ object DesktopScrobbling {
         val song = state.song ?: return
         if (song.videoId != activeSongId) {
             scrobbleJob?.cancel()
+            forkListens.songChanged(activeSongId?.let { ForkFinishedListens.Play(it, activeStartedAtMs, lastFmScrobbled) }) // fork: kept for a hand-off reported after this change
             activeSongId = song.videoId
             activeStartedAtMs = System.currentTimeMillis()
             timerStartedAtMs = 0L
@@ -189,18 +191,28 @@ object DesktopScrobbling {
     }
 
     /** Sends ListenBrainz's finished listen and avoids duplicate Last.fm sends. */
-    fun onPlaybackEnded(song: Song) {
+    fun onPlaybackEnded(song: Song, forkLastFm: Boolean = true) { // fork: + forkLastFm; a hand-off's report (onCrossfaded) leaves Last.fm to its timer, as before
         if (com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(song.videoId)) return // fork: a station is not a track
-        val startedAt = synchronized(this) {
-            scrobbleJob?.cancel()
-            timerStartedAtMs = 0L
-            activeStartedAtMs.takeIf { activeSongId == song.videoId } ?: System.currentTimeMillis()
+        // fork: the play that ended (the active one, or the one before when the next song took over first), once (ForkFinishedListens)
+        val ended = synchronized(this) {
+            val ended = forkListens.ended(song.videoId, activeSongId?.let { ForkFinishedListens.Play(it, activeStartedAtMs, lastFmScrobbled) }, System.currentTimeMillis())
+                ?: return
+            if (ended.isActive) { // fork: only the ended song's own timer stops; a late report leaves the next song's alone
+                scrobbleJob?.cancel()
+                timerStartedAtMs = 0L
+                // fork: whatever plays on under this id (repeat-one keeps it) is a new play from here, its own report and timer
+                activeStartedAtMs = System.currentTimeMillis()
+                remainingMs = 0L
+                lastFmScrobbled = false
+            }
+            ended.play
         }
+        val startedAt = ended.startedAtMs // fork
         com.music.bitchord.data.navidrome.NavidromeScrobble.finished(song, startedAt, scope) // fork
         scope.launch {
             try {
                 val minDurationMs = DesktopScrobbleSettings.minDuration.value * 1_000L
-                if (!lastFmScrobbled && lastFmConfigured && song.durationMillis() > minDurationMs) {
+                if (forkLastFm && !ended.lastFmDone && lastFmConfigured && song.durationMillis() > minDurationMs) { // fork: was !lastFmScrobbled, which by now may be the next song's
                     submitLastFm(song, startedAt / 1_000L)
                 }
                 if (listenBrainzConfigured) {

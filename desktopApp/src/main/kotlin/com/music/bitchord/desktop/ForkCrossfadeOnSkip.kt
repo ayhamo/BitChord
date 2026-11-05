@@ -23,6 +23,21 @@ internal object ForkCrossfadeOnSkip {
      */
     const val ARM_TIMEOUT_MS = 3_000L
 
+    /**
+     * What a claimed skip ticket is swapped for: still non-null, so everything that holds back
+     * while a skip is in flight keeps holding until the winner clears it.
+     */
+    val CLAIMED = Any()
+
+    /**
+     * Takes [ticket] for one of its two finishers, the arm timeout's plain cut or the audio thread's
+     * blend. Both used to check the ticket and then act, so a deck landing just as the 3 s ran out
+     * (microseconds apart) did both: the blend started and the [load] restarted the song under it
+     * (audit 2026-11-05). Exactly one compare-and-set succeeds; the loser does nothing.
+     */
+    fun claim(holder: java.util.concurrent.atomic.AtomicReference<Any?>, ticket: Any): Boolean =
+        holder.compareAndSet(ticket, CLAIMED)
+
     private const val KEY = "crossfade_on_skip"
 
     private val persistence by lazy { DesktopPersistence() }

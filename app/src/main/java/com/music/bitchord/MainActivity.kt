@@ -346,6 +346,7 @@ import com.music.bitchord.ui.screens.HomeScreen
 import com.music.bitchord.ui.screens.LibraryGridPage
 import com.music.bitchord.ui.screens.LibraryScreen
 import com.music.bitchord.ui.screens.MoodGenrePlaylistsScreen
+import com.music.bitchord.ui.screens.forkMoreOpensPage // fork
 import com.music.bitchord.ui.screens.SearchScreen
 import com.music.bitchord.data.settings.SongSort
 import com.music.bitchord.ui.onboarding.OnboardingScreen
@@ -2928,6 +2929,20 @@ private fun BitChordApp(
                                 onRetry = viewModel::loadHistory,
                                 contentPadding = listPadding,
                             )
+                        } else if (pageRoute is AppRoute.HomeShelfMore) { // fork: a Home shelf's See all (ForkShelfMore.kt); taps as on Home
+                            com.music.bitchord.ui.screens.ForkShelfMorePage(
+                                shelf = pageRoute.shelf,
+                                onItemClick = { item, shelfTitle ->
+                                    val song = shelfSong(item)
+                                    val browseId = item.browseId
+                                    when {
+                                        song != null -> playRadio(song, QueueSource(shelfTitle, PlaybackSourceType.HOME))
+                                        browseId != null -> viewModel.openDetail(browseId = browseId, title = item.title, subtitle = item.subtitle, thumbnailUrl = item.thumbnailUrl)
+                                    }
+                                },
+                                onItemLongPress = onShelfLongPress,
+                                contentPadding = listPadding,
+                            )
                         } else if (pageRoute is AppRoute.LibraryShowAll) {
                             pageRoute.shelf.let { shelf ->
                                 LibraryGridPage(
@@ -3383,6 +3398,11 @@ private fun BitChordApp(
                                 onTopPickClick = openTopPick,
                                 onMoodClick = playMood,
                                 onMoodsShowAll = { navigator.push(AppRoute.Moods) },
+                                onShelfOpen = { shelf -> // fork: a heading's See all — the album / playlist / artist page itself, else the grid
+                                    val more = shelf.moreBrowseId
+                                    if (more != null && shelf.forkMoreOpensPage()) viewModel.openDetail(browseId = more, title = shelf.title)
+                                    else navigator.push(AppRoute.HomeShelfMore(shelf))
+                                },
                                 artworkMotion = artworkMotion,
                                 onTopPickLongPress = { pick ->
                                     pick.browseId?.let { browseId ->
@@ -3752,6 +3772,7 @@ private fun BitChordApp(
                         AppRoute.History -> stringResource(R.string.history)
                         is AppRoute.LibraryShowAll -> com.music.bitchord.ui.screens.forkLibraryShelfTitle(route.shelf.title) // fork
                         is AppRoute.ArtistShelf -> route.shelf.title
+                        is AppRoute.HomeShelfMore -> route.shelf.title // fork
                         AppRoute.Moods -> stringResource(R.string.find_your_mood)
                         AppRoute.AccountScrobbling -> stringResource(R.string.account_scrobbling)
                         AppRoute.Sources -> stringResource(R.string.sources)

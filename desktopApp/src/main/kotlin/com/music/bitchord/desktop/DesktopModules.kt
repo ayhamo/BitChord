@@ -524,7 +524,7 @@ internal object DesktopModuleSource {
                 bitDepth = meta?.bitDepth,
             )
             check(!malformed(url)) { "Module returned an invalid stream URL" }
-            DesktopStream(url, format, response.headers, sourceId = config.id)
+            DesktopStream(url, format, response.headers, sourceId = config.id, isDolbyAtmos = format.isDolbyAtmos) // fork: flag, PC-Continued 18b6b3ae
         }
     }
 
@@ -617,6 +617,11 @@ internal object DesktopModuleSource {
             if (quality.isNotBlank()) {
                 put("fallbackMode", buildJsonObject { put("value", if (strict) "strict" else "flexible") })
             }
+            // fork (PC-Continued 18b6b3ae): which mix, not which rung. `LOSSLESS` asks for bit-exact
+            // bytes and Atmos is not, so a module reading only the tier guessed FLAC and an Atmos
+            // request came back stereo. Android sends this key on every module call; here only
+            // with the Atmos setting on, so with it off the request is unchanged.
+            if (ForkAtmos.wanted()) put("dolbyAtmos", buildJsonObject { put("value", "true") })
         })
     }.toString())
 
@@ -643,9 +648,19 @@ internal object DesktopModuleSource {
     private fun codecOf(mime: String?, quality: String?, url: String): String? =
         mime?.substringAfterLast('/')?.substringBefore(';')?.lowercase(Locale.ROOT)
             ?.takeIf(String::isNotBlank)
+            // fork (PC-Continued 18b6b3ae): a module names its immersive rendition in the quality
+            // label ("Dolby Atmos", "EAC3_JOC", "EC-3") as often as in a mime type; without this an
+            // Atmos stream with no mime read as plain AAC/MP4.
+            ?: forkAtmosCodec(quality)
             ?: if (qualityTier(quality.orEmpty()) == LOSSLESS) "flac"
             else url.substringBefore('?').substringAfterLast('.')
                 .lowercase(Locale.ROOT).takeIf { it in AUDIO_EXTENSIONS }
+
+    /** Fork: "eac3-joc" when the quality label names the Atmos mix, else null. */
+    private fun forkAtmosCodec(quality: String?): String? {
+        val text = quality.orEmpty().uppercase(Locale.ROOT)
+        return if ("ATMOS" in text || "EAC3_JOC" in text || "EC-3" in text) "eac3-joc" else null
+    }
 
     private fun bitrateOf(quality: String?, url: String): Int? {
         val text = "${quality.orEmpty()} $url"

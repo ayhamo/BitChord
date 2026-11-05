@@ -210,11 +210,13 @@ internal object ForkCollectionActions {
      */
     suspend fun deleteDownloads(browseId: String, trackIds: Set<String>, label: String = browseId) {
         val window = window ?: return
-        val (keptIds, keptFiles) = withContext(Dispatchers.IO) { ForkPlaylistSync.keptByOthers(browseId) }
+        // An album record for this same release under its other id is not "another" one (trackIds).
+        val (keptIds, keptFiles) = withContext(Dispatchers.IO) { ForkPlaylistSync.keptByOthers(browseId, trackIds) }
         // A page holds only the rows loaded so far: the followed playlist's record and this session's
         // "Download all" name the rest, which would otherwise stay on disk with nothing tracking them.
         val all = if (browseId.isEmpty()) trackIds
-        else trackIds + withContext(Dispatchers.IO) { ForkPlaylistSync.tracksOf(browseId) } + requestedOf(browseId)
+        else trackIds + withContext(Dispatchers.IO) { ForkPlaylistSync.tracksOf(browseId) } + requestedOf(browseId) +
+            ForkPlaylistSync.inFlightOf(browseId) // the new tracks a sync is fetching right now, not yet in the record
         // What is still queued or running for it first: left alone, a "Download all" half-way through
         // kept going after the delete, and its tracks came back with nothing following them. A track
         // another kept playlist names keeps its download.
@@ -234,7 +236,7 @@ internal object ForkCollectionActions {
                 .filter { path -> runCatching { Files.deleteIfExists(Paths.get(path)) }.getOrDefault(false) }
         }
         if (browseId.isNotEmpty()) {
-            ForkPlaylistSync.forget(browseId)
+            ForkPlaylistSync.forget(browseId, trackIds)
             requested.remove(browseId)
         }
         DesktopTrackLog.log(

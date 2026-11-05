@@ -41,10 +41,12 @@ internal class DesktopTransitionFlanger(private val sampleRate: Int, channels: I
     }
 
     companion object {
-        private const val MIN_DELAY_SECONDS = 0.0005
-        private const val MAX_DELAY_SECONDS = 0.005
-        private const val LFO_HZ = 0.4
-        private const val FEEDBACK = 0.6f
-        private const val WET = 0.7f
+        // fork (PC-Continued 8498b497): retuned with the bell send (ForkAutomixFx); was 0.0005 / 0.005 s,
+        // 0.4 Hz, 0.6 feedback, 0.7 wet. A wider, slower sweep reads as a sweep over the summed mix.
+        private const val MIN_DELAY_SECONDS = 0.0004
+        private const val MAX_DELAY_SECONDS = 0.006
+        private const val LFO_HZ = 0.33
+        private const val FEEDBACK = 0.66f
+        private const val WET = 0.85f
     }
 }

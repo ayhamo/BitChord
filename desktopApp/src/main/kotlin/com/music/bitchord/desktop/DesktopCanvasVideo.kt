@@ -71,17 +71,19 @@ internal fun DesktopCanvasVideo(spec: CanvasVideoSpec, modifier: Modifier) {
         // manifest itself, so each pass reopens it.
         while (isActive) {
             val decoder = DesktopCanvasDecoder()
-            val opened = withContext(Dispatchers.IO) {
-                ForkClipSource.open(decoder, listOfNotNull(canvas.url, canvas.fallbackUrl)) // fork: was a loop streaming an HLS manifest from the network; now saved to the cache once, and a failed clip waits a minute (ForkClipSource)
-            }
-            if (opened.isFailure) {
-                DesktopTrackLog.log("canvas: ${opened.exceptionOrNull()?.message}")
-                withContext(Dispatchers.IO) { decoder.close() }
-                return@LaunchedEffect
-            }
-            reportAspect(decoder.width.toFloat() / decoder.height.coerceAtLeast(1))
             var shown = 0
+            // fork: the try now starts at the decoder's creation (it started after the open). A clip
+            // cancelled while opening (a skip, the player closed) threw out of the open's withContext
+            // with the decoder open, and its FFmpeg state and file handle were never freed.
             try {
+                val opened = withContext(Dispatchers.IO) {
+                    ForkClipSource.open(decoder, listOfNotNull(canvas.url, canvas.fallbackUrl)) // fork: was a loop streaming an HLS manifest from the network; now saved to the cache once, and a failed clip waits a minute (ForkClipSource)
+                }
+                if (opened.isFailure) {
+                    DesktopTrackLog.log("canvas: ${opened.exceptionOrNull()?.message}")
+                    return@LaunchedEffect // fork: closed by the finally below (was closed here)
+                }
+                reportAspect(decoder.width.toFloat() / decoder.height.coerceAtLeast(1))
                 val pixels = ByteArray(decoder.width * decoder.height * 4)
                 val info = ImageInfo.makeN32(decoder.width, decoder.height, ColorAlphaType.OPAQUE)
                 while (isActive) {
@@ -125,6 +127,7 @@ internal fun DesktopCanvasVideo(spec: CanvasVideoSpec, modifier: Modifier) {
     }
 
     LaunchedEffect(rendered) { reportRendered(rendered) }
+    ForkClipColours.Sampler(canvas.url, rendered) { frame } // fork: the player's clip colours the PC's accent and backdrop (ForkClipColours)
 
     // One frame once there is one, and then — for a caller re-tinting off the
     // clip — another every so often.

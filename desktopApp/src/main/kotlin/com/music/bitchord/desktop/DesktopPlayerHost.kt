@@ -53,9 +53,9 @@ internal object DesktopPlayerHost : PlayerHost {
 
     override val settings: DesktopPlayerSettings = DesktopPlayerSettings
 
-    override fun cachedCanvas(song: Song): CanvasArtwork? = ForkDesktopCanvas.cached(song) // fork: was DesktopCanvasClient.cached(song)?.toShared(); with a known Spotify backdrop
+    override fun cachedCanvas(song: Song): CanvasArtwork? = ForkClipColours.offer(song, ForkDesktopCanvas.cached(song)) // fork: was DesktopCanvasClient.cached(song)?.toShared(); with a known Spotify backdrop; told to ForkClipColours
 
-    override suspend fun canvasFor(song: Song): CanvasArtwork? = ForkDesktopCanvas.canvasFor(song) // fork: kept clips, else the cover clip at once; a Spotify backdrop follows (ForkCanvasSwitch.backdropFor)
+    override suspend fun canvasFor(song: Song): CanvasArtwork? = ForkClipColours.offer(song, ForkDesktopCanvas.canvasFor(song)) // fork: kept clips, else the cover clip at once; a Spotify backdrop follows (ForkCanvasSwitch.backdropFor); told to ForkClipColours
 
     @Composable
     override fun CanvasVideo(spec: CanvasVideoSpec, modifier: Modifier) = DesktopCanvasVideo(spec, modifier)

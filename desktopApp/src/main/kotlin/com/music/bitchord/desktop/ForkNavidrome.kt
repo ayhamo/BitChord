@@ -124,7 +124,7 @@ internal object ForkNavidrome {
     /** Where a Navidrome song plays from, built from the current login rather than the address it was queued with. */
     fun stream(song: Song): DesktopStream? {
         // A station's own address: the server only lists it, the audio doesn't come from there.
-        NavidromeRadio.streamUrl(song)?.let { return DesktopStream(it) }
+        NavidromeRadio.streamUrl(song)?.let { ForkRadioNowPlaying.expect(song.videoId, it); return DesktopStream(it) } // its decoder passes on the live title (ForkRadioNowPlaying)
         if (!owns(song) || !NavidromeSettings.isConfigured()) return null
         // The plain path, as the engine gives its own saved files: FFmpeg doesn't decode a file:// address.
         NavidromeOffline.localFile(song.videoId.removePrefix(NavidromeSettings.ID_PREFIX))?.let { return DesktopStream(it.absolutePath) }
@@ -314,6 +314,9 @@ internal object ForkNavidrome {
     private class PrefsStore(path: String, private val sealed: Set<String>) : NavidromePlatform.Store {
         private val node = Preferences.userRoot().node(path)
 
+        /** A failed write stays queued in the settings store (ForkFilePreferences retries it), so a flush that throws is not the caller's failure. */
+        private fun flushQuietly() { runCatching { node.flush() } }
+
         override fun string(key: String): String? {
             val stored = node.get(key, null) ?: return null
             if (key !in sealed || stored.isEmpty()) return stored
@@ -332,24 +335,24 @@ internal object ForkNavidrome {
                     }
                 }
             }
-            node.flush()
+            flushQuietly()
         }
 
         override fun putLong(key: String, value: Long) {
             node.putLong(key, value)
-            node.flush()
+            flushQuietly()
         }
 
         override fun keys(): Set<String> = node.keys().toSet()
 
         override fun remove(keys: Collection<String>) {
             keys.forEach(node::remove)
-            node.flush()
+            flushQuietly()
         }
 
         override fun clear() {
             node.clear()
-            node.flush()
+            flushQuietly()
         }
     }
 }

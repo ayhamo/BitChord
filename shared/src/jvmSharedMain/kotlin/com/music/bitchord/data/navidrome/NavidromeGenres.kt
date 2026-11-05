@@ -6,6 +6,8 @@ import com.music.bitchord.data.model.UiState
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 
 /**
  * The server's genres on Explore (fork-only): the Navidrome panel's tiles,
@@ -25,13 +27,17 @@ object NavidromeGenres {
 
     fun isGenre(browseId: String?): Boolean = browseId?.startsWith(PREFIX) == true
 
+    /** Cover look-ups at once: thirty in one burst sat at the edge of the server's rate limit. */
+    internal const val COVER_LOOKUPS = 4
+
     /** Fills the Explore panel: the biggest genres, each with one of its albums' covers. */
     suspend fun load(client: NavidromeClient) = coroutineScope {
         val genres = client.genres().filter { it.songCount > 0 }.sortedByDescending { it.songCount }.take(TILES)
+        val gate = Semaphore(COVER_LOOKUPS)
         NavidromePlatform.onGenres(
             genres.map { genre ->
                 async {
-                    val cover = runCatching { client.albumsByGenre(genre.name, 1).firstOrNull()?.coverArt }.getOrNull()
+                    val cover = gate.withPermit { runCatching { client.albumsByGenre(genre.name, 1).firstOrNull()?.coverArt }.getOrNull() }
                     MoodGenre(title = genre.name, browseId = PREFIX + genre.name, params = null, thumbnailUrl = cover?.let { client.coverUrl(it) })
                 }
             }.awaitAll(),

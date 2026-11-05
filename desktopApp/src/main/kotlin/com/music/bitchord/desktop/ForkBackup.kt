@@ -89,7 +89,18 @@ internal object ForkBackup {
         val toPc: (Any) -> String?,
         /** The PC's stored text as the phone's typed value; null when it can't be read as one. */
         val toPhone: (String) -> Any?,
+        /**
+         * Where the two apps' defaults differ: the PC's default as the phone's typed value (exported
+         * when the PC has nothing stored) and the phone's default (written when a backup has nothing).
+         * Without them an unset key travelled as "absent" and the other side read its own, different
+         * default, so e.g. full-bleed artwork flipped on every restore (audit 2026-11-05).
+         */
+        val pcDefault: Any? = null,
+        val phoneDefault: Any? = null,
     )
+
+    /** [this] with the two defaults it differs on; see [Mapped.pcDefault]. */
+    private fun Mapped.defaults(pc: Any, phone: Any) = Mapped(phoneKey, pcKey, node, toPc, toPhone, pc, phone)
 
     private val main: () -> Preferences = { DesktopPersistence().preferences }
     private val navidromeFork: () -> Preferences = { Preferences.userRoot().node("com/music/bitchord/navidrome_fork") }
@@ -132,12 +143,39 @@ internal object ForkBackup {
         { when (it) { "on" -> true; "off" -> false; else -> null } },
     )
 
-    /** Lyrics sources: the phone stores their names, the PC their labels. */
+    /**
+     * Lyrics sources: the phone stores their names, the PC their labels. NetEase (PC only,
+     * [ForkNetEaseLyrics]) has neither a phone name nor a shared `LyricsSource`, so it travels as its
+     * label: dropping it lost its tick and place on every round trip (audit 2026-11-05); the phone
+     * skips a name it doesn't know and keeps the stored text.
+     */
     private fun lyricsSources(phone: String) = Mapped(
         phone, phone, main,
-        { value -> (value as? String)?.split(',')?.mapNotNull { lyricsSourceNamed(it.trim()) }?.joinToString(",") { it.label } },
-        { value -> value.split(',').mapNotNull { lyricsSourceNamed(it.trim()) }.joinToString(",") { it.name } },
+        { value -> (value as? String)?.split(',')?.mapNotNull { lyricsSourceToken(it.trim(), toLabel = true) }?.joinToString(",") },
+        { value -> value.split(',').mapNotNull { lyricsSourceToken(it.trim(), toLabel = false) }.joinToString(",") },
     )
+
+    private fun lyricsSourceToken(token: String, toLabel: Boolean): String? =
+        if (token.equals(ForkNetEaseLyrics.LABEL, ignoreCase = true)) {
+            ForkNetEaseLyrics.LABEL
+        } else {
+            lyricsSourceNamed(token)?.let { if (toLabel) it.label else it.name }
+        }
+
+    /**
+     * The PC's stream ceiling as it is in force: what older builds stored ("STANDARD", or "HIGH"
+     * before the four rungs, which meant lossless) is migrated the way [DesktopPersistence.audioQuality]
+     * reads it, instead of being exported raw and read as another rung on the phone (audit 2026-11-05).
+     */
+    private val audioQuality = Mapped(
+        "audio_quality_wifi", "audio_quality", main,
+        { (it as? String)?.takeIf { value -> value in qualities } },
+        { stored -> migratedQuality(stored, main().getBoolean("audio_quality_rungs", false)) },
+    )
+
+    /** [audioQuality]'s export, apart from the settings store for the tests. */
+    internal fun migratedQuality(stored: String, hasFourRungs: Boolean): String? =
+        DesktopAudioQuality.stored(stored, hasFourRungs).name.takeIf { it in qualities }
 
     /** Player's repeat: the phone's Media3 number (0 off, 1 one, 2 all), the PC's name. */
     private val repeat = Mapped(
@@ -165,14 +203,15 @@ internal object ForkBackup {
     /** `bitchord_settings` on the phone. */
     internal val MAIN: List<Mapped> = listOf(
         bool("animated_canvas"), bool("autoplay"), int("crossfade_seconds", allowed = 0..12), bool("dolby_atmos"),
-        bool("dont_repeat_suggestions"), bool("filter_non_music_audio"), bool("full_bleed_artwork"),
+        bool("dont_repeat_suggestions"),
+        bool("filter_non_music_audio").defaults(pc = false, phone = true), bool("full_bleed_artwork").defaults(pc = false, phone = true),
         bool("hide_song_status"), bool("hide_volume_bar"), bool("legacy_mesh_gradient"),
         bool("loudness_normalization"), bool("lyrics_blur"), int("lyrics_offset_ms"), float("playback_speed", range = 0.25f..4f),
         bool(ForkArtistGenres.KEY_ENABLED), // "Work out genres" (ForkArtistGenres)
         bool("sync_downloaded_playlists"), // "Keep playlists updated" (ForkPlaylistSync), the phone's own key
         bool("reduce_animation"), bool("reduce_dynamic_blur"), bool("show_listen_together_button"),
         bool("show_nerd_stats"), bool("show_queue_history"), bool("skip_silence"), bool("spatial_audio"),
-        bool("spotify_canvas_auto_hide"), bool("synced_lyrics"), text("translation_language"),
+        bool("spotify_canvas_auto_hide").defaults(pc = false, phone = true), bool("synced_lyrics"), text("translation_language"),
         bool(ForkSpotifyCanvasFirst.KEY), bool(ForkCachedSongs.KEY_SHOWN), // "Prioritize Spotify Canvas", "Show cached songs folder": the phone's keys
         named("last_player_screen", "last_player_screen", listOf("MAIN", "LYRICS", "QUEUE")),
         named("library_sort", "library_sort", com.music.bitchord.data.settings.LibrarySort.entries.map { it.name }),
@@ -181,11 +220,11 @@ internal object ForkBackup {
         named("equalizer_mode", "equalizer_mode", listOf("DYNAMIC", "MANUAL")),
         int("equalizer_tone_x"), int("equalizer_tone_y"),
         // Scrobbling switches (never the keys or the session: see [SECRETS]).
-        bool("lastfm_enabled"), bool("lastfm_now_playing"), bool("lastfm_primary_artist_only"),
-        bool("lastfm_scrobble_enabled"), bool("listenbrainz_enabled"), bool("listenbrainz_primary_artist_only"),
+        bool("lastfm_enabled"), bool("lastfm_now_playing").defaults(pc = true, phone = false), bool("lastfm_primary_artist_only"),
+        bool("lastfm_scrobble_enabled").defaults(pc = true, phone = false), bool("listenbrainz_enabled"), bool("listenbrainz_primary_artist_only"),
         float("scrobble_delay_percent"), int("scrobble_delay_seconds"), int("scrobble_min_duration"),
         // Discord's look (never the token).
-        bool("discord_rpc_enabled"), bool("discord_use_details"), bool("discord_show_audio_quality"),
+        bool("discord_rpc_enabled"), // no defaults carried: the phone's (on) is inert without its token, on the PC it would start presence bool("discord_use_details"), bool("discord_show_audio_quality"),
         bool("discord_advanced_mode"), text("discord_status"), text("discord_activity_type"),
         text("discord_activity_name"), text("discord_button_1_text"), bool("discord_button_1_visible"),
         text("discord_button_2_text"), bool("discord_button_2_visible"),
@@ -195,7 +234,7 @@ internal object ForkBackup {
         int(ForkUpgradeLength.KEY, allowed = ForkUpgradeLength.MIN_SECONDS..ForkUpgradeLength.MAX_SECONDS),
         named(ForkAppFont.KEY, ForkAppFont.KEY, ForkFont.entries.map { it.name }),
         // Renamed on the PC.
-        named("audio_quality_wifi", "audio_quality", qualities),
+        audioQuality,
         named("audio_quality_download", "download_quality", listOf("STANDARD", "HIGH", "LOSSLESS")),
         bool("smart_fade_enabled", "automix"),
         named("automix_performance_mode", "automix_performance", listOf("EFFICIENT", "BALANCED", "PERFORMANCE")),
@@ -204,6 +243,10 @@ internal object ForkBackup {
         bool("prioritize_syllable_sync", DesktopLyricsClient.KEY_PRIORITIZE_SYLLABLES),
         repeat,
         searchHistory,
+        // Both apps have these with the same keys and defaults; unmapped, a PC export carried them
+        // only in its PC part, so a PC -> phone restore reset them (audit 2026-11-05).
+        bool("signature_api_enabled"), text("signature_api_url"),
+        bool("smart_version_alignment"), bool("direct_source_stream"),
     )
 
     /** `bitchord_fork` on the phone (the phone's `ForkSettings`). */
@@ -241,6 +284,9 @@ internal object ForkBackup {
         // The welcome pages' flag is this machine's, as the phone's is (its DEVICE_LOCAL); see ForkWelcome.
         ForkWelcome.KEY,
         "playlist_sync_last_complete_check", // ForkPlaylistSync: this machine's last full check
+        // ForkYtDlp: a path on this machine; carried to another PC it pointed at nothing and, being
+        // set, turned off the PATH lookup there (audit 2026-11-05).
+        "fork_ytdlp_path",
     )
 
     /** [ForkWindowState]'s place on this machine's screens. */
@@ -296,14 +342,32 @@ internal object ForkBackup {
             JsonObject.serializer(),
             ForkBackupFormat.scrubbed(ForkBackupFormat.json.encodeToJsonElement(BackupFile.serializer(), file)) as JsonObject,
         )
-        Files.writeString(target, text)
+        writeReplacing(target, text)
         return file.listening.size
+    }
+
+    /**
+     * [text] into [target] through a file beside it, then moved over it: written in place, a failure
+     * half-way (a full disk, a sync client holding it) left the old backup truncated (audit 2026-11-05).
+     */
+    internal fun writeReplacing(target: Path, text: String) {
+        val temp = target.resolveSibling("${target.fileName}.tmp")
+        try {
+            Files.writeString(temp, text)
+            try {
+                Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+            } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
+                Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING)
+            }
+        } finally {
+            runCatching { Files.deleteIfExists(temp) }
+        }
     }
 
     internal fun build(): BackupFile {
         val carried = readCarried()
         val settings = LinkedHashMap<String, PrefValue>()
-        MAIN.forEach { mapped -> read(mapped)?.let { settings[mapped.phoneKey] = it } }
+        MAIN.forEach { mapped -> (read(mapped) ?: PrefValue.of(mapped.pcDefault))?.let { settings[mapped.phoneKey] = it } }
         carried.settings.forEach { (key, value) -> if (key !in settings && key !in SECRETS) settings[key] = value }
 
         val forkSettings = LinkedHashMap<String, PrefValue>()
@@ -343,7 +407,8 @@ internal object ForkBackup {
 
     // ── Import ──────────────────────────────────────────────────────────
 
-    data class Summary(val months: Int, val settings: Int, val from: String, val at: String)
+    /** [problems]: the parts of the import that failed after it had started writing; see [apply]. */
+    data class Summary(val months: Int, val settings: Int, val from: String, val at: String, val problems: List<String> = emptyList())
 
     fun importFrom(source: Path): Summary {
         // A file-system failure's message is only the path; say what happened instead.
@@ -360,25 +425,39 @@ internal object ForkBackup {
             .getOrElse { error("That doesn't look like a BitChord backup") }
         require(file.app == ForkBackupFormat.APP_TAG) { "That backup is from another app" }
         require(file.version <= ForkBackupFormat.SCHEMA_VERSION) { "That backup was written by a newer version of BitChord" }
-        apply(file)
-        return Summary(file.listening.size, file.settings.size, file.versionName, file.exportedAt)
+        val problems = apply(file)
+        return Summary(file.listening.size, file.settings.size, file.versionName, file.exportedAt, problems)
     }
 
-    internal fun apply(file: BackupFile) {
-        val incoming = file.settings.filterKeys { it !in SECRETS }.mapValues { it.value.decoded() }
-        val legacyQuality = incoming[PHONE_LEGACY_QUALITY].takeIf { "audio_quality_wifi" !in incoming }
-        MAIN.forEach { mapped ->
-            val value = incoming[mapped.phoneKey] ?: legacyQuality.takeIf { mapped.phoneKey == "audio_quality_wifi" }
-            write(mapped, value)
+    /**
+     * Writes [file] over this PC's data and returns the parts that failed, by name (empty when all
+     * went in). Never throws: once it had started writing, a failure part-way used to leave the data
+     * half-replaced with only "Import failed" on screen and the app left open, so whatever was still
+     * open wrote old values back over the new ones (audit 2026-11-05). Every part now runs on its own
+     * and the caller closes the app whenever this ran, saying which parts did not make it.
+     */
+    internal fun apply(file: BackupFile): List<String> {
+        val problems = mutableListOf<String>()
+        // Each part on its own: one that doesn't read or write is skipped and reported, not the import.
+        fun <T> part(name: String, block: () -> T): T? = runCatching(block)
+            .onFailure {
+                problems += name
+                DesktopTrackLog.log("backup import: skipped $name (${it.javaClass.simpleName}: ${it.message})")
+            }
+            .getOrNull()
+
+        part("settings") {
+            val incoming = file.settings.filterKeys { it !in SECRETS }.mapValues { it.value.decoded() }
+            val legacyQuality = incoming[PHONE_LEGACY_QUALITY].takeIf { "audio_quality_wifi" !in incoming }
+            MAIN.forEach { mapped ->
+                val value = incoming[mapped.phoneKey] ?: legacyQuality.takeIf { mapped.phoneKey == "audio_quality_wifi" }
+                write(mapped, value ?: mapped.phoneDefault)
+            }
+            // The PC's quality reads its four rungs only with this set (DesktopPersistence.saveAudioQuality).
+            main().putBoolean("audio_quality_rungs", true)
         }
-        // The PC's quality reads its four rungs only with this set (DesktopPersistence.saveAudioQuality).
-        main().putBoolean("audio_quality_rungs", true)
 
         val fork = file.fork
-        // Each part of the fork's section on its own: one that doesn't read is skipped, not the import.
-        fun <T> part(name: String, block: () -> T): T? = runCatching(block)
-            .onFailure { DesktopTrackLog.log("backup import: skipped the fork section's $name (${it.javaClass.simpleName}: ${it.message})") }
-            .getOrNull()
         val forkSettings = part("settings") {
             (fork?.get(KEY_FORK_SETTINGS) as? JsonObject)?.let { stored ->
                 stored.mapNotNull { (key, element) ->
@@ -408,23 +487,30 @@ internal object ForkBackup {
         }
 
         val legacy = part("listening before months") { (pc?.get(KEY_PC_LEGACY) as? JsonObject)?.let { ForkBackupFormat.json.decodeFromJsonElement<StoredBucket>(it) } }
-        val buckets = file.listening.mapNotNull(::toPc) + listOfNotNull(legacy?.let { toPc(it, DesktopListeningStats.LEGACY_MONTH) })
-        DesktopListeningStats.forkReplace(buckets)
+        part("listening history") {
+            val buckets = file.listening.mapNotNull(::toPc) + listOfNotNull(legacy?.let { toPc(it, DesktopListeningStats.LEGACY_MONTH) })
+            DesktopListeningStats.forkReplace(buckets)
+        }
 
         val mappedMain = MAIN.map { it.phoneKey }.toSet() + PHONE_LEGACY_QUALITY
         val mappedFork = FORK.map { it.phoneKey }.toSet()
-        writeCarried(
-            Carried(
-                settings = file.settings.filterKeys { it !in mappedMain && it !in SECRETS },
-                forkSettings = forkSettings.orEmpty().filterKeys { it !in mappedFork && it !in SECRETS },
-                listening = file.listening,
-            ),
-        )
+        part("phone-only settings") {
+            writeCarried(
+                Carried(
+                    settings = file.settings.filterKeys { it !in mappedMain && it !in SECRETS },
+                    forkSettings = forkSettings.orEmpty().filterKeys { it !in mappedFork && it !in SECRETS },
+                    listening = file.listening,
+                ),
+            )
+        }
         // Restoring a backup is coming back to a BitChord already set up: no welcome pages after it
         // (the phone's file never carries its own flag, which is that phone's).
-        ForkWelcome.markDone()
-        runCatching { main().flush() }
-        runCatching { navidromeFork().flush() }
+        part("welcome flag") { ForkWelcome.markDone() }
+        // A flush that fails is reported, not swallowed: until it lands the values are in memory only
+        // (the portable settings files retry it, and once more at exit; see ForkFilePreferences).
+        part("saving the settings") { main().flush() }
+        part("saving the Navidrome settings") { navidromeFork().flush() }
+        return problems
     }
 
     private fun write(mapped: Mapped, value: Any?) {
@@ -653,7 +739,12 @@ internal fun ForkBackupGroup() {
                     val source = pickFile(save = false) ?: return@TextButton
                     scope.launch {
                         withContext(Dispatchers.IO) { runCatching { ForkBackup.importFrom(source) } }.fold(
-                            onSuccess = { imported = "Imported ${months(it.months)} from v${it.from}." },
+                            // Whenever anything was written the app closes, so nothing open writes old values back;
+                            // importFrom throws only before it writes ([ForkBackup.apply] never does).
+                            onSuccess = {
+                                imported = "Imported ${months(it.months)} from v${it.from}." +
+                                    if (it.problems.isEmpty()) "" else " Some parts could not be restored: ${it.problems.joinToString(", ")}."
+                            },
                             onFailure = { importStatus = "Import failed: ${it.message ?: "unknown error"}" },
                         )
                     }

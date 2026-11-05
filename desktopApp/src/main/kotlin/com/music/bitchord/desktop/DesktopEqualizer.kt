@@ -69,6 +69,7 @@ internal class DesktopEqualizer {
     private var channelGain = FloatArray(0)
 
     private val limiter = PeakLimiter()
+    private val forkVocals = ForkVocalCanceller() // fork: karaoke (ForkKaraoke)
 
     /**
      * Aims the equaliser. Called from whoever owns the settings, never from the audio thread.
@@ -101,8 +102,9 @@ internal class DesktopEqualizer {
     }
 
     /** Equalises [count] interleaved samples of [block], in place. */
-    fun process(block: FloatArray, count: Int) {
+    fun process(block: FloatArray, count: Int, sourceChannels: Int? = null) { // fork: sourceChannels, for karaoke
         if (count == 0 || channels == 0 || sampleRate == 0) return
+        forkVocals.process(block, count, channels, sourceChannels) // fork: karaoke, ahead of the flat-curve early return
         val tuning = target
         // Flat *and* settled there: an equaliser that has just been switched off is still gliding
         // down, and cutting that glide short is the click it exists to avoid.

@@ -2,6 +2,7 @@ package com.music.bitchord.fork
 
 import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.canvas.CanvasRepository
+import com.music.bitchord.data.canvas.ForkCanvasLookup
 import com.music.bitchord.data.canvas.SpotifyCanvas
 import com.music.bitchord.data.canvas.SpotifyToken
 import com.music.bitchord.data.model.Song
@@ -39,9 +40,14 @@ import kotlinx.coroutines.sync.withLock
  */
 object ForkCanvas {
 
-    private class Answer(val artwork: CanvasArtwork?, val atMs: Long)
+    /** [untilMs]: when a miss may be asked again (a found clip is kept regardless). */
+    private class Answer(val artwork: CanvasArtwork?, val untilMs: Long)
 
-    /** Spotify's answer per song, the last [MAX_SONGS]; a miss is asked again after [MISS_MS]. */
+    /**
+     * Spotify's answer per song, the last [MAX_SONGS]; a miss is asked again after [MISS_MS], a
+     * failed search (a 429, no answer) after [ForkCanvasLookup.RETRY_AFTER_MS] or the provider's own
+     * backoff, as the PC's `ForkDesktopCanvas` does.
+     */
     private val spotify = object : LinkedHashMap<String, Answer>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Answer>) = size > MAX_SONGS
     }
@@ -116,7 +122,7 @@ object ForkCanvas {
 
     private suspend fun spotifyFor(song: Song, query: Song): CanvasArtwork? = lock.withLock {
         synchronized(spotify) { spotify[song.videoId] }?.let { known ->
-            if (known.artwork != null || System.currentTimeMillis() - known.atMs < MISS_MS) return@withLock known.artwork
+            if (known.artwork != null || System.currentTimeMillis() < known.untilMs) return@withLock known.artwork
         }
         if (query.title.isBlank() || query.artist.isBlank()) return@withLock null
         // Without a sign-in nothing is asked and nothing remembered, so a cookie added later counts.
@@ -134,16 +140,37 @@ object ForkCanvas {
         val album = query.albumName.takeUnless { NavidromeSettings.isNavidromeId(song.videoId) }
         // Off the main thread, as the repository's own lookups are: the player asks from there, and a
         // request on it is refused before it leaves (NetworkOnMainThreadException, read as "http -1").
-        val found = runCatching {
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        // The search runs in a lookup scope of its own, as the PC's does: SpotifyCanvas reports a 429
+        // or a request that got no answer there (ForkCanvasLookup), and that is remembered for a
+        // minute, not as a ten-minute miss. Outside a scope those reports went nowhere, so one 429
+        // kept the song's backdrop away for ten minutes.
+        val scope = ForkCanvasLookup.Scope()
+        val result = runCatching {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO + scope.context) {
                 SpotifyCanvas.search(query.title, query.artist, album)?.takeIf { it.matches(query.title, query.artist, album) }
             }
-        }.getOrElse { if (it is kotlinx.coroutines.CancellationException) throw it; return@withLock null }
+        }
+        result.exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it }
         // A lookup cancelled mid-request (the player restarts it when the album lands) reads as
         // "http -1" and a null, which is not an answer: nothing is remembered, the restart asks again.
         if (!kotlinx.coroutines.currentCoroutineContext().isActive) return@withLock null
-        synchronized(spotify) { spotify[song.videoId] = Answer(found, System.currentTimeMillis()) }
+        val found = result.getOrNull()
+        synchronized(spotify) { spotify[song.videoId] = Answer(found, retryAt(found, result.isFailure, scope, System.currentTimeMillis())) }
         found
+    }
+
+    /**
+     * When a Spotify answer for a song may be asked for again: a found clip is kept anyway; a failed
+     * search after [ForkCanvasLookup.RETRY_AFTER_MS] (or the provider's later own retry time); a
+     * settled miss after [MISS_MS].
+     */
+    internal fun retryAt(found: CanvasArtwork?, threw: Boolean, scope: ForkCanvasLookup.Scope, nowMs: Long): Long =
+        retryAt(found != null, threw || scope.failure != null, scope.retryAtMs, nowMs)
+
+    internal fun retryAt(found: Boolean, failed: Boolean, providerRetryAtMs: Long, nowMs: Long): Long = when {
+        found -> Long.MAX_VALUE
+        failed -> maxOf(nowMs + ForkCanvasLookup.RETRY_AFTER_MS, providerRetryAtMs)
+        else -> nowMs + MISS_MS
     }
 
     /** [song] with "Artist - " taken off the front of a server song's title. */
@@ -157,5 +184,5 @@ object ForkCanvas {
         com.music.bitchord.data.navidrome.NavidromeCanvasQuery.withoutArtistPrefix(title, artist) // shared with the PC
 
     private const val MAX_SONGS = 64
-    private const val MISS_MS = 10L * 60 * 1000
+    internal const val MISS_MS = 10L * 60 * 1000
 }

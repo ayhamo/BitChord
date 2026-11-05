@@ -211,9 +211,11 @@ internal object DesktopSourceRegistry {
         excludedSourceId: String? = null,
         /** A download: addons that said `allowDownloads: 0` are left out, see [adapters]. */
         forDownload: Boolean = false,
+        /** fork: the source the listener named for this track (ForkSourcePins); null walks the usual order. */
+        forkPin: String? = ForkSourcePins.of(song.videoId),
     ): Result<DesktopStream> = runCatching {
         ForkNavidrome.stream(song)?.let { return@runCatching it } // fork: the next song's read-ahead comes this way, and YouTube can't resolve a server's id
-        val available = playbackAdapters(quality, forDownload)
+        val available = ForkSourcePins.narrow(playbackAdapters(quality, forDownload), forkPin) { it.config.id } // fork: was playbackAdapters(quality, forDownload)
         val moduleReference = DesktopModuleSource.parseTrack(song.videoId)
         val addonReference = DesktopAddonSource.parseTrack(song.videoId)
         val owned = when {
@@ -300,6 +302,15 @@ internal object DesktopSourceRegistry {
             onSuccess = { it ?: error("${youtube.descriptor.name} did not return an audio stream") },
             onFailure = { throw it },
         )
+    }.let { asked -> // fork: a named source with no copy falls back to the usual order (PC-Continued 5b1b855c)
+        // Only when the pin actually narrowed the walk (else the full walk already ran and failed),
+        // and never on a cancel.
+        if (forkPin == null || asked.isSuccess ||
+            asked.exceptionOrNull() is kotlin.coroutines.cancellation.CancellationException ||
+            playbackAdapters(quality, forDownload).none { it.config.id == forkPin }
+        ) asked
+        else resolve(song, quality, excludedSourceId, forDownload, forkPin = null)
+            .also { DesktopTrackLog.log("  the source picked for '${song.title}' had no copy; played from the usual order") }
     }
 
     /**
@@ -312,7 +323,9 @@ internal object DesktopSourceRegistry {
         excludedSourceId: String? = null,
     ): Result<DesktopLiveResolution> = runCatching {
         ForkNavidrome.stream(song)?.let { return@runCatching DesktopLiveResolution(it) } // fork
-        val available = playbackAdapters(quality)
+        // fork: a named source is asked alone; with one adapter there is no race, so this ends in
+        // resolve(), which falls back to the usual order (ForkSourcePins)
+        val available = ForkSourcePins.narrow(playbackAdapters(quality), ForkSourcePins.of(song.videoId)) { it.config.id }
         ForkHandoffDesktop.takePreferred(song)?.let { (sourceId, key) -> available.firstOrNull { it.config.id == sourceId }?.let { a -> a.resolve(song.copy(videoId = key), quality).getOrNull()?.takeIf { playableHere(a, it) } } }?.let { return@runCatching DesktopLiveResolution(it) } // fork: the copy the other device played this song as, once
         val owned = available.any { it.owns(song) } ||
             DesktopModuleSource.parseTrack(song.videoId) != null ||
@@ -508,7 +521,9 @@ internal object DesktopSourceRegistry {
         val chasingAtmos = ForkAtmos.wanted() && playing?.format?.isDolbyAtmos != true // fork (PC-Continued 18b6b3ae)
         val playingRank = configs().firstOrNull { it.id == playing?.sourceId }?.kind?.rank
             ?: DesktopSourceKind.YOUTUBE.rank
+        val forkPin = ForkSourcePins.of(song.videoId) // fork: an upgrade from a source the listener turned down is not one they asked for
         val better = playbackAdapters(quality).filter {
+            (forkPin == null || it.config.id == forkPin) && // fork
             it.config.kind != DesktopSourceKind.YOUTUBE &&
                 // fork: the immersive mix is asked of every other source, whatever its rung
                 (if (chasingAtmos) it.config.id != playing?.sourceId else it.config.kind.rank < playingRank)

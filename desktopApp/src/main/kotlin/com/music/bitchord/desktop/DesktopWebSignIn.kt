@@ -96,6 +96,7 @@ internal object DesktopWebSignIn {
         private var view: WebView? = null
         private var storage: Path? = null
         private var done = false
+        private val forkGuidance = ForkWebSignInGuidance.label() // fork: help when the session isn't ready or Google blocks the window
 
         init {
             stage.title = service.title
@@ -104,8 +105,9 @@ internal object DesktopWebSignIn {
             bar.padding = Insets(8.0)
             if (service == Service.YOUTUBE_MUSIC) {
                 confirm.isDefaultButton = true
-                confirm.setOnAction { youtubeSession()?.let { complete(Result.success(it)) } }
+                confirm.setOnAction { youtubeSession()?.let { complete(Result.success(it)) } ?: ForkWebSignInGuidance.notReady(forkGuidance) } // fork: + the `?:` hint
                 bar.children += confirm
+                root.top = forkGuidance // fork
             }
             root.bottom = bar
             stage.scene = Scene(root, 480.0, 760.0)
@@ -145,7 +147,7 @@ internal object DesktopWebSignIn {
                 // Reaching YouTube Music only enables confirming: a multi-channel login may still be
                 // choosing its identity on this page.
                 Service.YOUTUBE_MUSIC ->
-                    confirm.isDisable = !url.startsWith("https://music.youtube.com") || youtubeSession() == null
+                    confirm.isDisable = !url.startsWith("https://music.youtube.com") // fork: was `|| youtubeSession() == null`; the cookie can land after the page reports done, so the press checks (ForkWebSignInGuidance)
                 Service.SPOTIFY -> if (url.startsWith("https://open.spotify.com")) {
                     spotifySession()?.let { complete(Result.success(it)) }
                 }

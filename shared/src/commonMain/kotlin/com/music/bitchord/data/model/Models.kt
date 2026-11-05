@@ -497,9 +497,9 @@ fun shelfLayoutFor(title: String, items: List<ShelfItem>, fromList: Boolean): Sh
 fun List<HomeShelf>.withoutRepeatsOf(existing: List<HomeShelf>): List<HomeShelf> {
     val shown = existing.toMutableList()
     return filter { shelf ->
-        val keys = shelf.browseKeys()
+        val keys = forkReleaseFeedKeys(shelf) ?: shelf.browseKeys() // fork: release feeds also by video id (ForkShelfRepeats.kt)
         val repeat = keys.isNotEmpty() && shown.any { other ->
-            val shared = other.browseKeys().count { it in keys }
+            val shared = (forkReleaseFeedKeysOf(other, shelf) ?: other.browseKeys()).count { it in keys } // fork: was other.browseKeys()
             shared > 0 && shared >= REPEAT_SHELF_SHARE * minOf(shelf.items.size, other.items.size)
         }
         if (!repeat) shown += shelf

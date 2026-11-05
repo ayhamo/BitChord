@@ -25,13 +25,47 @@ object ForkHandoffStore {
     @Volatile private var playlistId: String? = null
     @Volatile private var forUser: String? = null
 
-    /** Whether the server refused a note in a form body and took it in the address: later notes then keep to [ForkHandoff.GET_BUDGET]. Never set by a network failure. */
-    @Volatile private var addressOnly = false
+    /** Whether this server takes notes only in the address ([Transport]): later notes then keep to [ForkHandoff.GET_BUDGET]. Never set by a network failure. */
+    private val transport = Transport()
 
+    /** The server or the login changed (`NavidromeSettings.save`): its mailbox and its transport are found again. */
     fun forget() {
         playlistId = null
         forUser = null
-        addressOnly = false
+        transport.reset()
+    }
+
+    /**
+     * Whether notes go in the address only. One refused body used to settle it for the whole run, so a
+     * single transient refusal (a proxy's 413 during a restart, a 4xx from a server mid-upgrade) cut
+     * every later note to 4 KB. Now it takes [REFUSALS] writes in a row that had to fall back to the
+     * address; a body taken resets the count.
+     */
+    internal class Transport {
+        @Volatile var addressOnly = false
+            private set
+        @Volatile private var refusedInARow = 0
+
+        /** Records how one write went; true when that has just made the server address-only. */
+        fun record(way: Way): Boolean {
+            if (way == Way.POST) {
+                refusedInARow = 0
+                return false
+            }
+            refusedInARow++
+            if (addressOnly || refusedInARow < REFUSALS) return false
+            addressOnly = true
+            return true
+        }
+
+        fun reset() {
+            addressOnly = false
+            refusedInARow = 0
+        }
+
+        companion object {
+            const val REFUSALS = 3
+        }
     }
 
     private fun identity() = NavidromeSettings.url.value + "\u0000" + NavidromeSettings.username.value
@@ -59,7 +93,7 @@ object ForkHandoffStore {
         val way = (try {
             send(
                 encode = { budget -> ForkHandoff.encode(note, budget) },
-                addressOnly = addressOnly,
+                addressOnly = transport.addressOnly,
                 post = { text -> client.postPlaylistComment(id, text) },
                 get = { text -> client.getPlaylistComment(id, text) },
             )
@@ -68,8 +102,8 @@ object ForkHandoffStore {
             playlistId = null
             throw e
         }) ?: return@withLock false.also { log("handoff: the note doesn't fit even with the playing song alone") }
-        if (way == Way.GET && !addressOnly) {
-            addressOnly = true
+        // An address-only note was never offered as a body, so it says nothing either way.
+        if (!(way == Way.GET && transport.addressOnly) && transport.record(way)) {
             log("handoff: this server reads the comment from the address only; notes kept under ${ForkHandoff.GET_BUDGET / 1024} KB")
         }
         true

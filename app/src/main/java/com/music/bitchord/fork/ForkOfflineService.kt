@@ -35,6 +35,9 @@ class ForkOfflineService : Service() {
     private val scope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
     private var watcher: Job? = null
 
+    /** Whether this is a foreground service right now; see [offlineServiceStep]. */
+    private var inForeground = false
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -59,7 +62,17 @@ class ForkOfflineService : Service() {
                 delay(500)
                 combine(NavidromeOffline.status, ForkNetwork.canDownload) { status, allowed -> status to allowed }
                     .collect { (status, allowed) ->
-                        if (!status.active) finish() else notifyProgress(status, allowed)
+                        when (offlineServiceStep(status.active, allowed, inForeground)) {
+                            OfflineServiceStep.FINISH -> finish()
+                            OfflineServiceStep.PROMOTE -> promote()
+                            OfflineServiceStep.LEAVE_FOREGROUND -> {
+                                // The notification stays up, saying what it waits for.
+                                stopForeground(STOP_FOREGROUND_DETACH)
+                                inForeground = false
+                                notifyProgress(status, allowed)
+                            }
+                            OfflineServiceStep.NOTIFY -> notifyProgress(status, allowed)
+                        }
                     }
             }
         }
@@ -70,7 +83,13 @@ class ForkOfflineService : Service() {
         watcher?.cancel()
         watcher = null
         stopForeground(STOP_FOREGROUND_REMOVE)
+        inForeground = false
+        cancelNotification() // a notification left up while waiting is no longer the service's
         stopSelf()
+    }
+
+    private fun cancelNotification() {
+        runCatching { getSystemService(NotificationManager::class.java)?.cancel(NOTIFICATION_ID) }
     }
 
     /**
@@ -86,6 +105,9 @@ class ForkOfflineService : Service() {
 
     override fun onDestroy() {
         scope.cancel()
+        // Detached while waiting ([offlineServiceStep]), the notification outlives a service Android
+        // stops in the background; nothing would update or take down its "waiting" line after that.
+        if (!inForeground) cancelNotification()
         super.onDestroy()
     }
 
@@ -99,7 +121,12 @@ class ForkOfflineService : Service() {
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
+            inForeground = true
         } catch (e: IllegalStateException) {
+            // Also when the network came back with the app in the background (Android 12+ refuses a
+            // foreground start then): the downloads go on, without a notification left saying they wait.
+            inForeground = false
+            cancelNotification()
             stopSelf()
         }
     }
@@ -142,4 +169,22 @@ class ForkOfflineService : Service() {
         const val NOTIFICATION_ID = 7341
         const val ACTION_CANCEL = "com.music.bitchord.fork.OFFLINE_CANCEL"
     }
+}
+
+internal enum class OfflineServiceStep { FINISH, PROMOTE, LEAVE_FOREGROUND, NOTIFY }
+
+/**
+ * What [ForkOfflineService] does as the downloads and the network change.
+ *
+ * Android 15+ gives a data-sync service 6 hours a day, and it counts the time spent in the
+ * foreground waiting for a network the "Download over" switches allow just the same: an evening
+ * on mobile data with Wi-Fi-only on used the day's budget up before a byte came down. So the
+ * service leaves the foreground while it waits (the notification stays, saying so) and comes back
+ * when the network is allowed again.
+ */
+internal fun offlineServiceStep(active: Boolean, allowed: Boolean, inForeground: Boolean): OfflineServiceStep = when {
+    !active -> OfflineServiceStep.FINISH
+    allowed && !inForeground -> OfflineServiceStep.PROMOTE
+    !allowed && inForeground -> OfflineServiceStep.LEAVE_FOREGROUND
+    else -> OfflineServiceStep.NOTIFY
 }

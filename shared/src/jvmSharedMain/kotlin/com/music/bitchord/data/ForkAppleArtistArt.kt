@@ -21,9 +21,10 @@ import java.net.URLEncoder
  * `data/apple/artistPage.ts`, readable from shared code. The phone keeps its own copy (org.json,
  * which only Android has), so its behaviour is untouched; the two read the same JSON the same way.
  *
- * The colours are the still photograph's (`bgColor`, `textColor1`), as on the web: the PC draws
- * the still, never the motion clip the phone may swap in, so the clip's preview colours would
- * tint the page for a picture that isn't on screen.
+ * The colours are the still photograph's (`bgColor`, `textColor1`), as on the web. The looping
+ * clip some artists have (`motionArtistSquare1x1`, which the phone plays over the photo) comes
+ * with its own preview colours in [videoBackground] / [videoAccent], so a page that plays the
+ * clip can take the clip's colours as the phone does, and one that doesn't keeps the still's.
  */
 data class ForkAppleArtistArt(
     val heroUrl: String,
@@ -39,6 +40,12 @@ data class ForkAppleArtistArt(
     val accent: Int,
     /** The colour Apple fills the artist's Play button with; absent for some artists. */
     val keyColor: Int?,
+    /** Fork: the looping clip (an HLS playlist) Apple shows in place of the photo; null for most artists. */
+    val videoUrl: String? = null,
+    /** Fork: the clip's own `bgColor` (ARGB), for a page showing the clip; null without one. */
+    val videoBackground: Int? = null,
+    /** Fork: the clip's own `textColor1` (ARGB). */
+    val videoAccent: Int? = null,
 )
 
 /**
@@ -162,6 +169,11 @@ object ForkAppleArtistArtRepository {
             null
         }
         val background = hero.str("bgColor").toArgb() ?: return null
+        // The phone's read (AppleArtistArt.parse): the clip and the colours of its preview frame.
+        val clip = header.obj("videoArtwork")?.obj("dictionary")?.obj("motionArtistSquare1x1")
+        val video = clip?.str("video")?.takeIf { it.startsWith("https://") }
+        val preview = clip?.obj("previewFrame")?.takeIf { video != null }
+        val videoBackground = preview?.str("bgColor").toArgb()
         return ForkAppleArtistArt(
             heroUrl = heroUrl,
             heroAspect = heroW.toFloat() / heroH,
@@ -170,6 +182,9 @@ object ForkAppleArtistArtRepository {
             background = background,
             accent = hero.str("textColor1").toArgb() ?: background,
             keyColor = header.str("keyColor").toArgb(),
+            videoUrl = video,
+            videoBackground = videoBackground,
+            videoAccent = preview?.str("textColor1").toArgb() ?: videoBackground,
         )
     }
 

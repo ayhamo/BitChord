@@ -78,6 +78,27 @@ class ForkSingleInstanceTest {
     }
 
     @Test
+    fun `a start during a quit becomes the owner once the quitting one is gone`() {
+        val dir = Files.createTempDirectory("bitchord-instance")
+        val first = ForkSingleInstance.claim(dir, onShow = { error("a quitting owner must not be handed over to") })
+        assertIs<ForkSingleInstance.Claim.Primary>(first)
+        // Quit: no longer answering, the lock still held while the shutdown hooks run.
+        first.stopAnswering()
+        val second = java.util.concurrent.CompletableFuture.supplyAsync {
+            ForkSingleInstance.claim(dir, onShow = {}, waitMs = 4_000)
+        }
+        Thread.sleep(400)
+        first.close() // the quitting process has ended
+        val claim = second.get(6, TimeUnit.SECONDS)
+        try {
+            assertIs<ForkSingleInstance.Claim.Primary>(claim)
+            assertTrue(Files.readString(dir.resolve("instance.port")).startsWith("${claim.port} "))
+        } finally {
+            (claim as? AutoCloseable)?.close()
+        }
+    }
+
+    @Test
     fun `separate data folders each get their own instance`() {
         val a = ForkSingleInstance.claim(Files.createTempDirectory("bitchord-a"), onShow = {})
         val b = ForkSingleInstance.claim(Files.createTempDirectory("bitchord-b"), onShow = {})

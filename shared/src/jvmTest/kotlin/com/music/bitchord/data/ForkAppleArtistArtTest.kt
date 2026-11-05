@@ -54,6 +54,25 @@ class ForkAppleArtistArtTest {
     }
 
     @Test
+    fun readsTheMotionClipAndItsColours() {
+        val header = heroOnly.replace(
+            "\"keyColor\"",
+            "\"videoArtwork\":{\"dictionary\":{\"motionArtistSquare1x1\":{\"video\":\"https://mvod.itunes.apple.com/clip.m3u8\"," +
+                "\"previewFrame\":{\"bgColor\":\"102030\",\"textColor1\":\"405060\"}}}},\"keyColor\"",
+        )
+        val art = ForkAppleArtistArtRepository.parseArtistPage(page(header))!!
+        assertEquals("https://mvod.itunes.apple.com/clip.m3u8", art.videoUrl)
+        assertEquals(0xFF102030.toInt(), art.videoBackground)
+        assertEquals(0xFF405060.toInt(), art.videoAccent)
+        // The still's colours stay as they were, for a page not playing the clip.
+        assertEquals(0xFF1A2B3C.toInt(), art.background)
+        // Most artists: no clip, no clip colours.
+        val still = ForkAppleArtistArtRepository.parseArtistPage(page(heroOnly))!!
+        assertNull(still.videoUrl)
+        assertNull(still.videoBackground)
+    }
+
+    @Test
     fun anythingMissingIsNoArt() {
         assertNull(ForkAppleArtistArtRepository.parseArtistPage("<html>nothing</html>"))
         assertNull(ForkAppleArtistArtRepository.parseArtistPage(page("""{"name":"no header here"}""")))

@@ -201,8 +201,8 @@ object AppleMusicCanvas {
 
         var score = 10
 
-        val wantTitle = title.normalizeForMatch()
-        val hitTitle = hitName.normalizeForMatch()
+        val wantTitle = title.normalizeTitleForMatch().ifEmpty { return null } // fork: was normalizeForMatch(), "" for a non-Latin title (and "".contains("") scored it)
+        val hitTitle = hitName.normalizeTitleForMatch() // fork: was normalizeForMatch()
         score += when {
             hitTitle == wantTitle -> 15
             hitTitle.contains(wantTitle) || wantTitle.contains(hitTitle) -> 7

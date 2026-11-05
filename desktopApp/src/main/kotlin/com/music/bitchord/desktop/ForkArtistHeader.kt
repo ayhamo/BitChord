@@ -24,8 +24,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,14 +45,18 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.music.bitchord.data.ForkAppleArtistArt
 import com.music.bitchord.data.ForkAppleArtistArtRepository
+import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.model.HEADER_ART_PX
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.navidrome.NavidromeArtistInfo
 import com.music.bitchord.ui.icons.BitChordIcons
+import com.music.bitchord.ui.player.CanvasArtworkPlayer
+import com.music.bitchord.ui.player.ForkCanvasSwitch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 
@@ -68,7 +75,7 @@ import kotlin.math.abs
 internal object ForkArtistHeader {
 
     const val TITLE = "Artist Art"
-    const val SUBTITLE = "Artist pages take Apple Music’s photo, logo and colour"
+    const val SUBTITLE = "Artist pages take Apple Music’s photo, logo and colour, and its moving picture with Animated covers on"
 
     private const val KEY = "fork_apple_artist_art"
 
@@ -82,6 +89,12 @@ internal object ForkArtistHeader {
         _enabled.value = on
         persistence.saveBoolean(KEY, on)
     }
+
+    /**
+     * Whether something covers the artist page (the player, Replay), so its moving picture holds
+     * still: set by the window (DesktopApp), which owns those overlays.
+     */
+    var covered by mutableStateOf(false)
 
     /** Share of Apple's colour mixed into the page: enough to read as Apple's, never so light white text fades. */
     private const val TINT = 0.35f
@@ -128,7 +141,67 @@ internal fun rememberForkAppleArt(key: String, name: String, revision: Any?, cat
                 ?: value
         }.value
     }
-    return if (on) art else null
+    // The moving picture, as the phone's artist page: only with "Animated canvas" and "Animated
+    // covers" on (the phone's `canvasEnabled`), and then with the clip's own colours.
+    val animated by DesktopPlayerSettings.animatedCanvas.collectAsState()
+    val covers by ForkCanvasSwitch.covers.collectAsState()
+    val motion = animated && covers
+    return remember(art, motion) { art?.forMotion(motion) }.takeIf { on }
+}
+
+/**
+ * The art as the page should draw it: without its clip when the clip won't play, and with the
+ * clip's preview colours when it will. The phone's `AppleArtistArt` takes the clip's colours
+ * whenever there is a clip ("the page has to match whichever one is on screen"); here the photo's
+ * stay when the switches keep the photo on screen.
+ */
+internal fun ForkAppleArtistArt.forMotion(plays: Boolean): ForkAppleArtistArt = when {
+    videoUrl == null -> this
+    !plays -> copy(videoUrl = null)
+    else -> copy(background = videoBackground ?: background, accent = videoAccent ?: accent)
+}
+
+/**
+ * Apple's looping artist clip over the photograph (the phone's `PageBackground` plays it with
+ * `CanvasArtworkPlayer`; so does this, which on the PC is the cover clips' FFmpeg decoder,
+ * `DesktopCanvasVideo`, fetched once into the clip cache by `ForkClipSource`). Silent: the decoder
+ * reads only video. Nothing is drawn until its first frame, then it fades in over the photo, which
+ * stays underneath as the placeholder and as the fallback for a clip that won't play.
+ *
+ * Paused (the frame on screen held, nothing decoded) while the window is hidden or minimised or
+ * the player covers the page; gone with the page, or once the banner scrolls out of the list.
+ * From Desktop Revived fd030227 / e121ec86 / 8e6d093b / be875c9e's artist video, but the phone's
+ * behaviour, as the owner asked.
+ */
+@Composable
+private fun ForkArtistMotion(url: String, modifier: Modifier) {
+    val canvas = remember(url) { CanvasArtwork(url = url) }
+    CanvasArtworkPlayer(
+        canvas = canvas,
+        isPlaying = forkPageClipMayPlay(),
+        modifier = modifier,
+        frameCapturePx = 0,
+    )
+}
+
+/**
+ * Whether a page's clip (the artist banner, an album header's motion cover) may decode: the window
+ * shown and not minimised, and no player or Replay over the page ([ForkArtistHeader.covered]).
+ * Otherwise the clip holds its frame and nothing is decoded.
+ */
+@Composable
+internal fun forkPageClipMayPlay(): Boolean {
+    val shown by DesktopWindowVisibility.visible.collectAsState()
+    // As ForkMusicVideo asks: Compose has no "minimised" state to collect.
+    val notMinimised by produceState(true) {
+        while (true) {
+            value = runCatching {
+                java.awt.Frame.getFrames().any { it.isShowing && (it.extendedState and java.awt.Frame.ICONIFIED) == 0 }
+            }.getOrDefault(true)
+            delay(1_000)
+        }
+    }
+    return shown && notMinimised && !ForkArtistHeader.covered
 }
 
 /** On the artist page's root: the page in Apple's colour. */
@@ -164,6 +237,7 @@ internal fun ForkAppleArtistBanner(
         val logoMaxWidth = maxWidth * 0.6f
         DesktopArtwork(fallbackUrl, Modifier.matchParentSize(), px = HEADER_ART_PX)
         ForkLoadedImage(art.heroUrl, Modifier.matchParentSize(), ContentScale.Crop)
+        art.videoUrl?.let { ForkArtistMotion(it, Modifier.matchParentSize()) }
         Box(
             Modifier.matchParentSize().background(
                 Brush.verticalGradient(

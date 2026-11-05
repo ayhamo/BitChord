@@ -41,6 +41,9 @@ object LikeState {
         if (next != _overrides.value) _overrides.value = next
     }
 
+    /** Fork: replaces the overrides with [transform] of them (NavidromeStars: a server's full star listing, an account change). */
+    fun forkUpdate(transform: (Map<String, LikeStatus>) -> Map<String, LikeStatus>) { _overrides.value = transform(_overrides.value) } // fork
+
     fun clear() {
         _overrides.value = _overrides.value.filterKeys { it.startsWith("navidrome:") } // fork: was emptyMap(); a server's stars aren't the YouTube account's
     }

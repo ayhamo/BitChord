@@ -35,11 +35,25 @@ bool g_fullscreen_active = false;
 // The oversized monitor rectangle fullscreen is pinned to; WM_WINDOWPOSCHANGING forces every move
 // and resize back to it so nothing — AWT, the shell, the taskbar raising itself — can uncover it.
 RECT g_fullscreen_target{};
+// fork: the whole placement before fullscreen, maximized state and restore rectangle included
+// (Chromium's FullscreenHandler keeps the same). The rectangle alone was the maximized one: F11
+// from a maximized window came back as a floating window the size of the monitor, and Windows'
+// own restore rectangle had been overwritten by the pinned popup's.
+WINDOWPLACEMENT g_fullscreen_placement{sizeof(WINDOWPLACEMENT)};
 
 // Posted from Java to start a caption drag on the thread that owns the window; see frame_proc.
 constexpr UINT WM_BITCHORD_DRAG = WM_APP + 0x42;
-// SC_MOVE through the caption: the same move loop a real title bar starts.
-constexpr WPARAM SC_DRAGMOVE = SC_MOVE | HTCAPTION;
+
+/**
+ * lParam of a non-client mouse message: the cursor position, sixteen signed bits per axis, packed
+ * the way the system packs it. The move loop reads its starting point from here, so an inaccurate
+ * value makes the window jump under the pointer on the first move. (fork: PC-Continued 5b1b855c)
+ */
+LPARAM pack_cursor(POINT point) {
+    const auto x = static_cast<uint32_t>(static_cast<uint16_t>(point.x));
+    const auto y = static_cast<uint32_t>(static_cast<uint16_t>(point.y));
+    return static_cast<LPARAM>((y << 16) | x);
+}
 
 struct FindContext {
     const wchar_t* title;
@@ -77,22 +91,116 @@ int resize_border(HWND window, bool horizontal) {
     return frame + padding;
 }
 
+/** The oversized rectangle fullscreen pins the window to on the monitor it is on now. */
+bool fullscreen_target_for(HWND window, RECT* target) {
+    MONITORINFO monitor{sizeof(MONITORINFO)};
+    const HMONITOR handle = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+    if (handle == nullptr || GetMonitorInfoW(handle, &monitor) == FALSE) return false;
+    constexpr int OVERSHOOT = 8;
+    *target = RECT{
+        monitor.rcMonitor.left - OVERSHOOT,
+        monitor.rcMonitor.top - OVERSHOOT,
+        monitor.rcMonitor.right + OVERSHOOT,
+        monitor.rcMonitor.bottom + OVERSHOOT,
+    };
+    return true;
+}
+
+/** Above every window, the taskbar included, at the pinned rectangle. */
+void raise_fullscreen(HWND window) {
+    SetWindowPos(
+        window, HWND_TOPMOST,
+        g_fullscreen_target.left, g_fullscreen_target.top,
+        g_fullscreen_target.right - g_fullscreen_target.left,
+        g_fullscreen_target.bottom - g_fullscreen_target.top,
+        SWP_NOACTIVATE);
+}
+
+/**
+ * fork: out of the topmost band when another window takes over. Fullscreen used to stay topmost
+ * for good, so whatever Alt+Tab brought up opened underneath BitChord. Placed right under the
+ * window being activated (when it is an ordinary one) rather than at the top of the ordinary band,
+ * which would put BitChord over it again.
+ */
+void drop_topmost(HWND window, HWND activated) {
+    constexpr UINT flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
+    SetWindowPos(window, HWND_NOTOPMOST, 0, 0, 0, 0, flags);
+    HWND other = activated != nullptr ? activated : GetForegroundWindow();
+    if (other != nullptr) other = GetAncestor(other, GA_ROOT);
+    if (other != nullptr && other != window &&
+        (GetWindowLongPtrW(other, GWL_EXSTYLE) & WS_EX_TOPMOST) == 0) {
+        SetWindowPos(window, other, 0, 0, 0, 0, flags);
+    }
+}
+
+/**
+ * fork: a monitor unplugged, or its resolution or scale changed, while fullscreen: the pinned
+ * rectangle was the old monitor's, and WM_WINDOWPOSCHANGING kept the window on it (off-screen or
+ * part-covering). Worked out again from wherever the window now is.
+ */
+void refit_fullscreen(HWND window) {
+    RECT target{};
+    if (!fullscreen_target_for(window, &target) || EqualRect(&target, &g_fullscreen_target) != FALSE) return;
+    g_fullscreen_target = target;
+    SetWindowPos(
+        window, nullptr,
+        target.left, target.top, target.right - target.left, target.bottom - target.top,
+        SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+}
+
+LRESULT call_original(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    WNDPROC original = g_original_proc;
+    return original != nullptr
+        ? CallWindowProcW(original, window, message, wparam, lparam)
+        : DefWindowProcW(window, message, wparam, lparam);
+}
+
 LRESULT CALLBACK frame_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
     if (message == WM_NCCALCSIZE && wparam == TRUE) {
         // Keep the native overlapped-window styles but give the full surface to Compose. DWM still
         // owns the outer frame, shadow and transitions; only the standard caption is removed.
         if (IsZoomed(window)) {
             // A frameless client normally expands to the maximized window rectangle, which can
-            // extend a few pixels into a taskbar docked at the top of the monitor. Use the monitor
-            // work area for the client portion so the first row is never hidden behind the taskbar.
+            // extend a few pixels into a taskbar docked at the top of the monitor. fork: take the
+            // work area away from the proposed client rather than replacing it (PC-Continued
+            // 5b1b855c): a window snapped to half a monitor reads as zoomed too, and handing its
+            // narrow client the full work width is what made a snapped BitChord draw past its edge.
+            // fork: the monitor of the proposed rectangle, not of the window's current one. A
+            // maximized window moved (Win+Shift+Arrow) to another monitor is asked about its new
+            // place before it is there, and was clamped to the old monitor's work area.
+            auto* sizes = reinterpret_cast<NCCALCSIZE_PARAMS*>(lparam);
             MONITORINFO monitor{sizeof(MONITORINFO)};
-            const HMONITOR handle = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+            const HMONITOR handle = MonitorFromRect(&sizes->rgrc[0], MONITOR_DEFAULTTONEAREST);
             if (handle != nullptr && GetMonitorInfoW(handle, &monitor) != FALSE) {
-                auto* sizes = reinterpret_cast<NCCALCSIZE_PARAMS*>(lparam);
-                sizes->rgrc[0] = monitor.rcWork;
+                RECT clamped{};
+                if (IntersectRect(&clamped, &sizes->rgrc[0], &monitor.rcWork) != FALSE) {
+                    sizes->rgrc[0] = clamped;
+                }
             }
         }
         return 0;
+    }
+
+    if (message == WM_GETMINMAXINFO && lparam != 0 && !g_fullscreen_active) {
+        // fork: maximized to the work area, said outright. Without WS_CAPTION (install_frame,
+        // WM_STYLECHANGING) Windows maximizes the window over the whole monitor: the shell takes
+        // it for a full-screen app and hides the taskbar, and WM_NCCALCSIZE's work-area client
+        // left the taskbar's height at the bottom as an unpainted band. Relative to the monitor's
+        // origin, as MINMAXINFO wants; after AWT, whose own answer this replaces.
+        const LRESULT result = call_original(window, message, wparam, lparam);
+        MONITORINFO monitor{sizeof(MONITORINFO)};
+        const HMONITOR handle = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+        if (handle != nullptr && GetMonitorInfoW(handle, &monitor) != FALSE) {
+            auto* info = reinterpret_cast<MINMAXINFO*>(lparam);
+            const RECT& work = monitor.rcWork;
+            info->ptMaxPosition.x = work.left - monitor.rcMonitor.left;
+            info->ptMaxPosition.y = work.top - monitor.rcMonitor.top;
+            info->ptMaxSize.x = work.right - work.left;
+            info->ptMaxSize.y = work.bottom - work.top;
+            info->ptMaxTrackSize.x = std::max(info->ptMaxTrackSize.x, info->ptMaxSize.x);
+            info->ptMaxTrackSize.y = std::max(info->ptMaxTrackSize.y, info->ptMaxSize.y);
+        }
+        return result;
     }
 
     if (message == WM_STYLECHANGING && wparam == static_cast<WPARAM>(GWL_STYLE) && lparam != 0 &&
@@ -105,17 +213,45 @@ LRESULT CALLBACK frame_proc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
     }
 
     if (message == WM_WINDOWPOSCHANGING && g_fullscreen_active && lparam != 0) {
-        // While fullscreen, every attempted move or resize — AWT reasserting its own bounds, the
-        // taskbar raising itself, a focus change — is rewritten to the pinned, oversized monitor
-        // rectangle at the top of the z-order. This is what keeps the taskbar from peeking back.
+        // While fullscreen, every attempted move or resize — AWT reasserting its own bounds, a
+        // focus change — is rewritten to the pinned, oversized monitor rectangle. This is what
+        // keeps the taskbar from peeking back.
+        // fork: z-order is no longer forced here (WM_ACTIVATE below raises and lowers the window,
+        // so other apps can come in front), and minimizing is left alone: rewritten, a minimize
+        // moved the window straight back over the screen. Changes that neither move nor size
+        // (z-order, show, frame) pass as they are.
         auto* pos = reinterpret_cast<WINDOWPOS*>(lparam);
-        pos->hwndInsertAfter = HWND_TOPMOST;
-        pos->flags &= ~static_cast<UINT>(SWP_NOZORDER | SWP_NOMOVE | SWP_NOSIZE);
-        pos->x = g_fullscreen_target.left;
-        pos->y = g_fullscreen_target.top;
-        pos->cx = g_fullscreen_target.right - g_fullscreen_target.left;
-        pos->cy = g_fullscreen_target.bottom - g_fullscreen_target.top;
+        const bool minimizing = IsIconic(window) != FALSE ||
+            ((pos->flags & SWP_NOMOVE) == 0 && pos->x <= -32000 && pos->y <= -32000);
+        if (minimizing) return call_original(window, message, wparam, lparam);
+        constexpr UINT keep = SWP_NOMOVE | SWP_NOSIZE;
+        if ((pos->flags & keep) != keep) {
+            pos->flags &= ~keep;
+            pos->x = g_fullscreen_target.left;
+            pos->y = g_fullscreen_target.top;
+            pos->cx = g_fullscreen_target.right - g_fullscreen_target.left;
+            pos->cy = g_fullscreen_target.bottom - g_fullscreen_target.top;
+        }
         return 0;
+    }
+
+    if (message == WM_ACTIVATE && g_fullscreen_active) {
+        const LRESULT result = call_original(window, message, wparam, lparam);
+        if (g_fullscreen_active) {
+            if (LOWORD(wparam) == WA_INACTIVE) {
+                drop_topmost(window, reinterpret_cast<HWND>(lparam));
+            } else if (HIWORD(wparam) == 0 && IsIconic(window) == FALSE) {
+                raise_fullscreen(window);
+            }
+        }
+        return result;
+    }
+
+    if ((message == WM_DISPLAYCHANGE || message == WM_DPICHANGED || message == WM_SETTINGCHANGE) &&
+        g_fullscreen_active) {
+        const LRESULT result = call_original(window, message, wparam, lparam);
+        if (g_fullscreen_active && IsIconic(window) == FALSE) refit_fullscreen(window);
+        return result;
     }
 
     if (message == WM_NCHITTEST && !IsZoomed(window) && !g_fullscreen_active) {
@@ -141,14 +277,24 @@ LRESULT CALLBACK frame_proc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
     if (message == WM_BITCHORD_DRAG) {
         // Windows moves the window itself from here, as it does for a system caption: DWM slides
         // the composed surface, so nothing is exposed to be filled with the class brush (the white
-        // band an AWT setLocation per mouse event left along the edges), and Aero Snap and
-        // drag-to-restore come with it. The press that asked for this may already be over; a move
-        // loop started without the button down would follow the cursor until the next click.
+        // band an AWT setLocation per mouse event left along the edges). The press that asked for
+        // this may already be over; a move loop started without the button down would follow the
+        // cursor until the next click.
         const int primary = GetSystemMetrics(SM_SWAPBUTTON) ? VK_RBUTTON : VK_LBUTTON;
         if ((GetAsyncKeyState(primary) & 0x8000) == 0) return 0;
+        POINT start{};
+        if (GetCursorPos(&start) == FALSE) return 0;
         // AWT captured the mouse on the press; the move loop needs it back.
         ReleaseCapture();
-        DefWindowProcW(window, WM_SYSCOMMAND, SC_DRAGMOVE, 0);
+        // fork: WM_NCLBUTTONDOWN, not SC_MOVE | HTCAPTION (PC-Continued 5b1b855c). The system
+        // command slides the window with the pointer but never tells the shell a caption was
+        // grabbed, so edge, quarter and top-of-monitor snaps and the Windows 11 snap layouts
+        // never armed. This is the message a real title-bar press produces; it still restores a
+        // maximized window on drag. Handed to DefWindowProc rather than AWT; DefWindowProc acts on
+        // the HTCAPTION it is given, not on the style, so the missing WS_CAPTION (install_frame,
+        // WM_STYLECHANGING) does not matter. The SC_MOVE it sends back to itself does pass through
+        // this procedure and AWT's, which leave it to the default handling.
+        DefWindowProcW(window, WM_NCLBUTTONDOWN, HTCAPTION, pack_cursor(start));
         // The loop ate the release. AWT, and Compose behind it, still hold the press that started
         // the drag and would take the next one for part of it: a double click on the caption
         // never became one, and the first click anywhere after a drag went missing. Hand the
@@ -174,13 +320,30 @@ bool install_frame(HWND window) {
     if (window == nullptr) return false;
     if (window == g_window && g_original_proc != nullptr) return true;
 
+    // fork: AWT's procedure is recorded before frame_proc goes in. The window belongs to AWT's
+    // toolkit thread, not this one, so a message could reach frame_proc between the swap and the
+    // assignment after it, find no original and go to DefWindowProc, unseen by AWT.
+    const auto current = reinterpret_cast<WNDPROC>(GetWindowLongPtrW(window, GWLP_WNDPROC));
+    if (current == nullptr) return false;
+    if (current == frame_proc) {
+        // Already ours (a second install for the same window): only the bookkeeping is missing.
+        if (g_original_proc == nullptr) return false;
+        g_window = window;
+        return true;
+    }
+    g_original_proc = current;
+    g_window = window;
+
     SetLastError(0);
     auto previous = reinterpret_cast<WNDPROC>(
         SetWindowLongPtrW(window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(frame_proc)));
-    if (previous == nullptr && GetLastError() != 0) return false;
-
-    g_window = window;
-    g_original_proc = previous;
+    if (previous == nullptr && GetLastError() != 0) {
+        g_original_proc = nullptr;
+        g_window = nullptr;
+        return false;
+    }
+    // Someone subclassed it in the instant between the read and the swap: chain to theirs.
+    if (previous != current) g_original_proc = previous;
 
     LONG_PTR style = GetWindowLongPtrW(window, GWL_STYLE);
     style &= ~static_cast<LONG_PTR>(WS_POPUP);
@@ -262,19 +425,14 @@ bool set_fullscreen(HWND window, bool on) {
 
     if (on) {
         if (g_fullscreen_active) return true;
-        MONITORINFO monitor{sizeof(MONITORINFO)};
-        const HMONITOR handle = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
-        if (handle == nullptr || GetMonitorInfoW(handle, &monitor) == FALSE) return false;
+        RECT target{};
+        if (!fullscreen_target_for(window, &target)) return false;
 
         g_fullscreen_style = GetWindowLongPtrW(window, GWL_STYLE);
         if (GetWindowRect(window, &g_fullscreen_rect) == FALSE) return false;
-        constexpr int OVERSHOOT = 8;
-        g_fullscreen_target = RECT{
-            monitor.rcMonitor.left - OVERSHOOT,
-            monitor.rcMonitor.top - OVERSHOOT,
-            monitor.rcMonitor.right + OVERSHOOT,
-            monitor.rcMonitor.bottom + OVERSHOOT,
-        };
+        g_fullscreen_placement = WINDOWPLACEMENT{sizeof(WINDOWPLACEMENT)};
+        if (GetWindowPlacement(window, &g_fullscreen_placement) == FALSE) return false;
+        g_fullscreen_target = target;
 
         // Corners squared off and no extended frame: the material and the rounded-corner mask are
         // what left the see-through ring around the edges. The flag goes up first so the enabling
@@ -287,6 +445,8 @@ bool set_fullscreen(HWND window, bool on) {
         const MARGINS no_frame{0, 0, 0, 0};
         DwmExtendFrameIntoClientArea(window, &no_frame);
 
+        // WS_MAXIMIZE goes with the rest: the popup is a plain window pinned over the monitor,
+        // and the maximized state comes back from g_fullscreen_placement on the way out.
         SetWindowLongPtrW(window, GWL_STYLE, WS_POPUP | (g_fullscreen_style & WS_VISIBLE));
         SetWindowPos(
             window, HWND_TOPMOST,
@@ -304,13 +464,51 @@ bool set_fullscreen(HWND window, bool on) {
         window, static_cast<DWMWINDOWATTRIBUTE>(DWMWA_WINDOW_CORNER_PREFERENCE),
         &rounded, sizeof(rounded));
 
-    SetWindowLongPtrW(window, GWL_STYLE, g_fullscreen_style);
+    // fork: back through the saved placement (see g_fullscreen_placement). The style goes back
+    // without WS_MAXIMIZE / WS_MINIMIZE: with the bit already set, SetWindowPlacement takes the
+    // window for maximized and never sizes it; without it, it maximizes it properly and AWT, then
+    // DesktopWindowMode.adopt, hear of it.
+    const bool was_maximized = g_fullscreen_placement.showCmd == SW_SHOWMAXIMIZED ||
+        (g_fullscreen_style & WS_MAXIMIZE) != 0;
+    SetWindowLongPtrW(
+        window, GWL_STYLE, g_fullscreen_style & ~static_cast<LONG_PTR>(WS_MAXIMIZE | WS_MINIMIZE));
+    SetWindowPos(window, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    if (MonitorFromRect(&g_fullscreen_rect, MONITOR_DEFAULTTONULL) != nullptr && !was_maximized) {
+        // A floating window goes back to the exact rectangle it had, as before the placement fix:
+        // a window snapped to half or a quarter of the monitor keeps its snapped place, which the
+        // placement's rcNormalPosition (the size before the snap) would have undone.
+        SetWindowPos(
+            window, nullptr,
+            g_fullscreen_rect.left, g_fullscreen_rect.top,
+            g_fullscreen_rect.right - g_fullscreen_rect.left,
+            g_fullscreen_rect.bottom - g_fullscreen_rect.top,
+            SWP_NOZORDER | SWP_NOACTIVATE);
+    } else if (MonitorFromRect(&g_fullscreen_rect, MONITOR_DEFAULTTONULL) != nullptr) {
+        WINDOWPLACEMENT placement = g_fullscreen_placement;
+        placement.length = sizeof(WINDOWPLACEMENT);
+        placement.showCmd = was_maximized ? SW_SHOWMAXIMIZED : SW_SHOWNORMAL;
+        SetWindowPlacement(window, &placement);
+    } else {
+        // fork: the monitor it came from is gone. Its old size, centred on the nearest work area
+        // (in screen coordinates: rcNormalPosition is in workspace ones, only its size is used).
+        MONITORINFO monitor{sizeof(MONITORINFO)};
+        const HMONITOR nearest = MonitorFromRect(&g_fullscreen_rect, MONITOR_DEFAULTTONEAREST);
+        if (nearest != nullptr && GetMonitorInfoW(nearest, &monitor) != FALSE) {
+            const RECT& work = monitor.rcWork;
+            const RECT& normal = g_fullscreen_placement.rcNormalPosition;
+            const LONG width = std::min(normal.right - normal.left, work.right - work.left);
+            const LONG height = std::min(normal.bottom - normal.top, work.bottom - work.top);
+            SetWindowPos(
+                window, nullptr,
+                work.left + (work.right - work.left - width) / 2,
+                work.top + (work.bottom - work.top - height) / 2,
+                width, height, SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+        if (was_maximized) ShowWindow(window, SW_MAXIMIZE);
+    }
     SetWindowPos(
-        window, HWND_NOTOPMOST,
-        g_fullscreen_rect.left, g_fullscreen_rect.top,
-        g_fullscreen_rect.right - g_fullscreen_rect.left,
-        g_fullscreen_rect.bottom - g_fullscreen_rect.top,
-        SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+        window, nullptr, 0, 0, 0, 0,
+        SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
     // Hand the frame's own shadow margin and any material back; DesktopWindowBackdrop.apply()
     // re-asserts the chosen material over the top of this on the Kotlin side.
     const MARGINS shadow_frame{1, 1, 1, 1};

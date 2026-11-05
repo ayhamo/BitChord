@@ -1,28 +1,14 @@
 package com.music.bitchord.desktop
 
-import androidx.compose.foundation.Image
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import com.music.bitchord.data.model.Song
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
-import org.jetbrains.skia.ColorAlphaType
-import org.jetbrains.skia.Image
-import org.jetbrains.skia.ImageInfo
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
@@ -63,7 +49,7 @@ data class DesktopCanvasArtwork(
      */
     fun matches(wantTitle: String, wantArtist: String, wantAlbum: String?): Boolean {
         val titleOk = title == null || wantTitle.isBlank() ||
-            title.normalizeForCanvasMatch() == wantTitle.normalizeForCanvasMatch()
+            com.music.bitchord.data.canvas.titlesMatch(title, wantTitle) // fork: was normalizeForCanvasMatch() ==, "" == "" for non-Latin titles
         val wanted = splitCanvasArtists(wantArtist)
         val ours = splitCanvasArtists(artist.orEmpty())
         val artistOk = artist == null || wantArtist.isBlank() ||
@@ -263,82 +249,39 @@ internal object DesktopCanvasCache {
     }
 }
 
-/** The motion artwork, drawn as frames rather than played by a native child. */
+/**
+ * The motion artwork, drawn as frames rather than played by a native child (an album page's header).
+ *
+ * Fork: played through the shared [com.music.bitchord.ui.player.CanvasArtworkPlayer], which on the PC
+ * is [DesktopCanvasVideo], the player's own clip decoder. This used to run its own decode loop, which
+ * (a) never paused: it decoded 25-30 frames a second with the window minimised or hidden in the tray
+ * and under Now Playing / Replay, because nothing passed [isPlaying]; now it holds its frame then
+ * ([forkPageClipMayPlay], the artist banner's gates). (b) made three copies of every frame (the array,
+ * Skia's raster copy, the bitmap's) and closed none, several MB each at 30 fps, left to the collector;
+ * DesktopCanvasVideo draws from one bitmap and closes the ones gone by. (c) leaked the FFmpeg decoder
+ * and its file when the page closed while the clip was opening. The first-frame publish to
+ * DesktopCanvasBackdrop went with it: nothing reads that frame ([DesktopCanvasBackdrop.frameFor] has
+ * no caller). [contentScale] is kept for callers; the clip is cropped to fill, as it was by default.
+ */
 @Composable
 fun DesktopCanvasView(
     url: String,
     modifier: Modifier = Modifier,
     isPlaying: Boolean = true,
-    contentScale: ContentScale = ContentScale.Crop,
+    @Suppress("UNUSED_PARAMETER") contentScale: ContentScale = ContentScale.Crop,
     /** Tried once if [url] will not decode — the Apple provider's second rendition of the clip. */
     fallbackUrl: String? = null,
 ) {
-    var frame by remember(url) { mutableStateOf<ImageBitmap?>(null) }
-
-    LaunchedEffect(url, fallbackUrl, isPlaying) {
-        if (!isPlaying) return@LaunchedEffect
-        // Round and round until the track ends or the player is closed. A canvas is a few seconds
-        // long, so one pass through it is not the feature — and the decoder cannot be relied on to
-        // rewind itself: its own seek does not take on an HLS manifest, which is what Apple serves,
-        // and the clip then stopped dead on its last frame for the rest of the song.
-        while (isActive) {
-            val decoder = DesktopCanvasDecoder()
-            val opened = withContext(Dispatchers.IO) {
-                // fork: was a loop that streamed an HLS manifest from the network (a manifest can't be
-                // saved as one file); ForkClipSource saves the rendition's segments as one file instead.
-                ForkClipSource.open(decoder, listOfNotNull(url, fallbackUrl))
-            }
-            if (opened.isFailure) {
-                DesktopTrackLog.log("canvas: ${opened.exceptionOrNull()?.message}")
-                withContext(Dispatchers.IO) { decoder.close() }
-                return@LaunchedEffect
-            }
-            var shown = 0
-            try {
-                val pixels = ByteArray(decoder.width * decoder.height * 4)
-                val info = ImageInfo.makeN32(decoder.width, decoder.height, ColorAlphaType.OPAQUE)
-                while (isActive) {
-                    val started = System.currentTimeMillis()
-                    val decoded = withContext(Dispatchers.IO) { decoder.nextFrame(pixels) }
-                    if (!decoded) break
-                    shown++
-                    // `pixels` is handed to Skia rather than copied into it, so the array cannot be
-                    // the one the decoder writes the next frame into.
-                    val next = Image.makeRaster(info, pixels.copyOf(), decoder.width * 4).toComposeImageBitmap()
-                    frame = next
-                    // The backdrop reads the first frame and holds it: re-meshing every frame would
-                    // be a full resample twenty-five times a second for a wash nobody is watching
-                    // closely, and the clip's palette does not change much across it anyway.
-                    if (shown == 1) DesktopCanvasBackdrop.publish(url, next)
-                    val spent = System.currentTimeMillis() - started
-                    delay((decoder.frameIntervalMillis - spent).coerceAtLeast(0L))
-                }
-            } finally {
-                withContext(NonCancellable + Dispatchers.IO) { decoder.close() }
-            }
-            // A pass that drew nothing would spin: reopening cannot fix a clip that has no frames
-            // in it, and retrying immediately is a busy loop over the network.
-            if (shown == 0) {
-                DesktopTrackLog.log("canvas: the clip decoded no frames; not looping it")
-                return@LaunchedEffect
-            }
-        }
+    val canvas = remember(url, fallbackUrl) {
+        com.music.bitchord.data.canvas.CanvasArtwork(url = url, fallbackUrl = fallbackUrl)
     }
-
-    DisposableEffect(url) {
-        onDispose { DesktopCanvasBackdrop.clear(url) }
-    }
-
-    // Nothing at all until the first frame: a placeholder here would flash between the still cover
-    // and the clip on every track change.
-    frame?.let {
-        Image(
-            bitmap = it,
-            contentDescription = null,
-            contentScale = contentScale,
-            modifier = modifier,
-        )
-    }
+    val mayPlay = forkPageClipMayPlay()
+    com.music.bitchord.ui.player.CanvasArtworkPlayer(
+        canvas = canvas,
+        isPlaying = isPlaying && mayPlay,
+        modifier = modifier,
+        frameCapturePx = 0,
+    )
 }
 
 private const val DESKTOP_CANVAS_UA =

@@ -17,9 +17,14 @@ internal object ForkAtmos {
      */
     @Volatile var mixEngaged = false
 
-    /** Whether an immersive copy should be preferred right now. */
+    /**
+     * Whether an immersive copy should be preferred right now. The codec probe loads FFmpeg; a build
+     * or machine where it can't load answers "no" instead of failing the caller (module searches ask
+     * this for every request, and a thrown NoClassDefFoundError there emptied every module's results).
+     */
     fun wanted(): Boolean =
-        !mixEngaged && DesktopCodecs.supportsDolbyAtmos && DesktopAddonSettings.dolbyAtmosEnabled
+        !mixEngaged && DesktopAddonSettings.dolbyAtmosEnabled &&
+            runCatching { DesktopCodecs.supportsDolbyAtmos }.getOrDefault(false)
 
     /** Either flag: an addon states `atmos`, a module's E-AC-3 only shows in the codec it named. */
     fun isAtmos(stream: DesktopStream): Boolean = stream.isDolbyAtmos || stream.format.isDolbyAtmos

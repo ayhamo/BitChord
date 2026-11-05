@@ -266,14 +266,22 @@ internal fun ForkHandoffMenuRow(accent: Color, onPlayed: () -> Unit = {}) {
     if (!on || url.isBlank() || user.isBlank()) return
     val context = androidx.compose.ui.platform.LocalContext.current
     val none = stringResource(R.string.fork_handoff_none)
+    val unreachable = stringResource(R.string.fork_handoff_unreachable)
+    val failed = stringResource(R.string.fork_handoff_failed)
     ActionRow(
         icon = Icons.Rounded.Devices,
         label = stringResource(R.string.fork_handoff_menu),
         value = null,
         accent = accent,
     ) {
-        com.music.bitchord.fork.ForkHandoffPhone.restoreLatest { done ->
-            if (done) onPlayed() else android.widget.Toast.makeText(context, none, android.widget.Toast.LENGTH_SHORT).show()
+        com.music.bitchord.fork.ForkHandoffPhone.restoreLatest { outcome ->
+            val message = when (outcome) {
+                com.music.bitchord.fork.ForkHandoffPhone.Outcome.PLAYED -> null
+                com.music.bitchord.fork.ForkHandoffPhone.Outcome.NOTHING -> none
+                com.music.bitchord.fork.ForkHandoffPhone.Outcome.UNREACHABLE -> unreachable
+                com.music.bitchord.fork.ForkHandoffPhone.Outcome.FAILED -> failed
+            }
+            if (message == null) onPlayed() else android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 }
