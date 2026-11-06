@@ -83,41 +83,42 @@ internal object ForkNavidromeSettings {
 internal fun ForkNavidromeSettingsGroup() {
     val scrobble by ForkNavidromeSettings.scrobble.collectAsState()
     val homeShelves by ForkNavidromeSettings.homeShelves.collectAsState()
+    val url by com.music.bitchord.data.navidrome.NavidromeSettings.url.collectAsState()
+    val user by com.music.bitchord.data.navidrome.NavidromeSettings.username.collectAsState()
     SettingsGroup("Navidrome") {
-        SettingsToggle(
-            "Report plays to Navidrome",
-            "Your server shows what is playing, and counts songs played to the end",
-            scrobble,
-            ForkNavidromeSettings::setScrobble,
-        )
-        SettingsToggle(
-            "Navidrome on Home",
-            "Your server's albums and playlists above YouTube's feed",
-            homeShelves,
-            ForkNavidromeSettings::setHomeShelves,
-        )
-        // The phone's row, after "Navidrome on Home"; the same switch as the Navidrome page's.
-        val history by ForkYouTubeHistory.enabled.collectAsState()
-        SettingsToggle(
-            "Navidrome plays in YouTube history",
-            "Songs you play from your server count on YouTube Music too (signed in), so its recommendations learn from them",
-            history,
-            ForkNavidrome::setYouTubeHistory,
-        )
-        // The phone's row: a click moves to the next count offered.
-        val preload by ForkNavidromeSettings.preloadSongs.collectAsState()
-        val choices = ForkNavidromeSettings.PRELOAD_CHOICES
-        SettingsRow(
-            Icons.Rounded.FastForward,
-            "Pre-load next songs",
-            "Loads the next Navidrome songs in the queue to disk while one plays, so they start at once and keep playing if the network drops: " +
-                if (preload == 0) "Off" else "next $preload",
-        ) { ForkNavidromeSettings.setPreloadSongs(choices[(choices.indexOf(preload) + 1) % choices.size]) }
-        // Rides on the server: greyed (never hidden) while none is set up, the owner's rule for dependent rows.
-        val handoff by ForkHandoffDesktop.enabled.collectAsState()
-        val url by com.music.bitchord.data.navidrome.NavidromeSettings.url.collectAsState()
-        val user by com.music.bitchord.data.navidrome.NavidromeSettings.username.collectAsState()
-        ForkDisabledWhen(url.isBlank() || user.isBlank()) {
+        // Every row rides on the server: greyed (never hidden) while none is set up, as on the phone
+        // (the owner's rule for dependent rows).
+        ForkDisabledWhen(!com.music.bitchord.data.navidrome.NavidromeSettings.isConfigured(url, user)) {
+            SettingsToggle(
+                "Report plays to Navidrome",
+                "Your server shows what is playing, and counts songs played to the end",
+                scrobble,
+                ForkNavidromeSettings::setScrobble,
+            )
+            SettingsToggle(
+                "Navidrome on Home",
+                "Your server's albums and playlists above YouTube's feed",
+                homeShelves,
+                ForkNavidromeSettings::setHomeShelves,
+            )
+            // The phone's row, after "Navidrome on Home"; the same switch as the Navidrome page's.
+            val history by ForkYouTubeHistory.enabled.collectAsState()
+            SettingsToggle(
+                "Navidrome plays in YouTube history",
+                "Songs you play from your server count on YouTube Music too (signed in), so its recommendations learn from them",
+                history,
+                ForkNavidrome::setYouTubeHistory,
+            )
+            // The phone's row: a click moves to the next count offered.
+            val preload by ForkNavidromeSettings.preloadSongs.collectAsState()
+            val choices = ForkNavidromeSettings.PRELOAD_CHOICES
+            SettingsRow(
+                Icons.Rounded.FastForward,
+                "Pre-load next songs",
+                "Loads the next Navidrome songs in the queue to disk while one plays, so they start at once and keep playing if the network drops: " +
+                    if (preload == 0) "Off" else "next $preload",
+            ) { ForkNavidromeSettings.setPreloadSongs(choices[(choices.indexOf(preload) + 1) % choices.size]) }
+            val handoff by ForkHandoffDesktop.enabled.collectAsState()
             SettingsToggle(ForkHandoffDesktop.SETTING_TITLE, ForkHandoffDesktop.SETTING_SUBTITLE, handoff, ForkHandoffDesktop::setEnabled)
         }
     }

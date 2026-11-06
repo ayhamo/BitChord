@@ -100,4 +100,14 @@
     <string name="fork_handoff_setting">Continue on other devices</string>
     <string name="fork_handoff_setting_subtitle">Leaves your queue on your Navidrome server when you pause or leave the app, so the PC can pick it up at the same song and second</string>
     <string name="fork_download_stopped">Stopped by Android; tap to retry</string>
+    <string name="fork_hide_system_bars">Hide system bars</string>
+    <string name="fork_hide_system_bars_subtitle">Across the whole app; swipe from the edge to see them for a moment</string>
+    <string name="fork_hide_system_bars_none">None</string>
+    <string name="fork_hide_system_bars_all">All</string>
+    <string name="fork_hide_system_bars_top">Top</string>
+    <string name="fork_hide_system_bars_bottom">Bottom</string>
+    <string name="fork_unplayable_skipped">Skipped “%1$s”: this device can’t play %2$s</string>
+    <string name="fork_unplayable_skipped_many">Skipped %1$d songs: this device can’t play %2$s</string>
+    <string name="fork_unplayable_stopped">Can’t play “%1$s”: this device has no decoder for %2$s</string>
+    <string name="fork_unplayable_none">Nothing left in the queue that this device can play (%1$s)</string>
 </resources>

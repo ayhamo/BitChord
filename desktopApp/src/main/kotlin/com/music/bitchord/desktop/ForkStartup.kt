@@ -33,7 +33,9 @@ internal object ForkStartup {
     private val firstFrame = CompletableDeferred<Unit>()
 
     /** Called first in [main], so [mainAtMs] is the real entry time. */
-    fun mainEntered() = Unit
+    fun mainEntered() {
+        Thread(ForkAppCdsStamp::check, "BitChord-CdsStamp").apply { isDaemon = true; priority = Thread.MIN_PRIORITY }.start()
+    }
 
     fun markFirstFrame() {
         if (!firstFrame.complete(Unit)) return
@@ -69,4 +71,72 @@ internal fun ForkFirstFrameProbe() {
         withFrameNanos { }
         ForkStartup.markFirstFrame()
     }
+}
+
+/**
+ * Fork: keeps the AppCDS archive (`-XX:SharedArchiveFile=…\data\bitchord.jsa -XX:+AutoCreateSharedArchive`,
+ * written by `windowsPortable` into `BitChord.args`) in step with the app's jars.
+ *
+ * Measured 2026-11-06 (portable zip, same PC): first frame 1.65–1.8 s with the archive, 2.8–3.0 s
+ * when the JVM finds it out of date, 17.5–20.6 s on the one start that records a new one. An
+ * update replaces the jars, the JVM then rejects the archive ("timestamp has changed"), but it does
+ * not write a new one at exit while the old file is there (tried with the file writable too), so
+ * every start after an update would stay on the 3 s path. A stamp of the class path is kept
+ * beside the archive; when it differs, the archive is deleted, so the next start records a fresh
+ * one. A rejected archive is not mapped, so Windows lets it go; a valid one that is mapped (the
+ * first start with this code, before any stamp) refuses, which is right, and the stamp is written.
+ */
+internal object ForkAppCdsStamp {
+
+    fun check() {
+        runCatching {
+            val archive = java.lang.management.ManagementFactory.getRuntimeMXBean().inputArguments
+                .firstOrNull { it.startsWith(ARCHIVE_FLAG) }
+                ?.removePrefix(ARCHIVE_FLAG)
+                ?.let { java.io.File(it) }
+                ?: return
+            val stampFile = java.io.File(archive.parentFile, archive.name + ".stamp")
+            val current = classPathStamp()
+            val kept = runCatching { stampFile.readText() }.getOrNull()
+            if (kept == current) return
+            if (archive.exists()) {
+                archive.setWritable(true)
+                if (!archive.delete()) {
+                    // A valid archive is mapped by this JVM and can't go, which is right; but something else
+                    // (antivirus, the indexer) can hold a stale one too, and a stamp written now would keep it
+                    // for good. So the first failure only marks the stamp, the next start tries again, and a
+                    // second failure in a row takes the archive as in use.
+                    if (kept != current + RETRY) {
+                        stampFile.writeText(current + RETRY)
+                        DesktopTrackLog.log("startup: AppCDS archive could not be deleted, trying again next start")
+                        return
+                    }
+                    DesktopTrackLog.log("startup: AppCDS archive kept (in use)")
+                } else {
+                    DesktopTrackLog.log("startup: AppCDS archive out of date, deleted; the next start records a new one")
+                }
+            }
+            stampFile.writeText(current)
+        }.onFailure { DesktopTrackLog.log("startup: AppCDS stamp check failed: ${it.message}") }
+    }
+
+    /**
+     * The jars' names, sizes and times, what the JVM's own check compares, and the runtime: an archive
+     * from another JVM build is rejected too, and an update that only bumps the bundled runtime leaves
+     * the jars as they were.
+     */
+    private fun classPathStamp(): String {
+        val jars = System.getProperty("java.class.path").orEmpty()
+            .split(java.io.File.pathSeparator)
+            .filter { it.isNotBlank() }
+            .sorted()
+            .joinToString("\n") { path ->
+                val f = java.io.File(path)
+                "${f.name}:${f.length()}:${f.lastModified()}"
+            }
+        return "jvm:${System.getProperty("java.vm.version").orEmpty()}\n$jars"
+    }
+
+    private const val ARCHIVE_FLAG = "-XX:SharedArchiveFile="
+    private const val RETRY = "\nretry"
 }

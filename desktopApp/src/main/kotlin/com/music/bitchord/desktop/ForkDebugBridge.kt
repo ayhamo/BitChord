@@ -37,6 +37,7 @@ import kotlinx.serialization.json.putJsonArray
  *   the app's own client and login ([ForkHandoffStore.probe]: 4, 16, 64, 256 KB written to a
  *   separate playlist, each read back, the playlist deleted); JSON, no login in it
  * - `GET /handoff-note`: the "continue on the other device" note on the server, summarised
+ * - `POST /quit`: the tray's Quit, a normal JVM exit (AppCDS writes `data/bitchord.jsa` only then)
  */
 internal object ForkDebugBridge {
 
@@ -69,6 +70,14 @@ internal object ForkDebugBridge {
         server.createContext("/reload") { respond(it) { engine?.reloadCurrent(); "ok" } }
         server.createContext("/handoff-probe") { respond(it) { kotlinx.coroutines.runBlocking { com.music.bitchord.data.navidrome.ForkHandoffStore.probe() } } }
         server.createContext("/handoff-note") { respond(it) { kotlinx.coroutines.runBlocking { ForkHandoffDesktop.describe() } } }
+        server.createContext("/quit") { ex ->
+            respond(ex) {
+                // POST only: a page's <img> GET carries no Origin. The quit waits a moment so this reply is sent first.
+                require(ex.requestMethod == "POST") { "POST only" }
+                javax.swing.Timer(300) { DesktopTrayMenu.forkQuit() }.apply { isRepeats = false }.start()
+                "quitting"
+            }
+        }
         server.start()
         DesktopTrackLog.log("debug bridge on 127.0.0.1:$port")
     }

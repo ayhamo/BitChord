@@ -85,6 +85,9 @@ object ForkSettings {
         _downloadOnMobile.value = prefs.getBoolean(KEY_DOWNLOAD_ON_MOBILE, false)
         _preloadSongs.value = prefs.getInt(KEY_PRELOAD_SONGS, 0)
         _offlineMode.value = prefs.getBoolean(KEY_OFFLINE_MODE, false)
+        com.music.bitchord.ui.theme.ForkSystemBars.mode.value = prefs.getString(KEY_SYSTEM_BARS, null)
+            ?.let { saved -> com.music.bitchord.ui.theme.ForkSystemBars.Mode.entries.firstOrNull { it.name == saved } }
+            ?: com.music.bitchord.ui.theme.ForkSystemBars.Mode.NONE
         ForkYouTubeHistory.init(context)
         ForkNetwork.init(context)
         ForkQueues.init(context)
@@ -136,6 +139,12 @@ object ForkSettings {
     fun setPreloadSongs(value: Int) {
         _preloadSongs.value = value
         prefs.edit().putInt(KEY_PRELOAD_SONGS, value).apply()
+    }
+
+    /** "Hide system bars" (Settings > Appearance); see `ForkSystemBars`. */
+    fun setSystemBars(value: com.music.bitchord.ui.theme.ForkSystemBars.Mode) {
+        com.music.bitchord.ui.theme.ForkSystemBars.mode.value = value
+        prefs.edit().putString(KEY_SYSTEM_BARS, value.name).apply()
     }
 
     fun setOfflineMode(value: Boolean) {
@@ -226,6 +235,7 @@ object ForkSettings {
     private const val KEY_DOWNLOAD_ON_MOBILE = "download_on_mobile"
     private const val KEY_PRELOAD_SONGS = "preload_songs"
     private const val KEY_OFFLINE_MODE = "offline_mode"
+    private const val KEY_SYSTEM_BARS = "system_bars"
 
     const val DEFAULT_CLIP_CACHE_MB = 150
 

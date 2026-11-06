@@ -9,6 +9,7 @@ import com.music.bitchord.ui.components.ShelfRow
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.ui.input.key.isAltPressed
 import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isCtrlPressed // fork: F5 / Ctrl+R (ForkLibraryRefresh)
 import androidx.compose.ui.input.pointer.isBackPressed
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.PointerEventType
@@ -3287,6 +3288,7 @@ fun BitChordDesktopApp() {
                             DesktopWindowMode.toggle()
                             true
                         }
+                        ForkLibraryRefresh.isRefreshKey(event.key, event.isCtrlPressed, event.isMetaPressed, event.isAltPressed) -> { ForkLibraryRefresh.requestNow(); true } // fork: F5 / Ctrl+R refresh the library and sidebar playlists
                         event.key == Key.DirectionLeft && event.isAltPressed && !overlays.nowPlaying -> {
                             goBack()
                             true
@@ -4959,6 +4961,7 @@ private fun DesktopSidebar(
             Spacer(Modifier.height(6.dp))
             HorizontalDivider(color = desktopChromeDivider())
             Spacer(Modifier.height(12.dp))
+            ForkSidebarPlaylistsRefresh() // fork: ⟳ beside the playlists (ForkLibraryRefresh)
             val visibleAccount = accountPlaylists.filterNot { "account:${it.browseId}" in hiddenSidebar }
             val visibleLocal = localPlaylists.filterNot { "local:${it.id}" in hiddenSidebar }
             LazyColumn(
@@ -5738,7 +5741,7 @@ private data class DesktopNavEntry(
 ) {
     /** What makes two entries the same place: an album that paged in more tracks has not moved. */
     val key: List<Any?>
-        get() = listOf(destination, artist?.browseId, collection?.browseId, mood?.browseId, mood?.params, showAll?.title, replay, settings, forkShelfMore?.moreBrowseId, forkShelfMore?.moreParams) // fork: + forkShelfMore
+        get() = listOf(destination, artist?.browseId, collection?.browseId, mood?.browseId, mood?.params, showAll?.title, replay, settings, forkShelfMore?.moreBrowseId, forkShelfMore?.moreParams, forkShelfMore?.title) // fork: + forkShelfMore (title: shelves without a link have no id)
 }
 
 /** Deep enough for any way back anyone takes; the oldest fall off. */
@@ -7439,7 +7442,7 @@ private fun DesktopCollectionPage(
             if (collection.continuation != null) {
                 // Reaching this row is what asks for the next page, the way the home feed pages.
                 item(key = "collection-more") {
-                    LaunchedEffect(songs.size) { onLoadMore() }
+                    LaunchedEffect(songs.size, collection.forkSuggested.size) { onLoadMore() } // fork: + forkSuggested.size: a page that brought only suggestions asks on, as the phone's fillIn (stops on a page with nothing new)
                     Box(
                         Modifier.fillMaxWidth().height(72.dp),
                         contentAlignment = Alignment.Center,

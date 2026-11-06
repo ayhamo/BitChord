@@ -1011,6 +1011,7 @@ fun SettingsScreen(
                     modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 14.dp),
                 )
             }
+            forkSystemBarsRow() // fork: "Hide system bars", after Theme
             val fontTitle = stringResource(R.string.font)
             row(fontTitle, "typeface", "sf pro", "legacy") {
                 SettingsRow(
@@ -1632,6 +1633,7 @@ fun SettingsScreen(
                 )
             }
             val hideStatusBarTitle = stringResource(R.string.hide_status_bar_in_player)
+            forkDisabledWhen(forkStatusBarHiddenAppWide()) { // fork: greyed, not hidden, while "Hide system bars" hides the status bar everywhere
             row(hideStatusBarTitle, "status bar", "immersive", "fullscreen", "player") {
                 SettingsRow(
                     icon = SfIcons.WebAssetOff,
@@ -1646,6 +1648,7 @@ fun SettingsScreen(
                     onClick = { AppSettings.setHideStatusBarInPlayer(!hideStatusBarInPlayer) },
                 )
             }
+            } // fork
             val showQueueHistoryTitle = stringResource(R.string.show_queue_history)
             row(showQueueHistoryTitle, "player", "queue", "history", "previously played") {
                 SettingsRow(
