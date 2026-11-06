@@ -285,6 +285,8 @@ import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.LibraryPage
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.MoodGenre
+import com.music.bitchord.data.model.TopPick // fork: ForkTopPicks
+import com.music.bitchord.data.model.TopPickMood // fork
 import com.music.bitchord.data.model.MoodGenreSection
 import com.music.bitchord.data.model.PLAYER_ART_PX
 import com.music.bitchord.data.model.PlaylistPrivacy
@@ -879,6 +881,7 @@ fun BitChordDesktopApp() {
     /** A song played on its own — from a search row, a shelf card, history. */
     fun playSong(song: Song, startPlaying: Boolean = true, source: DesktopQueueSource? = null) {
         if (partyTrackChangeBlocked()) return
+        ForkTopPicks.cancelPending() // fork: a station still loading doesn't replace this
         val tapped = canonicalSong(song).withSource(source)
         val songs = if (DesktopListenTogether.state.value.inParty) {
             partyPlaybackQueue(tapped)
@@ -945,6 +948,7 @@ fun BitChordDesktopApp() {
     }
 
     fun playSongs(songs: List<Song>, startIndex: Int = 0, source: DesktopQueueSource? = null) {
+        ForkTopPicks.cancelPending() // fork: a station still loading doesn't replace this
         // A Spotify playlist's rows still being matched to YouTube Music, or with no match, have
         // nothing to play: they stay out of the queue, and the pick moves to the next playable row.
         val resolved = songs.withIndex().filterNot { it.value.isUnresolvedSpotify }
@@ -1075,8 +1079,18 @@ fun BitChordDesktopApp() {
     fun addToQueue(song: Song) = enqueue(song, next = false)
 
     /** Starts the station YouTube Music builds around one track. */
+    // fork: a Top Picks / Find Your Mood station replaces the queue, as the phone's openTopPick (ForkTopPicks)
+    fun forkPlayStation(songs: List<Song>) {
+        if (songs.isEmpty() || partyTrackChangeBlocked()) return
+        val station = songs.map { canonicalSong(it).asQueueEntry(QueueTier.CONTEXT) }
+        liveQueue = if (shuffle) DesktopQueue.shuffledStartingAt(station, 0) else DesktopQueue(station, 0)
+        preShuffleOrder = if (shuffle) station.map(DesktopQueue::orderKey) else emptyList()
+        playCurrent()
+    }
+
     fun startRadio(song: Song) {
         if (partyTrackChangeBlocked()) return
+        ForkTopPicks.cancelPending() // fork: a station still loading doesn't replace this
         val seed = canonicalSong(song).copy(radioName = song.title)
         scope.launch {
             // AutoPlay's section behind the seed, as the phone queues a station — which is also
@@ -2420,7 +2434,8 @@ fun BitChordDesktopApp() {
 
     /** The Library's folder rows: the two folders this computer has, and Spotify once connected. */
     val forkCachedShown by ForkCachedSongs.shown.collectAsState() // fork: Storage's "Show cached songs folder"
-    val libraryLinks = remember(spotifyCanvasCookie.isNotBlank(), forkCachedShown) { // fork: + forkCachedShown
+    val forkServerLinks = ForkLibraryLinks.links() // fork: the phone's Navidrome and Internet radio rows (ForkLibraryLinks)
+    val libraryLinks = remember(spotifyCanvasCookie.isNotBlank(), forkCachedShown, forkServerLinks) { // fork: + forkCachedShown, forkServerLinks
         listOfNotNull(
             LibraryLink(
                 item = ShelfItem(
@@ -2443,6 +2458,7 @@ fun BitChordDesktopApp() {
                 icon = Icons.Rounded.Folder,
             ),
             ForkCachedSongs.link(forkCachedShown), // fork: the phone's "Cached songs", after Local Music as there
+            *forkServerLinks.toTypedArray(), // fork: Navidrome, Internet radio, before Spotify as on the phone
             // As on the phone, only while signed in to Spotify in Account & integrations.
             LibraryLink(
                 item = ShelfItem(
@@ -2503,6 +2519,7 @@ fun BitChordDesktopApp() {
             browseId == LOCAL_DOWNLOADS_ID -> selectDestination(DesktopDestination.DOWNLOADS)
             browseId == LOCAL_MUSIC_ID -> selectDestination(DesktopDestination.LOCAL_MUSIC)
             browseId == ForkCachedSongs.BROWSE_ID -> selectDestination(DesktopDestination.CACHED_SONGS) // fork
+            ForkLibraryLinks.opens(browseId) -> selectDestination(DesktopDestination.NAVIDROME) // fork: the Navidrome / Internet radio rows (ForkLibraryLinks)
             browseId == SPOTIFY_LIBRARY_ID -> openSpotifyLibrary()
             // Spotify's tracks fill in below, as they are read and matched.
             browseId.startsWith(SPOTIFY_PAGE_PREFIX) -> showCollection(
@@ -2545,10 +2562,16 @@ fun BitChordDesktopApp() {
      * supplementary browse feeds, all asked for at once and laid down as each lands. Signed out
      * there is no Recently Played to ask for, which is also how the phone has it.
      */
+    // fork: Home's Top Picks row, built from the first page once it lands; nothing within the hour (ForkTopPicks)
+    fun forkLoadTopPicks() {
+        if (youtubeSourceEnabled) ForkTopPicks.load(scope, homeIdentity) { (withTimeoutOrNull(8_000L) { snapshotFlow { homeState }.first { it !is UiState.Loading } } as? UiState.Success)?.data.orEmpty() }
+    }
+
     fun loadHome() {
         ForkDesktopHome.load() // fork: Home's Navidrome and Spotify sections, YouTube or not
         if (!youtubeSourceEnabled) {
             homeState = UiState.Error("YouTube Music is disabled")
+            ForkTopPicks.clear() // fork: no Top Picks without YouTube
             return
         }
         val generation = ++homeGeneration
@@ -2560,6 +2583,7 @@ fun BitChordDesktopApp() {
         homeSeenTitles.clear()
         homeLoadingMore = false
         homeRecentsLoading = signedIn
+        forkLoadTopPicks() // fork: Home's Top Picks row (ForkTopPicks)
         scope.launch {
             launch {
                 DesktopSearchClient.home().fold(
@@ -4227,6 +4251,7 @@ fun BitChordDesktopApp() {
                             forkOpenArtist = ::openArtist, // fork
                             forkAddSuggested = { song -> openedCollection?.let { c -> ForkCollectionExtras.addSuggested(scope, c, song) { change -> openedCollection?.takeIf { it.browseId == c.browseId }?.let { openedCollection = change(it) } } } }, // fork
                         )
+                        destination == DesktopDestination.LISTEN_NOW && ForkTopPicks.isMoodsPage(forkShelfMore) -> ForkMoodsPage(forkShelfMore!!.title, sharedPagePadding) { mood, label -> ForkTopPicks.open(scope, ForkTopPicks.moodStation(mood), label, { openShelfItem(it) }, ::forkPlayStation, ::partyTrackChangeBlocked) } // fork: Find Your Mood's Show all (ForkTopPicks)
                         destination == DesktopDestination.LISTEN_NOW && forkShelfMore != null -> ForkCardMenuHost { forkCardMenu -> val forkGrid = rememberLazyGridState(); ForkScrollbarBox(forkGrid, Modifier.fillMaxSize(), sharedPagePadding) { ForkShelfMorePage( // fork: a Home shelf's See all (ForkShelfMore.kt)
                             shelf = forkShelfMore!!,
                             gridState = forkGrid,
@@ -4235,7 +4260,7 @@ fun BitChordDesktopApp() {
                             contentPadding = sharedPagePadding,
                             title = forkShelfMore!!.title,
                         ) } }
-                        destination == DesktopDestination.LISTEN_NOW -> ForkCardMenuHost { forkCardMenu -> ForkScrollbarBox(homeListState, Modifier.fillMaxSize(), sharedPagePadding) { HomeScreen( // fork: the overlay scrollbar (PC-Continued e16ed1f8); ForkCardMenuHost, a release card's right-click menu
+                        destination == DesktopDestination.LISTEN_NOW -> ForkCardMenuHost { forkCardMenu -> ForkTopPicksWhenStale(::forkLoadTopPicks); ForkScrollbarBox(homeListState, Modifier.fillMaxSize(), sharedPagePadding) { HomeScreen( // fork: the overlay scrollbar (PC-Continued e16ed1f8); ForkCardMenuHost, a release card's right-click menu
                             state = ForkDesktopHome.present(ForkContentPreferences.visible(homeState)), // fork: was homeState; the Navidrome / YouTube / Spotify sections; Content Preferences' Hide Recents / Hide videos
                             listState = homeListState,
                             onItemClick = { item, shelfTitle -> openShelfItem(item, shelfTitle) },
@@ -4251,6 +4276,13 @@ fun BitChordDesktopApp() {
                             onLoadMore = ::loadMoreHome,
                             loadingMore = homeLoadingMore,
                             recentlyPlayedLoading = ForkContentPreferences.recentsLoading(homeRecentsLoading), // fork: was homeRecentsLoading; no Recents skeleton under Hide Recents
+                            topPicks = ForkTopPicks.picks.collectAsState().value, // fork: Top Picks for You and Find Your Mood, as on the phone (ForkTopPicks)
+                            topPicksLoading = ForkTopPicks.loading.collectAsState().value, // fork
+                            listenerName = activeAccount?.name?.takeIf(String::isNotBlank), // fork
+                            onTopPickClick = { pick: TopPick, label: String -> ForkTopPicks.open(scope, pick, label, { openShelfItem(it) }, ::forkPlayStation, ::partyTrackChangeBlocked) }.takeUnless { ForkContentPreferences.hideTopPicks.collectAsState().value || !youtubeSourceEnabled }, // fork
+                            onTopPickLongPress = { pick: TopPick -> ForkTopPicks.menuItem(pick)?.let { if (ForkCollectionActions.hasMenu(it)) forkCardMenu(it) } }, // fork
+                            onMoodClick = { mood: TopPickMood, label: String -> ForkTopPicks.open(scope, ForkTopPicks.moodStation(mood), label, { openShelfItem(it) }, ::forkPlayStation, ::partyTrackChangeBlocked) }.takeUnless { ForkContentPreferences.hideHomeMoods.collectAsState().value || !youtubeSourceEnabled }, // fork: not without YouTube, whose playlists the moods are
+                            onMoodsShowAll = { forkShelfMore = ForkTopPicks.moodsPage(DesktopStrings["find_your_mood", "Find Your Mood"]) }, // fork
                             onShelfOpen = { shelf -> // fork: a heading's See all — the album / playlist / artist page itself, else the grid
                                 val more = shelf.moreBrowseId
                                 if (more != null && shelf.forkMoreOpensPage()) openShelfItem(ShelfItem(shelf.title, "", null, null, more))
@@ -8144,13 +8176,7 @@ internal fun SettingsGroup(title: String, content: @Composable () -> Unit) { // 
     // still left its 18dp behind and the surviving ones sat under a band of empty space.
     Column(if (visible) Modifier.padding(bottom = 20.dp) else Modifier) {
         if (visible) {
-            Text(
-                title.uppercase(),
-                color = DesktopSecondary,
-                style = MaterialTheme.typography.labelSmall,
-                // In line with the rows' own text, now that no card sets them in.
-                modifier = Modifier.padding(top = 10.dp, bottom = 4.dp),
-            )
+            ForkSettingsGroupTitle(title) // fork: a heading bigger than its rows (ForkSettingsGroupTitle); was a small grey all-caps label
         }
         Column {
             CompositionLocalProvider(

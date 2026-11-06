@@ -102,10 +102,10 @@ internal object ForkLibraryRefresh {
     }
 
     /** F5, or Ctrl+R (Cmd+R on a Mac), on key-up as the window's other shortcuts. */
-    fun isRefreshKey(key: androidx.compose.ui.input.key.Key, ctrl: Boolean, meta: Boolean, alt: Boolean = false): Boolean =
+    fun isRefreshKey(key: androidx.compose.ui.input.key.Key, ctrl: Boolean, meta: Boolean, alt: Boolean = false, mac: Boolean = DesktopPlatform.isMac): Boolean =
         key == androidx.compose.ui.input.key.Key.F5 ||
             // Not with Alt: Windows reports AltGr as Ctrl+Alt, and AltGr+R types a letter on some layouts.
-            (key == androidx.compose.ui.input.key.Key.R && !alt && (if (DesktopPlatform.isMac) meta else ctrl))
+            (key == androidx.compose.ui.input.key.Key.R && !alt && (if (mac) meta else ctrl))
 
     /** Asks for a refresh through [bump] (the app's own reload), quietly or with the spinner. */
     fun request(quietly: Boolean, bump: () -> Unit) {
@@ -143,7 +143,7 @@ internal fun ForkLibraryRefreshRow(bump: () -> Unit) {
 }
 
 /**
- * The sidebar's head of the playlists: a small "Playlists" label with ⟳ at its end, so a playlist
+ * The sidebar's head of the playlists: a small "YT Playlists" label with ⟳ at its end, so a playlist
  * made on the phone or in YouTube Music shows without opening the Library page (owner, offered
  * 2026-11-05). Greyed, not hidden, while YouTube isn't signed in.
  */
@@ -155,7 +155,7 @@ internal fun ForkSidebarPlaylistsRefresh() {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            DesktopStrings["playlists", "Playlists"],
+            "YT Playlists", // owner 2026-11-06: says whose playlists these are (YouTube's, not Navidrome's)
             Modifier.weight(1f),
             color = DesktopSecondary.copy(alpha = 0.68f),
             style = androidx.compose.material3.MaterialTheme.typography.labelMedium,

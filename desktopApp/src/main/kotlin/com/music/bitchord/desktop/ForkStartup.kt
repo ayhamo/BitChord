@@ -99,26 +99,33 @@ internal object ForkAppCdsStamp {
             val current = classPathStamp()
             val kept = runCatching { stampFile.readText() }.getOrNull()
             if (kept == current) return
-            if (archive.exists()) {
-                archive.setWritable(true)
-                if (!archive.delete()) {
-                    // A valid archive is mapped by this JVM and can't go, which is right; but something else
-                    // (antivirus, the indexer) can hold a stale one too, and a stamp written now would keep it
-                    // for good. So the first failure only marks the stamp, the next start tries again, and a
-                    // second failure in a row takes the archive as in use.
-                    if (kept != current + RETRY) {
-                        stampFile.writeText(current + RETRY)
-                        DesktopTrackLog.log("startup: AppCDS archive could not be deleted, trying again next start")
-                        return
-                    }
-                    DesktopTrackLog.log("startup: AppCDS archive kept (in use)")
-                } else {
-                    DesktopTrackLog.log("startup: AppCDS archive out of date, deleted; the next start records a new one")
-                }
+            val existed = archive.exists()
+            val deleted = existed && run { archive.setWritable(true); archive.delete() }
+            val next = stampAfter(kept, current, existed, deleted)
+            if (existed) {
+                DesktopTrackLog.log(
+                    when {
+                        deleted -> "startup: AppCDS archive out of date, deleted; the next start records a new one"
+                        next == current + RETRY -> "startup: AppCDS archive could not be deleted, trying again next start"
+                        else -> "startup: AppCDS archive kept (in use)"
+                    },
+                )
             }
-            stampFile.writeText(current)
+            stampFile.writeText(next)
         }.onFailure { DesktopTrackLog.log("startup: AppCDS stamp check failed: ${it.message}") }
     }
+
+    /**
+     * The stamp to write once [kept] (null: none yet) has been found to differ from [current] and the
+     * archive, if it [existed], was asked to go.
+     *
+     * A valid archive is mapped by this JVM and can't go, which is right; but something else
+     * (antivirus, the indexer) can hold a stale one too, and a stamp written now would keep it for
+     * good. So the first failure only marks the stamp ([RETRY]), the next start tries again, and a
+     * second failure in a row takes the archive as in use.
+     */
+    internal fun stampAfter(kept: String?, current: String, existed: Boolean, deleted: Boolean): String =
+        if (existed && !deleted && kept != current + RETRY) current + RETRY else current
 
     /**
      * The jars' names, sizes and times, what the JVM's own check compares, and the runtime: an archive
@@ -138,5 +145,5 @@ internal object ForkAppCdsStamp {
     }
 
     private const val ARCHIVE_FLAG = "-XX:SharedArchiveFile="
-    private const val RETRY = "\nretry"
+    internal const val RETRY = "\nretry"
 }

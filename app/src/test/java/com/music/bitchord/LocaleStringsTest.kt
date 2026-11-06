@@ -72,7 +72,7 @@ class LocaleStringsTest(private val tag: String) {
         val localeFile = File(resDir, "values-$qualifier/strings.xml")
         assertTrue("values-$qualifier/strings.xml must exist (for language tag $tag)", localeFile.exists())
 
-        val missingKeys = baseKeys - translatableKeys(parse(localeFile))
+        val missingKeys = baseKeys - translatableKeys(parse(localeFile)) - ForkLocaleGaps.upstreamUntranslated // fork: upstream's own untranslated keys (ForkLocaleGaps)
         assertTrue(
             "values-$qualifier/strings.xml (language $tag) is missing ${missingKeys.size} keys from values/strings.xml: $missingKeys",
             missingKeys.isEmpty(),

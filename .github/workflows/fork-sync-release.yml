@@ -101,12 +101,13 @@ jobs:
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "platforms;android-37.0" \
             "build-tools;35.0.0" "ndk;27.0.12077973" "cmake;3.22.1" > /dev/null
 
-      - name: fork tests
+      # Every phone and shared unit test (was the Navidrome tests and ModelsTest only): a failing
+      # test, upstream's or the fork's, stops the release before it is built.
+      - name: tests
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon -Pbitchord.bundleWear=false \
-            :app:testDevDebugUnitTest --tests 'com.music.bitchord.Navidrome*' \
-            :shared:jvmTest --tests 'com.music.bitchord.data.model.ModelsTest'
+          ./gradlew --no-daemon --continue -Pbitchord.bundleWear=false \
+            :app:testDevDebugUnitTest :shared:jvmTest
 
       - name: signed release build
         env:

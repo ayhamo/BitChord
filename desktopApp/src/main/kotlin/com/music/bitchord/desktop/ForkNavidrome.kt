@@ -380,7 +380,13 @@ internal fun ForkNavidromeScreen(
     var attempt by remember(saved) { mutableStateOf(0) }
     var songs by remember(saved) { mutableStateOf<List<Song>?>(null) }
     var failure by remember(saved) { mutableStateOf<String?>(null) }
-    var stations by remember(saved) { mutableStateOf(false) }
+    // The Library's Internet radio row opens this page on its stations: read at once, so the song list
+    // isn't drawn (and asked for) for a frame first, then cleared.
+    var stations by remember(saved) { mutableStateOf(ForkLibraryLinks.openStations.value) }
+    val openStations by ForkLibraryLinks.openStations.collectAsState()
+    LaunchedEffect(openStations) {
+        if (openStations) { stations = true; ForkLibraryLinks.openStations.value = false }
+    }
     val offline by ForkOffline.offline.collectAsState()
     LaunchedEffect(saved, attempt, offline) { // offline: the kept songs, back online: the library
         failure = null

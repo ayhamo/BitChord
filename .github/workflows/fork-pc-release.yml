@@ -24,6 +24,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Every PC unit test, before anything is built: a failing test stops the release. Built for
+      # Linux (docker/pc-test.sh) so FFmpeg's natives load in the container.
+      - name: PC tests
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD:/work" eclipse-temurin:21-jdk bash /work/docker/pc-test.sh
+          sudo chown -R "$(id -u):$(id -g)" .
+
       # Built in the same image as docker/pc-build.sh on the owner's machine, not on the runner: the
       # media keys code needs MinGW headers newer than Ubuntu 24.04's.
       - name: build the zip
