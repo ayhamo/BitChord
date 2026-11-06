@@ -148,31 +148,27 @@ internal fun LazyListScope.forkHomeHeading(section: ForkHomeSection) {
 
 /**
  * Upstream's feed, drawn by [draw], section by section under the headings, or
- * whole with no sections. Only the first open section leads with the big cards
- * ([leadHero]); the rest keep ordinary ones. [draw] gets the section's shelves,
- * whether they lead, and a prefix for their keys (the sections share one list).
- * A failed YouTube feed says so where its shelves would be, with [onRetry].
+ * whole with no sections. [draw] gets the section's shelves and a prefix for
+ * their keys (the sections share one list). A failed YouTube feed says so where
+ * its shelves would be, with [onRetry]. (Upstream's big lead card went in v1.9.1, and
+ * with it the fork's choice of which section leads with it.)
  */
 internal fun LazyListScope.forkHomeFeed(
     state: ForkHomeState,
     shelves: List<HomeShelf>,
-    leadHero: Boolean,
-    recentsLoading: Boolean,
     onRetry: () -> Unit,
-    draw: LazyListScope.(List<HomeShelf>, Boolean, String) -> Unit,
+    draw: LazyListScope.(List<HomeShelf>, String) -> Unit,
 ) {
     val error = state.errorOf(shelves)
     val sections = state.sections(shelves)
     if (sections == null) {
-        draw(shelves, leadHero && !recentsLoading, "")
+        draw(shelves, "")
         if (error != null) forkHomeError(error, onRetry)
         return
     }
-    val firstOpen = sections.indexOfFirst { it.open }
-    sections.forEachIndexed { index, section ->
+    sections.forEach { section ->
         forkHomeHeading(section)
-        // "Recently played" lands in the YouTube section, so only that section waits for it to be the hero.
-        if (section.open) draw(section.shelves, index == firstOpen && leadHero && (section.key != "youtube" || !recentsLoading), section.key + ":")
+        if (section.open) draw(section.shelves, section.key + ":")
         if (section.open && section.key == "youtube" && error != null) forkHomeError(error, onRetry)
     }
 }

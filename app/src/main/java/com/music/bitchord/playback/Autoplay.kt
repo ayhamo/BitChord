@@ -107,8 +107,9 @@ suspend fun loadAutoplayTracks(
     // fork: a Navidrome song's AutoPlay comes from the same library, not a YouTube radio
     val forkServerSong = com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(seedSong.videoId)
     val seed = if (forkServerSong) seedSong.videoId else youtubeSeedFor(seedSong) ?: return Result.success(emptyList())
-    // A music video plays on with music videos, as YouTube Music does.
-    val videos = !forkServerSong && seedSong.isVideo && seed == seedSong.videoId
+    // A music video plays on with music videos, as YouTube Music does — unless
+    // they would only be converted again, when the station's songs are the answer.
+    val videos = !forkServerSong && seedSong.isVideo && seed == seedSong.videoId && !MusicOnlyPlayback.isActive()
     val related = (if (forkServerSong) com.music.bitchord.data.navidrome.NavidromeRepository.related(seedSong) else YtMusicRepository.radio(seed, preferVideo = videos)).getOrElse { return Result.failure(it) }
     val extra = QueueBuilder.extend(existing, related, limit, preferVideos = videos)
     if (extra.isEmpty()) return Result.success(emptyList())

@@ -699,8 +699,7 @@ fun BitChordDesktopApp() {
     var dolbyAtmos by remember { mutableStateOf(persistence.boolean("dolby_atmos", true)) }
     var skipSilence by remember { mutableStateOf(persistence.boolean("skip_silence", false)) }
     var outputPrecision by remember { mutableStateOf(persistence.string("output_precision", "PCM_16")) }
-    // The blob backdrop the mesh replaced, kept as an opt-out.
-    var legacyMeshGradient by remember { mutableStateOf(persistence.boolean("legacy_mesh_gradient", false)) }
+    // fork: the blob backdrop's switch became v1.9.1's Player theme (ForkPlayerTheme)
     var animatedCanvas by remember { mutableStateOf(persistence.boolean("animated_canvas", true)) }
     var spotifyCanvasCookie by remember { mutableStateOf(DesktopSpotifyToken.cookie()) }
     // Held here rather than by the Integrations page, so leaving the page does not close the
@@ -3114,7 +3113,6 @@ fun BitChordDesktopApp() {
         DesktopPlayerSettings.fullBleedArtwork.value = fullBleedArtwork
         ForkPlayerMenu.onFullBleedChange = { fullBleedArtwork = it; persistence.saveBoolean("full_bleed_artwork", it) } // fork: the menu's row
         ForkPlayerSettings.sync(audioQuality, playback) // fork: the stream ceiling and the quality-upgrade mark (ForkPlayerSettings.kt)
-        DesktopPlayerSettings.legacyMeshGradient.value = legacyMeshGradient
         DesktopPlayerSettings.lyricsBlur.value = lyricsBlur
         DesktopPlayerSettings.syncedLyrics.value = syncedLyrics
         DesktopPlayerSettings.showNerdStats.value = showNerdStats
@@ -3976,11 +3974,6 @@ fun BitChordDesktopApp() {
                                         fullBleedArtwork = it
                                         persistence.saveBoolean("full_bleed_artwork", it)
                                     },
-                                    legacyMeshGradient = legacyMeshGradient,
-                                    onLegacyMeshGradientChange = {
-                                        legacyMeshGradient = it
-                                        persistence.saveBoolean("legacy_mesh_gradient", it)
-                                    },
                                     spatialAudio = spatialAudio,
                                     onSpatialAudioChange = {
                                         spatialAudio = it
@@ -4249,7 +4242,6 @@ fun BitChordDesktopApp() {
                             onLoadMore = ::loadMoreHome,
                             loadingMore = homeLoadingMore,
                             recentlyPlayedLoading = homeRecentsLoading,
-                            leadHero = false,
                             onShelfOpen = { shelf -> // fork: a heading's See all — the album / playlist / artist page itself, else the grid
                                 val more = shelf.moreBrowseId
                                 if (more != null && shelf.forkMoreOpensPage()) openShelfItem(ShelfItem(shelf.title, "", null, null, more))
@@ -6110,8 +6102,6 @@ private fun DesktopSettingsScreen(
     onShowNerdStatsChange: (Boolean) -> Unit,
     fullBleedArtwork: Boolean,
     onFullBleedArtworkChange: (Boolean) -> Unit,
-    legacyMeshGradient: Boolean,
-    onLegacyMeshGradientChange: (Boolean) -> Unit,
     trayIconEnabled: Boolean,
     closeToTray: Boolean,
     onCloseToTrayChange: (Boolean) -> Unit,
@@ -6607,12 +6597,8 @@ private fun DesktopSettingsScreen(
                         onFullBleedArtworkChange,
                     )
                     ForkWidePlayerLayoutRow() // fork: Classic / Halves / Halves, smaller cover
-                    SettingsToggle(
-                        DesktopStrings["legacy_mesh_gradient", "Legacy mesh gradient"],
-                        DesktopStrings["d_use_the_older_blob_backdrop_behind_the_player", "Use the older blob backdrop behind the player"],
-                        legacyMeshGradient,
-                        onLegacyMeshGradientChange,
-                    )
+                    ForkPlayerThemeRow() // fork: v1.9.1's Player theme, in place of Legacy mesh gradient
+                    ForkDisableBlendRow() // fork: v1.9.1's Disable blend effects
                     ForkBackdropPulseRow() // fork: Backdrop pulse (ForkBackdropPulseMeter)
                     SettingsToggle(
                         DesktopStrings["d_animated_canvas", "Animated canvas"],

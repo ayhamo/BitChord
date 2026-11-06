@@ -47,7 +47,10 @@ internal data class DesktopAddonManifest(
      * reads `checkValidLossless`; the desktop app deliberately does not.)
      */
     @SerialName("allowDownloads") val allowDownloads: JsonElement? = null,
+    @SerialName("bitchordAuth") val bitchordAuth: JsonElement? = null, // fork: v1.9.1 addon verification (ForkAddonAuthGate)
 ) {
+    val requiresBitChordAuth: Boolean get() = bitchordAuth.asFlag() ?: false // fork
+
     val downloadsAllowed: Boolean get() = allowDownloads.asFlag() ?: true
 
     fun declares(resource: String): Boolean = resources.any { it.equals(resource, ignoreCase = true) }
@@ -282,6 +285,7 @@ internal class DesktopAddonClient(rawBaseUrl: String) {
                 val declared = manifest.resources.joinToString(", ")
                 throw DesktopAddonException("This addon declares $declared — BitChord needs search")
             }
+            if (manifest.requiresBitChordAuth) ForkAddonAuthGate.refuse(baseUrl) // fork
             manifest
         }.recoverCatching { failure ->
             // A manifest 404 is not "no such track", it is "no addon here".
@@ -397,6 +401,7 @@ internal class DesktopAddonClient(rawBaseUrl: String) {
     private suspend fun body(url: String): String = withContext(Dispatchers.IO) {
         var attempt = 0
         while (true) {
+            if (url != manifestUrl(baseUrl) && ForkAddonAuthGate.refused(baseUrl)) throw ForkAddonAuthRefused() // fork: no request it would refuse
             (quietUntilMs - System.currentTimeMillis()).takeIf { it > 0 }?.let { delay(it) }
 
             val response = http.get(url) {
@@ -407,6 +412,7 @@ internal class DesktopAddonClient(rawBaseUrl: String) {
             val wait = when {
                 code in 200..299 -> return@withContext response.bodyAsText().takeIf { it.isNotBlank() }
                     ?: throw DesktopAddonException("Empty response")
+                ForkAddonAuthGate.isChallenge(code, response.headers["WWW-Authenticate"]) -> { ForkAddonAuthGate.refuse(baseUrl); throw ForkAddonAuthRefused() } // fork
                 code == 404 -> throw DesktopAddonNotFound()
                 code >= 500 -> throw DesktopAddonUnavailable("HTTP $code")
                 code != 429 -> throw DesktopAddonException("HTTP $code")
@@ -583,6 +589,7 @@ internal object DesktopAddonSource {
         return addon.manifest().fold(
             onSuccess = { manifest ->
                 record(config, manifest)
+                if (ForkAddonAuthGate.refused(addon.baseUrl)) return@fold Result.failure(ForkAddonAuthRefused()) // fork: say why instead of "ready"
                 Result.success(
                     listOfNotNull(
                         manifest.displayName.takeIf { it.isNotBlank() },
@@ -591,7 +598,7 @@ internal object DesktopAddonSource {
                 )
             },
             onFailure = { failure ->
-                if (addon.probeSearch().isSuccess) {
+                if (failure !is ForkAddonAuthRefused && addon.probeSearch().isSuccess) { // fork: the first condition
                     Result.success("No manifest · search works")
                 } else {
                     Result.failure(failure)
