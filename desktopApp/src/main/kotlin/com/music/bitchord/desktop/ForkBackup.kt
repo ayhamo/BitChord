@@ -206,6 +206,9 @@ internal object ForkBackup {
         bool("dont_repeat_suggestions"),
         bool("filter_non_music_audio").defaults(pc = false, phone = true), bool("full_bleed_artwork").defaults(pc = false, phone = true),
         bool("hide_song_status"), bool("hide_volume_bar"), bool("legacy_mesh_gradient"),
+        // v1.9.1: Player theme / Disable blend effects (ForkPlayerTheme), Content Preferences (ForkContentPreferences); the phone's keys
+        named("player_theme", "player_theme", listOf("DEFAULT", "LEGACY", "SIMPLE")), bool("disable_blend_effects"),
+        bool("hide_recents"), bool("hide_home_videos"), bool("square_video_thumbnails"), bool("prefer_music_only"),
         bool("loudness_normalization"), bool("lyrics_blur"), int("lyrics_offset_ms"), float("playback_speed", range = 0.25f..4f),
         bool(ForkArtistGenres.KEY_ENABLED), // "Work out genres" (ForkArtistGenres)
         bool("sync_downloaded_playlists"), // "Keep playlists updated" (ForkPlaylistSync), the phone's own key

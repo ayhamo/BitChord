@@ -62,6 +62,7 @@ internal object DesktopPlayerHost : PlayerHost {
 
     override val musicVideoSupported: Boolean get() = ForkMusicVideo.supported // fork: music videos, opt-in (ForkMusicVideo)
     @Composable override fun MusicVideo(videoId: String, fit: Boolean, onRenderedChanged: (Boolean) -> Unit, modifier: Modifier) = ForkMusicVideoSurface(videoId, fit, onRenderedChanged, modifier) // fork
+    override fun showsMusicVideoPicture(videoId: String): Boolean = ForkMusicOnly.showsPicture(videoId) // fork: v1.9.1's Prefer music-only version, a video heard as audio shows its artwork (ForkMusicOnly)
     override val musicVideoAspect: StateFlow<Float> get() = ForkMusicVideo.aspect // fork
     override val musicVideoQuality: StateFlow<com.music.bitchord.ui.player.MusicVideoQualityUi> get() = ForkMusicVideo.quality // fork
     override fun setMusicVideoQuality(height: Int?) = ForkMusicVideo.setQuality(height) // fork
@@ -201,7 +202,7 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
         runCatching { LastPlayerScreen.valueOf(persistence.string(KEY_LAST_SCREEN, "MAIN")) }
             .getOrDefault(LastPlayerScreen.MAIN),
     )
-    override val legacyMeshGradient = MutableStateFlow(false)
+    override val playerTheme: StateFlow<com.music.bitchord.data.settings.PlayerTheme> get() = ForkPlayerTheme.theme // fork: v1.9.1's Player theme, replacing legacyMeshGradient
     override val lyricsBlur = MutableStateFlow(true)
     override val lyricsOffsetMs = MutableStateFlow(
         persistence.int(KEY_LYRICS_OFFSET, 0).coerceIn(MIN_LYRICS_OFFSET_MS, MAX_LYRICS_OFFSET_MS),
@@ -214,6 +215,7 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
     override val prioritizeSpotifyCanvas: StateFlow<Boolean> get() = ForkSpotifyCanvasFirst.prioritized // fork: was MutableStateFlow(false); its row under Spotify Canvas setup
     override val reduceAnimation: StateFlow<Boolean> get() = DesktopAppearanceSettings.reduceAnimation // fork: was MutableStateFlow(false)
     override val reduceDynamicBlur: StateFlow<Boolean> get() = DesktopAppearanceSettings.reduceDynamicBlur // fork: was MutableStateFlow(false), so the row did nothing
+    override val disableBlendEffects: StateFlow<Boolean> get() = ForkPlayerTheme.disableBlend // fork: v1.9.1's switch (ForkPlayerTheme)
     override val showNerdStats = MutableStateFlow(false)
     override val smartAnalysis = MutableStateFlow(SmartAnalysis())
     override val smartFadeEnabled = MutableStateFlow(false)
@@ -228,11 +230,18 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
     override val automixDetail = MutableStateFlow<String?>(null)
     override val smartMixView = MutableStateFlow<com.music.bitchord.data.settings.MixTransitionView?>(null)
     override val smartMixProgress = MutableStateFlow(0f)
+    // fork: v1.9.1's Automix overview (the mix popup opened between blends). The phone's
+    // CrossfadeController lays out the next planned transition while the popup is open; on the PC
+    // the engine does, from its own plan tick (ForkMixPreview, ForkAutomixPreview.kt).
+    override val smartMixPreview = MutableStateFlow<com.music.bitchord.data.settings.MixTransitionView?>(null)
+    val mixViewOpen = MutableStateFlow(false) // fork
     override val smartTransitionWindow = MutableStateFlow<TransitionWindow?>(null)
     override val spotifyCanvasAutoHide: StateFlow<Boolean> get() = ForkPlayerSettings.spotifyCanvasAutoHide // fork: was true, then false; its row, off by default as the phone's fork has it
     override val syncedLyrics = MutableStateFlow(true)
     override val translationLanguage: StateFlow<String> get() = ForkPlayerSettings.translationLanguage // fork: was MutableStateFlow(""), so the row did nothing
     override val versionAlignmentInProgress = MutableStateFlow(false)
+
+    override fun setMixViewOpen(open: Boolean) { mixViewOpen.value = open } // fork: v1.9.1
 
     override fun setLastPlayerScreen(value: LastPlayerScreen) {
         lastPlayerScreen.value = value

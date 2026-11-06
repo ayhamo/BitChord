@@ -227,6 +227,7 @@ class DesktopPlaybackEngine(
     // fork: before [thread], which starts in this initializer and reads it on its first step; declared
     // further down it was still null then ("audio thread recovered from: … forkReport is null" at startup)
     private val forkReport = ForkAutomixReporter()
+    private val forkPreview = ForkMixPreview() // fork: v1.9.1's Automix overview between blends (ForkAutomixPreview.kt), before [thread] for the same reason
 
     private val thread = Thread(::pump, "BitChord-Audio").apply {
         isDaemon = true
@@ -294,6 +295,7 @@ class DesktopPlaybackEngine(
     ) {
         if (forkGeneration != forkLoadGeneration.get()) return
         resolveJob = scope.launch {
+            ForkMusicOnly.convertedForLoad(song)?.let { audio -> ForkMusicOnly.loadConverted(this@DesktopPlaybackEngine, song, audio, playWhenReady, startAtMs); return@launch } // fork: Prefer music-only version, a music video waits for its audio version and that loads instead
             // Only when the file is really there: a download record can outlive the file it names,
             // and handing the decoder a path that is not there fails as "could not open stream"
             // with nothing to say why. A missing one falls through to the sources instead.
@@ -305,8 +307,8 @@ class DesktopPlaybackEngine(
             val resolved = localUrl?.let { Result.success(DesktopLiveResolution(DesktopStream(it))) }
                 ?: DesktopMusicSources.resolveLive(song, audioQuality, excludedSourceId)
             resolved.fold(
-                onSuccess = { live ->
-                    val opened = openTrack(song, live.stream, startAtMs)
+                onSuccess = { forkAsked ->
+                    val (live, opened) = forkCheckedOpen(song, forkAsked, startAtMs) // fork: was openTrack; a stand-in copy of the wrong length goes back to YouTube (ForkDirectSourceCheck)
                     opened.fold(
                         onSuccess = { track ->
                             searchingBetterFor = song.videoId.takeIf { live.pendingSubstitute != null }
@@ -326,6 +328,32 @@ class DesktopPlaybackEngine(
                 },
             )
         }
+    }
+
+    /**
+     * fork: [openTrack], then upstream v1.9.1's decoded-length check (the phone's
+     * `PlaybackService.checkSubstituteLength`, 94250cce): a copy another source played in YouTube's
+     * place that decodes outside the "Track length tolerance" (an addon's preview, another cut) is
+     * closed, its source refused for the song, and YouTube's own audio opened from the top instead.
+     */
+    private suspend fun forkCheckedOpen(
+        song: Song,
+        live: DesktopLiveResolution,
+        startAtMs: Long,
+        forkInstantOnly: Boolean = false,
+    ): Pair<DesktopLiveResolution, Result<Track>> {
+        val opened = openTrack(song, live.stream, startAtMs, forkInstantOnly)
+        val track = opened.getOrNull() ?: return live to opened
+        if (!ForkDirectSourceCheck.wrongLength(song, live.stream, track.decoder.durationUs)) return live to opened
+        track.decoder.close()
+        live.pendingSubstitute?.cancel()
+        live.stream.sourceId?.let { refusedSources[song.videoId] = it }
+        val youtube = DesktopSourceRegistry.resolve(song, audioQuality, excludedSourceId = live.stream.sourceId, forkPin = "youtube").getOrElse {
+            if (it is kotlinx.coroutines.CancellationException) throw it // a newer load or skip took over: no retry of this song
+            return live to Result.failure(it)
+        }
+        val fallback = DesktopLiveResolution(youtube)
+        return fallback to openTrack(song, youtube, 0L, forkInstantOnly)
     }
 
     /** Opens a decoder on [stream], off the audio thread. */
@@ -593,9 +621,11 @@ class DesktopPlaybackEngine(
             if (displaySwitched || forkSkipTicket != null) { // fork: a skip's deck is on its way, and this would open another
                 deferredNext = song
                 hasDeferredNext = true
+                ForkMusicOnly.noteNext(song) // fork: what the window asked for, should the setting change meanwhile
                 return
             }
         }
+        if (ForkMusicOnly.holdsNext(song, this)) { nextResolveJob?.cancel(); clearUpcoming(); return } // fork: Prefer music-only version, a next music video is not read ahead until it is converted (before the keep check, so a video already prepared is dropped)
         if (forkKeepsPreparedNext(song)) return // fork (Desktop Revived d77475ba)
         nextResolveJob?.cancel()
         clearUpcoming()
@@ -649,8 +679,9 @@ class DesktopPlaybackEngine(
                 else -> DesktopMusicSources.resolve(song, audioQuality).map { DesktopLiveResolution(it) }
             }
             resolved.fold(
-                onSuccess = { live ->
-                    openTrack(song, live.stream, startAtMs = 0, forkInstantOnly = instantOnly).fold( // fork
+                onSuccess = { forkAsked ->
+                    val (live, forkOpened) = forkCheckedOpen(song, forkAsked, startAtMs = 0, forkInstantOnly = instantOnly) // fork: was openTrack; see ForkDirectSourceCheck
+                    forkOpened.fold( // fork
                         onSuccess = { track ->
                             // A newer [prepareNext] may have asked for another track while this one
                             // was resolving.
@@ -2084,6 +2115,7 @@ class DesktopPlaybackEngine(
             val plan = transitionPlan(track, held, nextMs, positionMs, duration)
             publishTransitionWindow(track, plan, duration)
             forkMarkSeam(plan, held, positionMs, duration) // fork
+            forkPlanned(track, held, nextMs, plan, duration) // fork: the mix popup's preview (ForkMixPreview)
             armAddonUpcoming(held, plan, positionMs, duration)
             return
         }
@@ -2094,6 +2126,7 @@ class DesktopPlaybackEngine(
         val plan = transitionPlan(track, incoming.song, (incoming.decoder.durationUs ?: 0L) / 1_000, positionMs, duration)
         publishTransitionWindow(track, plan, duration)
         forkMarkSeam(plan, incoming.song, positionMs, duration) // fork
+        forkPlanned(track, incoming.song, (incoming.decoder.durationUs ?: 0L) / 1_000, plan, duration) // fork: the mix popup's preview (ForkMixPreview)
         if (forkLoopConsider(track, incoming, positionMs, duration)) return // fork: a loop mix holds the blend (ForkDesktopLoopMix)
 
         if (plan.blocked) return
@@ -2316,7 +2349,8 @@ class DesktopPlaybackEngine(
         val playingId = now.song?.videoId.takeIf { now.isPlaying && !now.isLoading }
         // A press during a blend, or while one is opening, ends it with a cut, as on the phone.
         if (fadeSeconds <= 0 || !playWhenReady || paused || playingId == null || playingId == song.videoId ||
-            blendActive || displaySwitched || fadeRemaining > 0
+            blendActive || displaySwitched || fadeRemaining > 0 ||
+            ForkMusicOnly.holds(song) // fork: a music video owed its audio version waits in load's resolve (ForkMusicOnly)
         ) {
             load(song, playWhenReady)
             return
@@ -2357,6 +2391,13 @@ class DesktopPlaybackEngine(
                 return@launch
             }
             val track = openTrack(song, live.stream, startAtMs = 0).getOrNull()
+            if (track != null && ForkDirectSourceCheck.wrongLength(song, live.stream, track.decoder.durationUs)) { // fork: a stand-in of the wrong length is cut to load, which leaves its source out
+                live.stream.sourceId?.let { refusedSources[song.videoId] = it }
+                track.decoder.close()
+                live.pendingSubstitute?.cancel()
+                forkSkipPlainly(song, ticket)
+                return@launch
+            }
             if (track == null || forkSkipTicket !== ticket) {
                 track?.decoder?.close()
                 live.pendingSubstitute?.cancel()
@@ -2769,6 +2810,7 @@ class DesktopPlaybackEngine(
      * loop mix's decks spliced in. The times [replaceCurrent] used to close a better copy.
      */
     private fun forkMixing(): Boolean = fadeRemaining > 0 || displaySwitched || forkLoopRun?.engaged == true
+    internal fun forkBlending(): Boolean = forkMixing() // fork: ForkQueueChipsDesktop refuses a chip mid-blend
 
     /** From [replaceCurrent]: a copy arriving mid-mix, or just after one, is held instead of closed. */
     private fun forkHoldUpgrade(track: Track): Boolean {
@@ -3174,6 +3216,35 @@ class DesktopPlaybackEngine(
             forkReport.clearBlend()
         }
         if (forkReport.detailDue(System.nanoTime())) forkReport.publishDetail(forkAutomixDetail(track))
+        forkPreview.expire(betweenBlends = !paused && fadeRemaining <= 0 && !displaySwitched) // fork: v1.9.1's Automix overview
+        if (paused && track != null) forkPreviewAgain?.takeIf { it.first == track.song.videoId }?.second?.invoke() // fork: laid out while paused too, as the phone's paused marker refresh
+    }
+
+    /** fork: the last [forkPlanned] for the playing song, so a popup opened while paused gets it. */
+    private var forkPreviewAgain: Pair<String, () -> Unit>? = null
+
+    /**
+     * fork: an Automix plan from [track] into [next] for v1.9.1's Automix overview (the phone's
+     * `publishMixPreview`, called from its plan tick); laid out only while the popup is up.
+     */
+    private fun forkPlanned(track: Track, next: Song, nextDurationMs: Long, plan: TransitionPlan, durationMs: Long) {
+        if (!automixEnabled || DesktopListenTogether.state.value.inParty) return
+        fun measuring(id: String) = analyzer.stateFor(id).let { it == TrackAnalysisState.WAITING || it == TrackAnalysisState.ANALYSING }
+        val again = {
+            if (DesktopPlayerSettings.mixViewOpen.value) forkPreview.planned(
+                plan = plan,
+                outSong = track.song,
+                inSong = next,
+                outAnalysis = analyzer.analysisFor(track.song.videoId),
+                inAnalysis = analyzer.analysisFor(next.videoId),
+                outAnalysing = measuring(track.song.videoId),
+                inAnalysing = measuring(next.videoId),
+                outDurationMs = durationMs,
+                inDurationMs = nextDurationMs,
+            )
+        }
+        forkPreviewAgain = track.song.videoId to again
+        again()
     }
 
     /** The phone's `describeAutomix` on this engine's decks; null with Automix off, in a party, or nothing playing. */

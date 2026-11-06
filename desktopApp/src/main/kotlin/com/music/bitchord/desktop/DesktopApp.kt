@@ -526,6 +526,7 @@ fun BitChordDesktopApp() {
     var personalPositionStash by remember { mutableStateOf(0L) }
     var personalPlayingStash by remember { mutableStateOf(false) }
     val persistence = remember { DesktopPersistence() }
+    remember { ForkContentPreferences.install() } // fork: Square video thumbnails reaches the shared UI before the first frame
     var availableUpdate by remember { mutableStateOf<DesktopUpdateChecker.UpdateInfo?>(null) }
     LaunchedEffect(Unit) { availableUpdate = DesktopUpdateChecker.check() }
     availableUpdate?.let { update ->
@@ -699,8 +700,7 @@ fun BitChordDesktopApp() {
     var dolbyAtmos by remember { mutableStateOf(persistence.boolean("dolby_atmos", true)) }
     var skipSilence by remember { mutableStateOf(persistence.boolean("skip_silence", false)) }
     var outputPrecision by remember { mutableStateOf(persistence.string("output_precision", "PCM_16")) }
-    // The blob backdrop the mesh replaced, kept as an opt-out.
-    var legacyMeshGradient by remember { mutableStateOf(persistence.boolean("legacy_mesh_gradient", false)) }
+    // fork: the blob backdrop's switch became v1.9.1's Player theme (ForkPlayerTheme)
     var animatedCanvas by remember { mutableStateOf(persistence.boolean("animated_canvas", true)) }
     var spotifyCanvasCookie by remember { mutableStateOf(DesktopSpotifyToken.cookie()) }
     // Held here rather than by the Integrations page, so leaving the page does not close the
@@ -851,7 +851,7 @@ fun BitChordDesktopApp() {
         persistence.saveHistory(history)
         if (forkSkipSeconds > 0) playbackEngine.forkSkipTo(song, startPlaying, forkSkipSeconds) else playbackEngine.load(song, startPlaying, startAtMs) // fork
         partySyncHolder[0]?.onLocalIntent(song.videoId)
-        scope.launch { DesktopScrobbling.updateNowPlaying(song) }
+        if (!ForkMusicOnly.holds(song)) scope.launch { DesktopScrobbling.updateNowPlaying(song) } // fork: a held music video is announced as its audio version instead (ForkMusicOnly.loadConverted)
     }
 
     fun partyTrackChangeBlocked(): Boolean {
@@ -1655,6 +1655,10 @@ fun BitChordDesktopApp() {
         if (from.videoId in statsCountedSongs) statsCountedSongs = statsCountedSongs + to.videoId
         saveQueue()
         persistence.saveHistory(history)
+    }
+    ForkMusicOnly.onConverted = { from, to -> // fork: Prefer music-only version, the audio version takes the video's queue row (ForkMusicOnly)
+        liveQueue = forkQueueWithConverted(liveQueue, from, to)
+        if (selectedSong?.videoId == from.videoId) ForkVersionSwitch.onSwitched(from, to) else saveQueue()
     }
     val partySync = remember(playbackEngine) {
         DesktopPartySync(
@@ -3114,7 +3118,6 @@ fun BitChordDesktopApp() {
         DesktopPlayerSettings.fullBleedArtwork.value = fullBleedArtwork
         ForkPlayerMenu.onFullBleedChange = { fullBleedArtwork = it; persistence.saveBoolean("full_bleed_artwork", it) } // fork: the menu's row
         ForkPlayerSettings.sync(audioQuality, playback) // fork: the stream ceiling and the quality-upgrade mark (ForkPlayerSettings.kt)
-        DesktopPlayerSettings.legacyMeshGradient.value = legacyMeshGradient
         DesktopPlayerSettings.lyricsBlur.value = lyricsBlur
         DesktopPlayerSettings.syncedLyrics.value = syncedLyrics
         DesktopPlayerSettings.showNerdStats.value = showNerdStats
@@ -3229,6 +3232,8 @@ fun BitChordDesktopApp() {
         saveQueue()
         partySyncHolder[0]?.onLocalIntent()
     }
+    SideEffect { com.music.bitchord.playback.ForkQueueChips.setRepeatAll(repeatMode == DesktopRepeatMode.ALL) } // fork: no queue chips under repeat-all
+    DisposableEffect(Unit) { ForkQueueChipsDesktop.install(queue = { liveQueue }, setQueue = { liveQueue = it; saveQueue() }, repeatAll = { repeatMode == DesktopRepeatMode.ALL }, blending = { playbackEngine.forkBlending() }); onDispose { com.music.bitchord.playback.ForkQueueChips.install(null) } } // fork: YouTube Music's queue chips replace AutoPlay's rows
 
     fun seekPlayer(target: Long) {
         if (DesktopListenTogether.state.value.controlsLocked) return
@@ -3976,11 +3981,6 @@ fun BitChordDesktopApp() {
                                         fullBleedArtwork = it
                                         persistence.saveBoolean("full_bleed_artwork", it)
                                     },
-                                    legacyMeshGradient = legacyMeshGradient,
-                                    onLegacyMeshGradientChange = {
-                                        legacyMeshGradient = it
-                                        persistence.saveBoolean("legacy_mesh_gradient", it)
-                                    },
                                     spatialAudio = spatialAudio,
                                     onSpatialAudioChange = {
                                         spatialAudio = it
@@ -4234,7 +4234,7 @@ fun BitChordDesktopApp() {
                             title = forkShelfMore!!.title,
                         ) } }
                         destination == DesktopDestination.LISTEN_NOW -> ForkCardMenuHost { forkCardMenu -> ForkScrollbarBox(homeListState, Modifier.fillMaxSize(), sharedPagePadding) { HomeScreen( // fork: the overlay scrollbar (PC-Continued e16ed1f8); ForkCardMenuHost, a release card's right-click menu
-                            state = ForkDesktopHome.present(homeState), // fork: was homeState; the Navidrome / YouTube / Spotify sections
+                            state = ForkDesktopHome.present(ForkContentPreferences.visible(homeState)), // fork: was homeState; the Navidrome / YouTube / Spotify sections; Content Preferences' Hide Recents / Hide videos
                             listState = homeListState,
                             onItemClick = { item, shelfTitle -> openShelfItem(item, shelfTitle) },
                             onRetry = ::loadHome,
@@ -4248,8 +4248,7 @@ fun BitChordDesktopApp() {
                             onItemLongPress = { item -> if (item.videoId != null) openMenu(item.toSong()) else if (ForkCollectionActions.hasMenu(item)) forkCardMenu(item) }, // fork: else-branch, the phone's album / playlist menu
                             onLoadMore = ::loadMoreHome,
                             loadingMore = homeLoadingMore,
-                            recentlyPlayedLoading = homeRecentsLoading,
-                            leadHero = false,
+                            recentlyPlayedLoading = ForkContentPreferences.recentsLoading(homeRecentsLoading), // fork: was homeRecentsLoading; no Recents skeleton under Hide Recents
                             onShelfOpen = { shelf -> // fork: a heading's See all — the album / playlist / artist page itself, else the grid
                                 val more = shelf.moreBrowseId
                                 if (more != null && shelf.forkMoreOpensPage()) openShelfItem(ShelfItem(shelf.title, "", null, null, more))
@@ -6045,6 +6044,7 @@ private enum class DesktopSettingsSection {
     AUDIO_OUTPUT,
     PLAYBACK,
     DESKTOP_PLAYBACK,
+    CONTENT_PREFERENCES, // fork: v1.9.1's Content Preferences, after Playback as on the phone
     APPEARANCE,
     LYRICS,
     LOCAL_MUSIC,
@@ -6110,8 +6110,6 @@ private fun DesktopSettingsScreen(
     onShowNerdStatsChange: (Boolean) -> Unit,
     fullBleedArtwork: Boolean,
     onFullBleedArtworkChange: (Boolean) -> Unit,
-    legacyMeshGradient: Boolean,
-    onLegacyMeshGradientChange: (Boolean) -> Unit,
     trayIconEnabled: Boolean,
     closeToTray: Boolean,
     onCloseToTrayChange: (Boolean) -> Unit,
@@ -6508,6 +6506,7 @@ private fun DesktopSettingsScreen(
                     )
                 }
             }
+            if (section == DesktopSettingsSection.CONTENT_PREFERENCES) item { ForkContentPreferencesGroup() } // fork
             if (section == DesktopSettingsSection.APPEARANCE) item {
                 SettingsGroup(DesktopStrings["appearance", "Appearance"]) {
                     ForkUiScaleRow() // fork: UI scale (Desktop Revived 8782585b)
@@ -6607,12 +6606,8 @@ private fun DesktopSettingsScreen(
                         onFullBleedArtworkChange,
                     )
                     ForkWidePlayerLayoutRow() // fork: Classic / Halves / Halves, smaller cover
-                    SettingsToggle(
-                        DesktopStrings["legacy_mesh_gradient", "Legacy mesh gradient"],
-                        DesktopStrings["d_use_the_older_blob_backdrop_behind_the_player", "Use the older blob backdrop behind the player"],
-                        legacyMeshGradient,
-                        onLegacyMeshGradientChange,
-                    )
+                    ForkPlayerThemeRow() // fork: v1.9.1's Player theme, in place of Legacy mesh gradient
+                    ForkDisableBlendRow() // fork: v1.9.1's Disable blend effects
                     ForkBackdropPulseRow() // fork: Backdrop pulse (ForkBackdropPulseMeter)
                     SettingsToggle(
                         DesktopStrings["d_animated_canvas", "Animated canvas"],
@@ -6803,6 +6798,7 @@ private fun DesktopSettingsScreen(
                                 { onMoveSource(config, 1) }
                             } else null,
                         )
+                        ForkAddonQualityRow(config, skippedByQuality = config.enabled && !audioQuality.permits(config.kind)) // fork: v1.9.1's addon quality picker (ForkAddonQuality)
                     }
                     // One entry point, and it creates an addon.
                     SettingsRow(

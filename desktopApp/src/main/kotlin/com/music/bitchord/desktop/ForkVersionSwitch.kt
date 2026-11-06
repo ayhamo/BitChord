@@ -152,6 +152,41 @@ internal object ForkVersionSwitch {
                 playbackSourceId = song.playbackSourceId,
             )
         }
+        // The listener's own choice outranks "Prefer music-only version" (the phone's `MusicOnlyPlayback.keep` / `letGo`)
+        if (wantAudio) ForkMusicOnly.letGo(song.videoId) else ForkMusicOnly.keep(target.videoId)
+        handOver(engine, song, target, back)
+    }
+
+    /**
+     * "Prefer music-only version" turned on with a music video audible: [target], its audio version,
+     * crossed in like this menu's switch, as the phone's `applyMusicOnly` hands the playing row to
+     * `smoothSwapCurrentTrackVersion`. Not video-origin, so Automix treats it as any song.
+     */
+    fun convertPlaying(song: Song, target: Song) {
+        if (DesktopListenTogether.state.value.inParty) return
+        val engine = engine ?: return
+        if (_switching.value || engine.state.value.song?.videoId != song.videoId) return
+        _switching.value = true
+        scope.launch {
+            try {
+                handOver(engine, song, target, back = null)
+            } catch (failure: Exception) {
+                if (failure is kotlinx.coroutines.CancellationException) throw failure
+                DesktopTrackLog.log("music-only: switch failed for '${song.title}': ${failure.message}")
+            } finally {
+                DesktopPlayerSettings.versionAlignmentInProgress.value = false
+                _switching.value = false
+            }
+        }
+    }
+
+    /** The way back from [audio] (a music-only conversion) is [video], the exact row it replaced. */
+    fun rememberOrigin(audio: Song, video: Song) {
+        origins[audio.videoId] = video
+    }
+
+    /** [target] in [song]'s place on the engine, lined up; the window told after. */
+    private suspend fun handOver(engine: DesktopPlaybackEngine, song: Song, target: Song, back: Song?) {
         if (engine.state.value.song?.videoId != song.videoId) return
         val live = DesktopMusicSources.resolveLive(target, engine.forkQuality).getOrElse {
             DesktopTrackLog.log("version switch: no stream for '${target.title}': ${it.message}")

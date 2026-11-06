@@ -370,6 +370,7 @@ internal fun InlineQueue(
                     item(key = "autoplay-heading") {
                         AutoplayHeading(hasTracks = tracks.autoplay.isNotEmpty(), modifier = queueMotion())
                     }
+                    forkQueueChips(queue, currentIndex, controlsLocked) // fork: YouTube Music's queue chips over AutoPlay
                     queueSection(tracks.autoplay, QueueSection.AUTOPLAY, drag, controlsLocked, onJumpTo, onRemove)
                 }
             }

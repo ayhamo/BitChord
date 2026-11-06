@@ -73,6 +73,20 @@ class ForkHomeShelves(
                 ForkHomeShelves(navidrome + spotify, navidrome.size, spotify.size, (feed as? UiState.Error)?.message),
             )
         }
+
+        /**
+         * [filtered], cut from [original] by upstream v1.9.1's Home filters (Hide recents, Hide
+         * videos; `MainActivity.visibleHomeState`), still carrying [original]'s section sizes and
+         * YouTube error. Those filters only drop YouTube's shelves, so the sizes stand; without this the
+         * plain list lost the error, and a failed feed's section and Retry vanished with a filter on.
+         */
+        fun refiltered(original: List<HomeShelf>, filtered: List<HomeShelf>): List<HomeShelf> =
+            if (original !is ForkHomeShelves) filtered else ForkHomeShelves(
+                filtered,
+                original.navidrome.coerceAtMost(filtered.size),
+                original.spotify.coerceAtMost(filtered.size - original.navidrome.coerceAtMost(filtered.size)),
+                original.youtubeError,
+            )
     }
 }
 
@@ -148,31 +162,27 @@ internal fun LazyListScope.forkHomeHeading(section: ForkHomeSection) {
 
 /**
  * Upstream's feed, drawn by [draw], section by section under the headings, or
- * whole with no sections. Only the first open section leads with the big cards
- * ([leadHero]); the rest keep ordinary ones. [draw] gets the section's shelves,
- * whether they lead, and a prefix for their keys (the sections share one list).
- * A failed YouTube feed says so where its shelves would be, with [onRetry].
+ * whole with no sections. [draw] gets the section's shelves and a prefix for
+ * their keys (the sections share one list). A failed YouTube feed says so where
+ * its shelves would be, with [onRetry]. (Upstream's big lead card went in v1.9.1, and
+ * with it the fork's choice of which section leads with it.)
  */
 internal fun LazyListScope.forkHomeFeed(
     state: ForkHomeState,
     shelves: List<HomeShelf>,
-    leadHero: Boolean,
-    recentsLoading: Boolean,
     onRetry: () -> Unit,
-    draw: LazyListScope.(List<HomeShelf>, Boolean, String) -> Unit,
+    draw: LazyListScope.(List<HomeShelf>, String) -> Unit,
 ) {
     val error = state.errorOf(shelves)
     val sections = state.sections(shelves)
     if (sections == null) {
-        draw(shelves, leadHero && !recentsLoading, "")
+        draw(shelves, "")
         if (error != null) forkHomeError(error, onRetry)
         return
     }
-    val firstOpen = sections.indexOfFirst { it.open }
-    sections.forEachIndexed { index, section ->
+    sections.forEach { section ->
         forkHomeHeading(section)
-        // "Recently played" lands in the YouTube section, so only that section waits for it to be the hero.
-        if (section.open) draw(section.shelves, index == firstOpen && leadHero && (section.key != "youtube" || !recentsLoading), section.key + ":")
+        if (section.open) draw(section.shelves, section.key + ":")
         if (section.open && section.key == "youtube" && error != null) forkHomeError(error, onRetry)
     }
 }

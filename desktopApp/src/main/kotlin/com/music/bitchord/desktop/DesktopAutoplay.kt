@@ -70,7 +70,9 @@ internal object DesktopAutoplay {
             DesktopTrackLog.log("autoplay: no YouTube match to seed a station on for '${seedSong.title}'")
             return Result.success(emptyList())
         }
-        val related = DesktopSearchClient.radio(seed).getOrElse { return Result.failure(it) }
+        val related = (if (forkStation) null else com.music.bitchord.playback.ForkQueueChips.stationFor(seedSong, existing, limit)) // fork: a picked queue chip's songs, ahead of the radio
+            ?: DesktopSearchClient.radio(seed).getOrElse { return Result.failure(it) }
+                .let { radio -> (if (forkStation) null else com.music.bitchord.playback.ForkQueueChips.stationFor(seedSong, existing, limit)) ?: radio } // fork: a chip picked while the radio was asked wins over its answer
         DesktopTrackLog.log("autoplay: station for '${seedSong.title}' offered ${related.size} tracks")
         val extra = QueueBuilder.extend(existing, related, limit)
         if (extra.isEmpty()) return Result.success(emptyList())

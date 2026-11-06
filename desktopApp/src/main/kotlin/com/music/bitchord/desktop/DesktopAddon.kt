@@ -47,7 +47,10 @@ internal data class DesktopAddonManifest(
      * reads `checkValidLossless`; the desktop app deliberately does not.)
      */
     @SerialName("allowDownloads") val allowDownloads: JsonElement? = null,
+    @SerialName("bitchordAuth") val bitchordAuth: JsonElement? = null, // fork: v1.9.1 addon verification (ForkAddonAuthGate)
 ) {
+    val requiresBitChordAuth: Boolean get() = bitchordAuth.asFlag() ?: false // fork
+
     val downloadsAllowed: Boolean get() = allowDownloads.asFlag() ?: true
 
     fun declares(resource: String): Boolean = resources.any { it.equals(resource, ignoreCase = true) }
@@ -71,6 +74,7 @@ internal data class DesktopAddonSetting(
 @Serializable
 internal data class DesktopAddonSettingOption(
     @SerialName("value") val value: JsonElement? = null,
+    @SerialName("label") val label: JsonElement? = null, // fork: v1.9.1's addon quality picker lists it (ForkAddonQuality)
 ) {
     val stringValue: String? get() = value?.asQueryValue()
 }
@@ -258,7 +262,7 @@ internal class DesktopAddonUnavailable(message: String) : DesktopAddonException(
 // ── Client ───────────────────────────────────────────────────────────────
 
 /** One addon server, and every question this app knows how to ask it. */
-internal class DesktopAddonClient(rawBaseUrl: String) {
+internal class DesktopAddonClient(rawBaseUrl: String, private val forkSourceId: String? = null) { // fork: forkSourceId, whose quality pick to send (ForkAddonQuality)
 
     /** Where this addon lives, with `/manifest.json` and trailing slashes off. */
     val baseUrl: String = normalizeBase(rawBaseUrl)
@@ -282,6 +286,7 @@ internal class DesktopAddonClient(rawBaseUrl: String) {
                 val declared = manifest.resources.joinToString(", ")
                 throw DesktopAddonException("This addon declares $declared — BitChord needs search")
             }
+            if (manifest.requiresBitChordAuth) ForkAddonAuthGate.refuse(baseUrl) // fork
             manifest
         }.recoverCatching { failure ->
             // A manifest 404 is not "no such track", it is "no addon here".
@@ -322,6 +327,7 @@ internal class DesktopAddonClient(rawBaseUrl: String) {
         searches.clear()
         streams.clear()
         quietUntilMs = 0L
+        ForkAddonAuthGate.forget(baseUrl) // fork: an edited addon is asked again
     }
 
     /** Forces a real retry for completed track calls while retaining work already on the wire. */
@@ -332,7 +338,8 @@ internal class DesktopAddonClient(rawBaseUrl: String) {
 
     /** The query parameters that travel with every request. */
     private suspend fun settingsFor(tier: String, stereoOnly: Boolean = false): Map<String, String> {
-        val declared = manifest().getOrNull()?.settings.orEmpty()
+        val forkManifest = manifest().getOrNull() // fork: the quality pick asks whether it is in hand (ForkAddonQuality)
+        val declared = forkManifest?.settings.orEmpty()
         val params = LinkedHashMap<String, String>()
         declared.forEach { setting ->
             val key = setting.key.takeIf { it.isNotBlank() } ?: return@forEach
@@ -342,7 +349,7 @@ internal class DesktopAddonClient(rawBaseUrl: String) {
             val options = declared.firstOrNull { it.key == QUALITY_KEY }
                 ?.options.orEmpty()
                 .mapNotNull { it.stringValue }
-            params[QUALITY_KEY] = matchTier(tier, options) ?: tier
+            params[QUALITY_KEY] = ForkAddonQuality.valueFor(forkSourceId, tier, options, forkManifest != null) { matchTier(tier, options) } ?: tier // fork: was matchTier(tier, options) ?: tier; v1.9.1's pick
         }
         // `auto` asks for Atmos when available and stereo otherwise. A declared addon default is
         // authoritative, exactly as on Android, so this never overwrites one.
@@ -397,6 +404,7 @@ internal class DesktopAddonClient(rawBaseUrl: String) {
     private suspend fun body(url: String): String = withContext(Dispatchers.IO) {
         var attempt = 0
         while (true) {
+            if (url != manifestUrl(baseUrl) && ForkAddonAuthGate.refused(baseUrl)) throw ForkAddonAuthRefused() // fork: no request it would refuse
             (quietUntilMs - System.currentTimeMillis()).takeIf { it > 0 }?.let { delay(it) }
 
             val response = http.get(url) {
@@ -407,6 +415,7 @@ internal class DesktopAddonClient(rawBaseUrl: String) {
             val wait = when {
                 code in 200..299 -> return@withContext response.bodyAsText().takeIf { it.isNotBlank() }
                     ?: throw DesktopAddonException("Empty response")
+                ForkAddonAuthGate.isChallenge(code, response.headers["WWW-Authenticate"]) -> { ForkAddonAuthGate.refuse(baseUrl); throw ForkAddonAuthRefused() } // fork
                 code == 404 -> throw DesktopAddonNotFound()
                 code >= 500 -> throw DesktopAddonUnavailable("HTTP $code")
                 code != 429 -> throw DesktopAddonException("HTTP $code")
@@ -538,7 +547,7 @@ internal object DesktopAddonSource {
         val existing = clients[config.id]
         if (existing != null && existing.baseUrl == base) return existing
         existing?.clear()
-        return DesktopAddonClient(config.baseUrl).also { clients[config.id] = it }
+        return DesktopAddonClient(config.baseUrl, config.id).also { clients[config.id] = it } // fork: config.id (ForkAddonQuality)
     }
 
     /** Drops everything held for a source that was edited or removed. */
@@ -566,6 +575,7 @@ internal object DesktopAddonSource {
     }
 
     private fun record(config: DesktopSourceConfig, manifest: DesktopAddonManifest) {
+        ForkAddonQuality.record(config.id, manifest) // fork: v1.9.1's quality choices, kept for the picker
         val allowed = manifest.downloadsAllowed
         if (learned.put(config.id, allowed) == allowed || config.allowDownloads == allowed) return
         val persistence = DesktopPersistence()
@@ -583,6 +593,7 @@ internal object DesktopAddonSource {
         return addon.manifest().fold(
             onSuccess = { manifest ->
                 record(config, manifest)
+                if (ForkAddonAuthGate.refused(addon.baseUrl)) return@fold Result.failure(ForkAddonAuthRefused()) // fork: say why instead of "ready"
                 Result.success(
                     listOfNotNull(
                         manifest.displayName.takeIf { it.isNotBlank() },
@@ -591,7 +602,7 @@ internal object DesktopAddonSource {
                 )
             },
             onFailure = { failure ->
-                if (addon.probeSearch().isSuccess) {
+                if (failure !is ForkAddonAuthRefused && addon.probeSearch().isSuccess) { // fork: the first condition
                     Result.success("No manifest · search works")
                 } else {
                     Result.failure(failure)
