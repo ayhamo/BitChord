@@ -651,7 +651,9 @@ object YtMusicRepository {
      */
     suspend fun radio(videoId: String, preferVideo: Boolean = false): Result<List<Song>> =
         call("radio:$videoId:$preferVideo") {
-            InnertubeParser.parseWatchQueue(Innertube.next(videoId), preferVideo = preferVideo)
+            val forkToken = com.music.bitchord.playback.ForkQueueChips.radioToken() // fork
+            val forkNext = Innertube.next(videoId) // fork: the queue chips ride on the same answer
+            InnertubeParser.parseWatchQueue(forkNext, preferVideo = preferVideo).also { com.music.bitchord.playback.ForkQueueChips.record(videoId, forkNext, it, forkToken) } // fork
         }
 
     /**

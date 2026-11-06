@@ -15,10 +15,11 @@ import java.util.concurrent.ConcurrentHashMap
  * Here the first sign (the manifest flag or the challenge) marks the addon for the rest of the
  * run: its Sources row says why, and searches and streams skip it without a request, so playback
  * falls through to the next source as for any other miss. Only the manifest is still fetched, so
- * the row keeps the addon's name. A restart asks again.
+ * the row keeps the addon's name. Editing the addon, or a restart, asks again.
  */
 internal object ForkAddonAuthGate {
-    const val MESSAGE = "This addon only accepts the official BitChord phone app, so it can't be used here"
+    val MESSAGE: String
+        get() = DesktopStrings["fork_addon_auth_pc", "This addon only accepts the official BitChord phone app, so it can't be used here"]
 
     private val refused = ConcurrentHashMap.newKeySet<String>()
 
@@ -28,6 +29,11 @@ internal object ForkAddonAuthGate {
         if (refused.add(baseUrl)) {
             DesktopTrackLog.log("addon ${DesktopAddonClient.redact(baseUrl)}: asks for BitChord's phone verification; skipped on the PC")
         }
+    }
+
+    /** Forgets [baseUrl]'s mark, for an addon that was edited ([DesktopAddonClient.clear]). */
+    fun forget(baseUrl: String) {
+        refused.remove(baseUrl)
     }
 
     /** Whether a response is the addon asking for BitChord's verification. */

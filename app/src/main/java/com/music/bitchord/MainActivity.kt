@@ -862,7 +862,7 @@ private fun BitChordApp(
             var shelves = loaded.data
             if (hideRecents) shelves = shelves.filterNot { it.title == YtMusicRepository.RECENT_TITLE }
             if (hideHomeVideos) shelves = shelves.withoutVideos()
-            UiState.Success(shelves)
+            UiState.Success(com.music.bitchord.ui.screens.ForkHomeShelves.refiltered(loaded.data, shelves)) // fork: keeps the sections' sizes and YouTube's error
         } else {
             homeState
         }

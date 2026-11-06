@@ -268,7 +268,7 @@ class CrossfadeController(
     private var phase = Phase.IDLE
 
     /** Fork: crossfade on Next / Previous, lent what it needs of this class. */
-    internal val forkSkip = ForkCrossfadeSkip({ phase == Phase.IDLE }, { phase == Phase.ARMING }, { handedOff }, { outgoing }, active, ::configuredFadeMs, versionSwapActive, (DEFAULT_SMART_FALLBACK_SECONDS * 1000).toLong(), { fade, to -> begin(fade, endMs = 0L, smart = false, targetIndex = to) }, ::bail) // fork
+    internal val forkSkip = ForkCrossfadeSkip({ phase == Phase.IDLE }, { phase == Phase.ARMING }, { handedOff }, { outgoing }, active, ::configuredFadeMs, versionSwapActive, (DEFAULT_SMART_FALLBACK_SECONDS * 1000).toLong(), { fade, to -> forkDropMixPreview(); begin(fade, endMs = 0L, smart = false, targetIndex = to) }, ::bail) // fork: a skip's blend publishes no mix view, so the planned pair's preview goes first
 
     /**
      * The player the session was on when this transition began — the one whose
@@ -1133,7 +1133,7 @@ class CrossfadeController(
 
         lastSmartPlan = plan
         lastSmartPlanStartMs = (plan.transitionStart * 1000).roundToLong()
-        publishMixPreview(currentItem, nextItem, duration, nextDuration, currentAnalysis, nextAnalysis, analysisState, plan, advanced)
+        publishMixPreview(currentItem, nextItem, duration, nextDuration, ForkAutomix.outgoing(currentAnalysis), ForkAutomix.incoming(nextAnalysis), analysisState, plan, advanced) // fork: the sides the plan and the blend's own view use (ForkAutomix), so the incoming deck's tempo doesn't change as the blend starts
 
         // The loop mix first: a pair it can do never reaches the blend below.
         val loop = loopPlanFor(
@@ -2194,6 +2194,13 @@ class CrossfadeController(
             ),
             ids,
         )
+    }
+
+    /** fork: lets the preview go when a crossfade-on-skip blend starts ([forkSkip]); it would keep showing the planned pair, not the skip's target. */
+    private fun forkDropMixPreview() {
+        AppSettings.smartMixPreview.value = null
+        mixPreviewIds = null
+        mixPreviewKey = ""
     }
 
     /**

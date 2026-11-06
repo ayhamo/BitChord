@@ -62,6 +62,7 @@ internal object DesktopPlayerHost : PlayerHost {
 
     override val musicVideoSupported: Boolean get() = ForkMusicVideo.supported // fork: music videos, opt-in (ForkMusicVideo)
     @Composable override fun MusicVideo(videoId: String, fit: Boolean, onRenderedChanged: (Boolean) -> Unit, modifier: Modifier) = ForkMusicVideoSurface(videoId, fit, onRenderedChanged, modifier) // fork
+    override fun showsMusicVideoPicture(videoId: String): Boolean = ForkMusicOnly.showsPicture(videoId) // fork: v1.9.1's Prefer music-only version, a video heard as audio shows its artwork (ForkMusicOnly)
     override val musicVideoAspect: StateFlow<Float> get() = ForkMusicVideo.aspect // fork
     override val musicVideoQuality: StateFlow<com.music.bitchord.ui.player.MusicVideoQualityUi> get() = ForkMusicVideo.quality // fork
     override fun setMusicVideoQuality(height: Int?) = ForkMusicVideo.setQuality(height) // fork
@@ -230,8 +231,8 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
     override val smartMixView = MutableStateFlow<com.music.bitchord.data.settings.MixTransitionView?>(null)
     override val smartMixProgress = MutableStateFlow(0f)
     // fork: v1.9.1's Automix overview (the mix popup opened between blends). The phone's
-    // CrossfadeController lays out the next planned transition while the popup is open; the PC
-    // has no preview yet, so the popup shows its empty state between blends (STATUS.md, later list).
+    // CrossfadeController lays out the next planned transition while the popup is open; on the PC
+    // the engine does, from its own plan tick (ForkMixPreview, ForkAutomixPreview.kt).
     override val smartMixPreview = MutableStateFlow<com.music.bitchord.data.settings.MixTransitionView?>(null)
     val mixViewOpen = MutableStateFlow(false) // fork
     override val smartTransitionWindow = MutableStateFlow<TransitionWindow?>(null)

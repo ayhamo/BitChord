@@ -365,8 +365,9 @@ internal object DesktopSourceRegistry {
                 "  asking for: " + DesktopTrackMatcher.queries(song).joinToString(" | ").ifBlank { "(nothing)" },
             )
         }
+        val forkDirect = ForkDirectSource.active().also { if (it) ForkDirectSourceCheck.startLength(song) } // fork: Direct Source Stream's length and artist checks (ForkDirectSourceCheck)
         val lookup = scope.async {
-            withTimeoutOrNull(SUBSTITUTE_TIMEOUT_MS) { firstSubstitute(higher, song, quality) }
+            withTimeoutOrNull(SUBSTITUTE_TIMEOUT_MS) { firstSubstitute(higher, song, quality, forkDirect) } // fork: forkDirect
         }
         val fallback = scope.async { youtube.resolve(song, quality).getOrNull() }
 
@@ -432,10 +433,11 @@ internal object DesktopSourceRegistry {
         sources: List<SourceAdapter>,
         song: Song,
         quality: String?,
+        forkDirect: Boolean = false, // fork: held to Direct Source Stream's checks, see openBest
     ): DesktopStream? = coroutineScope {
         val running = sources
             .map { source ->
-                async { openBest(source, song, quality) }
+                async { openBest(source, song, quality, forkDirect) }
             }
             .toMutableList()
         // fork (PC-Continued 18b6b3ae): with Atmos wanted, a stereo copy that answers first is held for
@@ -547,8 +549,9 @@ internal object DesktopSourceRegistry {
         source: SourceAdapter,
         song: Song,
         quality: String?,
+        forkDirect: Boolean = false, // fork: v1.9.1's Direct Source Stream checks (ForkDirectSourceCheck)
     ): DesktopStream? {
-        val matches = source.matches(song)
+        val matches = source.matches(song).let { if (forkDirect) ForkDirectSourceCheck.strict(source.descriptor.name, it, song) else it } // fork: held to the length tolerance and a credited artist
         if (matches.isEmpty()) {
             // A leg cancelled by a sibling winning the race has not missed anything.
             if (currentCoroutineContext().isActive) {
@@ -561,6 +564,7 @@ internal object DesktopSourceRegistry {
         for (match in preferred(matches, song, wantsLossless).take(STREAM_ATTEMPTS)) {
             val stream = source.resolve(match, quality).getOrNull() ?: continue
             if (!playableHere(source, stream)) continue
+            if (forkDirect && ForkDirectSourceCheck.cutShort(source.descriptor.name, match, stream, song)) continue // fork: a preview or cut-off file is not the recording
             ForkHandoffDesktop.noteOpened(song, source.config.id, match.videoId) // fork: which row this source served, for the handoff note
             val served = stream.format
             if (!wantsLossless || served.isLossless || served.isDolbyAtmos) {

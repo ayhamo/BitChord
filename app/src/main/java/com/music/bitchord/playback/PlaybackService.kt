@@ -1098,6 +1098,7 @@ class PlaybackService : MediaLibraryService() {
         override fun onRepeatModeChanged(repeatMode: Int) {
             val previous = lastRepeatMode
             lastRepeatMode = repeatMode
+            com.music.bitchord.playback.ForkQueueChips.setRepeatAll(repeatMode == Player.REPEAT_MODE_ALL) // fork: no queue chips under repeat-all
             speakers.onLocalRepeatChanged(repeatMode)
             player?.let { WearBridge.republish(this@PlaybackService, it) }
             // Repeat-one makes the "next" track this one again.
@@ -1288,6 +1289,7 @@ class PlaybackService : MediaLibraryService() {
     override fun onCreate() {
         super.onCreate()
         com.music.bitchord.fork.ForkHandoffPhone.attach(this) { player } // fork: continue on the other device reads the active player
+        com.music.bitchord.fork.ForkQueueChipsPhone.attach(player = { player }, busy = { crossfade?.isTransitioning() == true }) // fork: a queue chip replaces AutoPlay's rows on the active player
 
         if (com.music.bitchord.data.innertube.Innertube.cookie == null) {
             com.music.bitchord.data.innertube.Innertube.cookie = com.music.bitchord.auth.AuthStore(this).cookie
@@ -1815,6 +1817,7 @@ class PlaybackService : MediaLibraryService() {
         // History pings fire once a track is actually audible — both when
         // playback starts and when the queue moves on while already playing.
         lastRepeatMode = exoPlayer.repeatMode
+        com.music.bitchord.playback.ForkQueueChips.setRepeatAll(exoPlayer.repeatMode == Player.REPEAT_MODE_ALL) // fork: no queue chips under repeat-all
         exoPlayer.addListener(playbackListener)
         // After the player exists and before the session is built: the
         // session's wrapper reports the user's actions to it.
@@ -7839,6 +7842,7 @@ class PlaybackService : MediaLibraryService() {
 
     override fun onDestroy() {
         com.music.bitchord.fork.ForkHandoffPhone.detach() // fork
+        com.music.bitchord.fork.ForkQueueChipsPhone.detach() // fork
         WearBridge.attachStreams(null)
         WearBridge.releaseSpeaker()
         // Let go of the receiver's player but leave its session alone: a

@@ -455,6 +455,7 @@ internal fun DesktopSongMenu(
                     value = lyricsProviders.firstOrNull { it.current }?.label.orEmpty(),
                 ) { pickingLyricsProvider = true }
             }
+            if (onSetLyricsOffset != null) ForkAutomixOverviewRow(onDismiss) // fork: v1.9.1's "Automix overview", the player's menu only (ForkAutomixPreview.kt)
             if (onSetLyricsOffset != null) {
                 DesktopMenuRow(
                     icon = Icons.Rounded.Tune,

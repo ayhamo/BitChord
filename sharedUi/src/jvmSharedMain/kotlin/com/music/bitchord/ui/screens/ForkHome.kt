@@ -73,6 +73,20 @@ class ForkHomeShelves(
                 ForkHomeShelves(navidrome + spotify, navidrome.size, spotify.size, (feed as? UiState.Error)?.message),
             )
         }
+
+        /**
+         * [filtered], cut from [original] by upstream v1.9.1's Home filters (Hide recents, Hide
+         * videos; `MainActivity.visibleHomeState`), still carrying [original]'s section sizes and
+         * YouTube error. Those filters only drop YouTube's shelves, so the sizes stand; without this the
+         * plain list lost the error, and a failed feed's section and Retry vanished with a filter on.
+         */
+        fun refiltered(original: List<HomeShelf>, filtered: List<HomeShelf>): List<HomeShelf> =
+            if (original !is ForkHomeShelves) filtered else ForkHomeShelves(
+                filtered,
+                original.navidrome.coerceAtMost(filtered.size),
+                original.spotify.coerceAtMost(filtered.size - original.navidrome.coerceAtMost(filtered.size)),
+                original.youtubeError,
+            )
     }
 }
 
