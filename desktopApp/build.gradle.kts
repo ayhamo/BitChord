@@ -454,7 +454,10 @@ val windowsPortableAssemble by tasks.registering {
         javaRuntime?.let { File(it).copyRecursively(bundledJava, overwrite = true) }
         // fork: AppCDS (below) needs the runtime's default archive and Java 19+ (-XX:+AutoCreateSharedArchive
         // is an unknown option before 19, and an unknown -XX option stops the JVM from starting).
-        val forkAppCds = File(bundledJava, "lib/server/classes.jsa").isFile &&
+        // The default archive is bin\server\classes.jsa in a Windows runtime (beside jvm.dll) and
+        // lib/server/classes.jsa elsewhere; only the second was looked for, so the Windows zip, whose
+        // Temurin JRE ships the archive, always came out with AppCDS off.
+        val forkAppCds = listOf("bin/server/classes.jsa", "lib/server/classes.jsa").any { File(bundledJava, it).isFile } &&
             (File(bundledJava, "release").takeIf { it.isFile }?.readLines()
                 ?.firstOrNull { it.startsWith("JAVA_VERSION=") }
                 ?.substringAfter('=')?.trim('"')?.substringBefore('.')?.toIntOrNull() ?: 0) >= 19
@@ -555,7 +558,7 @@ val windowsPortableAssemble by tasks.registering {
             if (forkAppCds) {
                 "windowsPortable: AppCDS on — data\\bitchord.jsa is written at the first exit."
             } else {
-                "windowsPortable: AppCDS off — the runtime has no lib/server/classes.jsa to layer it on, or is older than Java 19."
+                "windowsPortable: AppCDS off — the runtime has no default archive (bin/server or lib/server classes.jsa) to layer it on, or is older than Java 19."
             },
         )
     }

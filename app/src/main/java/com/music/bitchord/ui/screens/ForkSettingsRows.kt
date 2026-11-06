@@ -1,6 +1,9 @@
 package com.music.bitchord.ui.screens
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.lazy.LazyColumn
@@ -406,3 +409,39 @@ internal fun forkCrossfadeOnSkipAvailable(crossfadeSeconds: Int, smartFade: Bool
 
 /** No Navidrome server set up: its rows are greyed (the handoff row's condition). */
 internal fun forkNoNavidromeServer(url: String, user: String): Boolean = url.isBlank() || user.isBlank()
+
+/**
+ * "Hide system bars" (Settings > Appearance, after Theme; owner, 2026-11-06): None, All, the
+ * status bar (Top) or the navigation bar (Bottom), app-wide; see [com.music.bitchord.ui.theme.ForkSystemBars].
+ */
+@Composable
+internal fun SettingsGroupScope.forkSystemBarsRow() {
+    val title = stringResource(R.string.fork_hide_system_bars)
+    row(title, "fork", "status bar", "navigation bar", "immersive", "fullscreen", "system bars") {
+        val mode by com.music.bitchord.ui.theme.ForkSystemBars.mode.collectAsStateWithLifecycle()
+        val modes = com.music.bitchord.ui.theme.ForkSystemBars.Mode.entries
+        SettingsRow(
+            icon = Icons.Rounded.Fullscreen,
+            title = title,
+            subtitle = stringResource(R.string.fork_hide_system_bars_subtitle),
+        )
+        SegmentedControl(
+            options = listOf(
+                stringResource(R.string.fork_hide_system_bars_none),
+                stringResource(R.string.fork_hide_system_bars_all),
+                stringResource(R.string.fork_hide_system_bars_top),
+                stringResource(R.string.fork_hide_system_bars_bottom),
+            ),
+            selectedIndex = modes.indexOf(mode),
+            onSelect = { ForkSettings.setSystemBars(modes[it]) },
+            modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 14.dp),
+        )
+    }
+}
+
+/** Whether "Hide system bars" already hides the status bar everywhere (upstream's player switch is greyed). */
+@Composable
+internal fun forkStatusBarHiddenAppWide(): Boolean {
+    val mode by com.music.bitchord.ui.theme.ForkSystemBars.mode.collectAsStateWithLifecycle()
+    return com.music.bitchord.ui.theme.ForkSystemBars.hidesStatusBar(mode)
+}

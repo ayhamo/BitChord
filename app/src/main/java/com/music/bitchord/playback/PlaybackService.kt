@@ -954,6 +954,7 @@ class PlaybackService : MediaLibraryService() {
             // already sends a listener's play to the receiver. The phone goes
             // quiet again and the receiver is asked instead.
             if (playWhenReady) player?.let(speakers::onLocalStartedPlaying)
+            if (playWhenReady) player?.let { com.music.bitchord.fork.ForkUnplayableSkip.check(this@PlaybackService, it, it.currentTracks) } // fork: Play on the song a skip run paused on (its tracks do not change)
             publishWidgetState(playing = playWhenReady)
             // The only place the *reason* can be read. A party has to tell a
             // pause the listener asked for from one another app imposed, and
@@ -1043,6 +1044,10 @@ class PlaybackService : MediaLibraryService() {
             if (exoPlayer.isPlaying) startLyricsTicker()
             refreshCustomLayouts()
         }
+
+        override fun onTracksChanged(tracks: androidx.media3.common.Tracks) { // fork: a song no decoder here can play is skipped (ForkUnplayableSkip)
+            player?.let { com.music.bitchord.fork.ForkUnplayableSkip.check(this@PlaybackService, it, tracks) } // fork
+        } // fork
 
         /**
          * A failed stream is not a failed track: nothing else in this
@@ -3530,6 +3535,7 @@ class PlaybackService : MediaLibraryService() {
         )
         QueueCoordinator.consumePlayedUserQueue(incoming) // fork: a blend is the only transition a skip sees; played "Play next" rows would stay and replay with repeat
         com.music.bitchord.fork.PlayerDecoderNames.of(incoming)?.let(AudioOutputStatus::publishDecoder).also { publishNerdStats() } // fork: the incoming decoder started before this player was listened to
+        com.music.bitchord.fork.ForkUnplayableSkip.check(this, incoming, incoming.currentTracks) // fork: its tracks arrived before this player was listened to
 
         // A crossfade starts the incoming item on the player that was idle, so
         // it never delivers onMediaItemTransition to playbackListener. Keep

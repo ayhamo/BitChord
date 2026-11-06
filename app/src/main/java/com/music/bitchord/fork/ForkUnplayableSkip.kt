@@ -1,0 +1,123 @@
+package com.music.bitchord.fork
+
+import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import android.widget.Toast
+import androidx.media3.common.C
+import androidx.media3.common.MimeTypes
+import androidx.media3.common.Player
+import androidx.media3.common.Tracks
+import com.music.bitchord.R
+import com.music.bitchord.data.DebugLog as Log
+
+/**
+ * Fork (owner, 2026-11-06): a song no decoder on the device can play is skipped, with a toast.
+ *
+ * Seen with the Navidrome Starboy album (Dolby Atmos, `audio/eac3-joc`) on the x86_64 emulator,
+ * where the FFmpeg extension does not load and Android has no E-AC-3 decoder: Media3 raises no
+ * error for a track no renderer supports, it enables nothing and runs the song's clock in silence.
+ * Worse, a period with no enabled track counts as fully buffered, so the player went on preparing
+ * the next song, and the next, each holding its `moov` and cover art (~5.7 MB): 17 of them ran the
+ * app out of memory (192 MB heap). Skipping as soon as the tracks are known keeps the playing
+ * period up with the loading one, so the prepared ones behind it are released.
+ *
+ * Unplayable means: the song has audio and not one audio track is supported. A music video whose
+ * video can't be decoded but whose audio can is left alone. A run of skips shows one toast that
+ * counts them, once the run settles; a queue where nothing can play (as many skips in a row as it has songs, repeat
+ * included) pauses instead of going round for ever.
+ *
+ * Called from the service's player listener and after a crossfade hands the session to the other
+ * player (that player's tracks arrived while nothing was listening to it), on the main thread.
+ */
+object ForkUnplayableSkip {
+
+    private const val TAG = "BitChordPlayback"
+
+    private val main = Handler(Looper.getMainLooper())
+
+    /** Songs skipped in a row; reset by any song that has a playable audio track. */
+    private var run = 0
+    private var lastSkippedId: String? = null
+    /** The song the last skip went to: only it carries [run] on. */
+    private var expectedId: String? = null
+    private var toast: Toast? = null
+
+    fun check(context: Context, player: Player, tracks: Tracks) {
+        if (tracks.groups.isEmpty()) return
+        val audio = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
+        if (audio.isEmpty()) return
+        // allowExceedsCapabilities: a format beyond what the decoder declares (24-bit/192 kHz FLAC,
+        // say) is still tried by Media3 and usually plays; only "no decoder at all" is skipped.
+        if (audio.any { it.isSupported(true) }) {
+            run = 0
+            lastSkippedId = null
+            expectedId = null
+            return
+        }
+        val item = player.currentMediaItem ?: return
+        // onTracksChanged can come twice for one song (a quality swap, the adopt path after it). A
+        // skipped song is left at once, so only the one a run paused on can come back; a tap on it
+        // plays again (playWhenReady) and is checked anew.
+        if (item.mediaId == lastSkippedId && !player.playWhenReady) return
+        // Only the song this skipped to continues the run. Anything else is a new start (another
+        // queue, a tap): seen 2026-11-06, Trilogy right after the Starboy run paused on its first
+        // song ("run 22 of 11") instead of skipping it.
+        if (item.mediaId != expectedId) run = 0
+        expectedId = null
+        val format = audio.first().getTrackFormat(0)
+        val title = item.mediaMetadata.title?.toString().orEmpty()
+        val kind = describe(format.sampleMimeType, format.codecs)
+        run++
+        lastSkippedId = item.mediaId
+        val count = player.mediaItemCount
+        val canGoOn = player.hasNextMediaItem() && run < count
+        Log.w(TAG, "unplayable: '$title' ($kind, ${format.sampleMimeType}) has no decoder here; ${if (canGoOn) "skipping" else "pausing"} (run $run of $count)")
+        if (canGoOn) {
+            expectedId = player.getMediaItemAt(player.nextMediaItemIndex).mediaId
+            player.seekToNextMediaItem()
+        } else {
+            player.pause()
+        }
+        val text = when {
+            !canGoOn && run > 1 -> context.getString(R.string.fork_unplayable_none, kind)
+            !canGoOn -> context.getString(R.string.fork_unplayable_stopped, title, kind)
+            run > 1 -> context.getString(R.string.fork_unplayable_skipped_many, run, kind)
+            else -> context.getString(R.string.fork_unplayable_skipped, title, kind)
+        }
+        // One toast once the run settles: a show/cancel per skip (21 in a second on the Starboy album)
+        // overran Android's toast queue ("Adding more than one toast window", BadTokenException) and
+        // the last one, the one that counts, never showed.
+        val app = context.applicationContext
+        main.removeCallbacks(showToast)
+        pendingText = text
+        pendingContext = app
+        main.postDelayed(showToast, TOAST_SETTLE_MS)
+    }
+
+    private var pendingText: String? = null
+    private var pendingContext: Context? = null
+
+    private val showToast = Runnable {
+        val text = pendingText ?: return@Runnable
+        val app = pendingContext ?: return@Runnable
+        pendingText = null
+        toast?.cancel()
+        toast = Toast.makeText(app, text, Toast.LENGTH_LONG).also { it.show() }
+    }
+
+    private const val TOAST_SETTLE_MS = 700L
+
+    /** A short name for the format, for the toast. */
+    internal fun describe(mime: String?, codecs: String?): String = when (mime) {
+        MimeTypes.AUDIO_E_AC3_JOC -> "Dolby Atmos (E-AC-3)"
+        MimeTypes.AUDIO_E_AC3 -> "Dolby Digital Plus"
+        MimeTypes.AUDIO_AC3 -> "Dolby Digital"
+        MimeTypes.AUDIO_AC4 -> "Dolby AC-4"
+        MimeTypes.AUDIO_TRUEHD -> "Dolby TrueHD"
+        MimeTypes.AUDIO_DTS, MimeTypes.AUDIO_DTS_HD, MimeTypes.AUDIO_DTS_EXPRESS, MimeTypes.AUDIO_DTS_X -> "DTS"
+        MimeTypes.AUDIO_MPEGH_MHA1, MimeTypes.AUDIO_MPEGH_MHM1 -> "MPEG-H"
+        null -> codecs ?: "this format"
+        else -> mime.substringAfter('/').uppercase()
+    }
+}

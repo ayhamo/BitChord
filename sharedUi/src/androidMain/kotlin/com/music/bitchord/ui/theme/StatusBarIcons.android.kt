@@ -31,6 +31,7 @@ actual fun StatusBarIcons(dark: Boolean) {
     val window = findWindow(view) ?: return
     SideEffect {
         WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = dark
+        ForkSystemBars.reapply(window, view) // fork: the appearance call shows hidden bars again on 11+
     }
 }
 
@@ -68,6 +69,7 @@ actual fun HideStatusBar(hidden: Boolean) {
                     layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT
                 }
             }
+            ForkSystemBars.reapply(window, view) // fork: "Hide system bars" hides its bars again
         }
     }
 }
@@ -86,6 +88,7 @@ actual fun HideSystemBars(hidden: Boolean) {
         onDispose {
             controller.show(WindowInsetsCompat.Type.systemBars())
             controller.systemBarsBehavior = behavior
+            ForkSystemBars.reapply(window, view) // fork: "Hide system bars" hides its bars again
         }
     }
 }

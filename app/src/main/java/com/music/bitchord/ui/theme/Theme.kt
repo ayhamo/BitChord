@@ -174,6 +174,7 @@ fun SystemBarIcons(dark: Boolean) {
             isAppearanceLightStatusBars = dark
             isAppearanceLightNavigationBars = dark
         }
+        com.music.bitchord.ui.theme.ForkSystemBars.reapply(window, view) // fork: the appearance call shows hidden bars again on 11+
     }
 }
 

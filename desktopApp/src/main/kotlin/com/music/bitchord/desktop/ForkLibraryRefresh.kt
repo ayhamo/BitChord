@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.Icon
@@ -11,6 +12,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalWindowInfo
@@ -27,7 +30,10 @@ import com.music.bitchord.ui.components.PAGE_GUTTER
  *  - when the window gets focus again: back from another app, or opened from the tray or the
  *    taskbar ([ForkLibraryFocusRefresh]), at most once per [FOCUS_GAP_MS] so alt-tabbing back and
  *    forth asks nothing,
- *  - on the Library page's Refresh button ([ForkLibraryRefreshRow]), at once.
+ *  - on the Library page's Refresh button ([ForkLibraryRefreshRow]), at once,
+ *  - on the sidebar's ⟳ beside the playlists ([ForkSidebarPlaylistsRefresh]) and F5 / Ctrl+R
+ *    (Cmd+R on a Mac) anywhere in the window ([isRefreshKey]), quietly: the sidebar's playlists
+ *    stay where they are while the new list comes in.
  * A background refresh is [quiet]: the page keeps showing what it has instead of a spinner.
  */
 internal object ForkLibraryRefresh {
@@ -77,6 +83,30 @@ internal object ForkLibraryRefresh {
         return true
     }
 
+    /** The app's own reload and whether YouTube is signed in, set by [ForkLibraryFocusRefresh]. */
+    @Volatile private var appBump: (() -> Unit)? = null
+    private val _signedIn = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val signedIn: kotlinx.coroutines.flow.StateFlow<Boolean> = _signedIn
+
+    internal fun register(signedIn: Boolean, bump: () -> Unit) {
+        _signedIn.value = signedIn
+        appBump = bump
+    }
+
+    /** The sidebar's button and the keys: a quiet refresh, when there is a library to refresh. */
+    fun requestNow() {
+        val bump = appBump ?: return
+        if (!_signedIn.value) return
+        DesktopTrackLog.log("library: refresh asked for (sidebar or key)")
+        request(quietly = true, bump = bump)
+    }
+
+    /** F5, or Ctrl+R (Cmd+R on a Mac), on key-up as the window's other shortcuts. */
+    fun isRefreshKey(key: androidx.compose.ui.input.key.Key, ctrl: Boolean, meta: Boolean, alt: Boolean = false): Boolean =
+        key == androidx.compose.ui.input.key.Key.F5 ||
+            // Not with Alt: Windows reports AltGr as Ctrl+Alt, and AltGr+R types a letter on some layouts.
+            (key == androidx.compose.ui.input.key.Key.R && !alt && (if (DesktopPlatform.isMac) meta else ctrl))
+
     /** Asks for a refresh through [bump] (the app's own reload), quietly or with the spinner. */
     fun request(quietly: Boolean, bump: () -> Unit) {
         quiet = quietly
@@ -88,6 +118,7 @@ internal object ForkLibraryRefresh {
 @Composable
 internal fun ForkLibraryFocusRefresh(signedIn: Boolean, bump: () -> Unit) {
     val focused = LocalWindowInfo.current.isWindowFocused
+    ForkLibraryRefresh.register(signedIn, bump) // the sidebar's ⟳ and F5 / Ctrl+R use the same reload
     LaunchedEffect(focused) {
         if (focused && signedIn && ForkLibraryRefresh.due()) {
             DesktopTrackLog.log("library: window back in focus, refreshing")
@@ -107,6 +138,39 @@ internal fun ForkLibraryRefreshRow(bump: () -> Unit) {
         TextButton(onClick = { ForkLibraryRefresh.request(quietly = false, bump = bump) }) {
             Icon(Icons.Rounded.Refresh, null, Modifier.padding(end = 6.dp))
             Text(DesktopStrings["refresh_library", "Refresh"])
+        }
+    }
+}
+
+/**
+ * The sidebar's head of the playlists: a small "Playlists" label with ⟳ at its end, so a playlist
+ * made on the phone or in YouTube Music shows without opening the Library page (owner, offered
+ * 2026-11-05). Greyed, not hidden, while YouTube isn't signed in.
+ */
+@Composable
+internal fun ForkSidebarPlaylistsRefresh() {
+    val signedIn by ForkLibraryRefresh.signedIn.collectAsState()
+    Row(
+        Modifier.fillMaxWidth().padding(start = 9.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            DesktopStrings["playlists", "Playlists"],
+            Modifier.weight(1f),
+            color = DesktopSecondary.copy(alpha = 0.68f),
+            style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+        )
+        androidx.compose.material3.IconButton(
+            onClick = ForkLibraryRefresh::requestNow,
+            enabled = signedIn,
+            modifier = Modifier.size(28.dp),
+        ) {
+            Icon(
+                Icons.Rounded.Refresh,
+                DesktopStrings["refresh_library", "Refresh"] + " (F5)",
+                tint = DesktopSecondary.copy(alpha = if (signedIn) 1f else 0.38f),
+                modifier = Modifier.size(16.dp),
+            )
         }
     }
 }

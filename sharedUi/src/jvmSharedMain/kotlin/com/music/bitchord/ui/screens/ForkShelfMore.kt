@@ -65,13 +65,27 @@ import org.jetbrains.compose.resources.stringResource
 /** HomeScreen's `onShelfOpen`, for the shelf headings under it. */
 internal val LocalForkShelfOpen = compositionLocalOf<((HomeShelf) -> Unit)?> { null }
 
-/** What a tap on [shelf]'s heading does, or null when it has no See all link (or no one listens). */
+/**
+ * What a tap on [shelf]'s heading does, or null when there is nothing more to see (or no one
+ * listens). A shelf with YouTube's See all link opens that; one without (every shelf of a
+ * signed-out Home, Navidrome's own shelves) opens its own cards as the grid, when it is a row of
+ * cards long enough to scroll ([FORK_OWN_GRID_MIN] or more). Track lists (Quick picks, Listen
+ * again) already page through all their songs in place, so they keep a plain heading (owner,
+ * 2026-11-05).
+ */
 @Composable
 internal fun forkShelfOpener(shelf: HomeShelf): (() -> Unit)? {
     val open = LocalForkShelfOpen.current ?: return null
-    if (shelf.moreBrowseId == null) return null
+    if (!shelf.forkHasMore()) return null
     return { open(shelf) }
 }
+
+/** Fewest cards a shelf without a link needs before its heading opens them as a grid. */
+const val FORK_OWN_GRID_MIN = 6
+
+/** Whether [forkShelfOpener] offers this shelf's See all: a link, or enough cards of its own. */
+fun HomeShelf.forkHasMore(): Boolean =
+    moreBrowseId != null || (layout != ShelfLayout.LIST && items.size >= FORK_OWN_GRID_MIN)
 
 /** The chevron at the end of an openable heading. */
 @Composable
@@ -118,7 +132,7 @@ fun ForkShelfMorePage(
 ) {
     var reloads by remember { mutableIntStateOf(0) }
     val failed = stringResource(Res.string.fork_shelf_more_failed, localizeShelfTitle(shelf.title))
-    val state by produceState<UiState<List<HomeShelf>>>(UiState.Loading, shelf.moreBrowseId, shelf.moreParams, reloads) {
+    val state by produceState<UiState<List<HomeShelf>>>(UiState.Loading, shelf.moreBrowseId, shelf.moreParams, shelf.takeIf { it.moreBrowseId == null }, reloads) {
         value = UiState.Loading
         val browseId = shelf.moreBrowseId
         value = if (browseId == null) {

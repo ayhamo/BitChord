@@ -228,6 +228,10 @@ class DesktopPlaybackEngine(
     // further down it was still null then ("audio thread recovered from: … forkReport is null" at startup)
     private val forkReport = ForkAutomixReporter()
     private val forkPreview = ForkMixPreview() // fork: v1.9.1's Automix overview between blends (ForkAutomixPreview.kt), before [thread] for the same reason
+    // fork: both read by an idle step() too, so also before [thread] ("forkSilence is null" at startup)
+    private val forkPulse = ForkBackdropPulseMeter() // fork: Backdrop pulse
+    /** Fork: dead air metered on the playing song, for a mix out of a tail that has gone silent. */
+    private val forkSilence = ForkSilentTail()
 
     private val thread = Thread(::pump, "BitChord-Audio").apply {
         isDaemon = true
@@ -832,7 +836,6 @@ class DesktopPlaybackEngine(
     private var equalizer = DesktopEqualizer()
     private var equalizerIncoming = DesktopEqualizer()
     private var forkLoudness = ForkLoudnessStage() // fork: loudness normalization per deck, after its equaliser (ForkLoudness)
-    private val forkPulse = ForkBackdropPulseMeter() // fork: Backdrop pulse
     private var forkLoudnessIncoming = ForkLoudnessStage() // fork
     private var silence: DesktopSilenceSkipper? = null
 
@@ -3142,9 +3145,6 @@ class DesktopPlaybackEngine(
             field = value
             ForkAtmos.mixEngaged = value // fork: the Atmos wait keeps off a mix too
         }
-
-    /** Fork: dead air metered on the playing song, for a mix out of a tail that has gone silent. */
-    private val forkSilence = ForkSilentTail()
 
     /** Until when the hand-over out of the last mix is still settling; see [forkAwaitMixEnd]. */
     @Volatile private var forkMixSettledAtNs = 0L
