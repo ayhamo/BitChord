@@ -1,13 +1,45 @@
 name: Android Release APK
 
+# fork (owner, 2026-11-07): this is the fork's phone release. Upstream's version of this file built
+# an unpublished APK with upstream's key, which the fork doesn't have, so it failed on every push.
+#
+# Every push to main (docs-only pushes aside) and every manual run: the phone and shared unit tests,
+# then the prod APKs (com.ayhamo.bitchord, "BitChord") signed with the fork's key, a check of the
+# signing certificate, and `fork-v<version>` published with the APKs, their SHA-256 sums and a build
+# attestation, replacing that release when it already exists. The app's updater (pointed at this
+# fork) offers it when the version is newer than the installed one.
+#
+# fork-sync-release.yml only merges upstream's releases into main; it starts this afterwards.
+# A failing test or build publishes nothing (GitHub emails the failure).
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'web/**'
+      - 'backend/**'
+      - '.github/*-seen.txt'
   workflow_dispatch:
+
+permissions:
+  contents: write      # publish the release
+  id-token: write      # sign the attestation
+  attestations: write  # store the attestation
+
+concurrency:
+  group: android-release
+  # Never cut a run off between deleting the old release and publishing the new one.
+  cancel-in-progress: false
+
+env:
+  # The fork's own release certificate (key in docker/keys/release, gitignored; the secrets hold it).
+  # A build signed with anything else fails.
+  EXPECTED_CERT_SHA256: 767de1ba5a02b81479bb8112ab6c752fd007cccdbd7f7b01a3cff1c09f3aea2e
 
 jobs:
   build-prod-release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
     - name: Checkout Repository
@@ -20,38 +52,100 @@ jobs:
         distribution: 'temurin'
         cache: gradle
 
-    - name: Setup Secrets (Keystore & local.properties)
+    - name: Android SDK packages
       run: |
-        echo "LASTFM_API_KEY=${{ secrets.LASTFM_API_KEY }}" > local.properties
-        echo "LASTFM_SECRET=${{ secrets.LASTFM_SECRET }}" >> local.properties
-        echo "LISTEN_TOGETHER_SERVER=${{ secrets.LISTEN_TOGETHER_SERVER }}" >> local.properties
-
-        # fork: the fork's own key (as fork-sync-release.yml); upstream's KEYSTORE_* secrets don't exist here, which failed every run ("Tag number over 30")
-        echo "${{ secrets.FORK_KEYSTORE_BASE64 || secrets.KEYSTORE_BASE64 }}" | base64 -d > bitchord-release.jks
-        {
-          echo "storeFile=bitchord-release.jks"
-          echo "storePassword=${{ secrets.FORK_KEYSTORE_PASSWORD || secrets.KEYSTORE_PASSWORD }}"
-          echo "keyAlias=${{ secrets.FORK_KEY_ALIAS || secrets.KEY_ALIAS }}"
-          echo "keyPassword=${{ secrets.FORK_KEYSTORE_PASSWORD || secrets.KEY_PASSWORD }}"
-        } > keystore.properties
+        yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+        "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "platforms;android-37.0" \
+          "build-tools;35.0.0" "ndk;27.0.12077973" "cmake;3.22.1" > /dev/null
 
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
 
+    # Every phone and shared unit test: a failing test, upstream's or the fork's, stops the release
+    # before anything is built or signed.
+    - name: Tests
+      run: |
+        ./gradlew --no-daemon --continue -Pbitchord.bundleWear=false \
+          :app:testDevDebugUnitTest :shared:jvmTest
+
     - name: Build Signed Prod Release APK
-      run: ./gradlew assembleProdRelease
+      env:
+        FORK_KEYSTORE_BASE64: ${{ secrets.FORK_KEYSTORE_BASE64 }}
+        FORK_KEYSTORE_PASSWORD: ${{ secrets.FORK_KEYSTORE_PASSWORD }}
+        FORK_KEY_ALIAS: ${{ secrets.FORK_KEY_ALIAS }}
+        LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+        LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
+        LISTEN_TOGETHER_SERVER: ${{ secrets.LISTEN_TOGETHER_SERVER }}
+      run: |
+        set -euo pipefail
+        # Optional: empty when the fork has no such secret, and the app copes.
+        {
+          echo "LASTFM_API_KEY=$LASTFM_API_KEY"
+          echo "LASTFM_SECRET=$LASTFM_SECRET"
+          echo "LISTEN_TOGETHER_SERVER=$LISTEN_TOGETHER_SERVER"
+        } > local.properties
+        echo "$FORK_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/fork.keystore"
+        {
+          echo "storeFile=$RUNNER_TEMP/fork.keystore"
+          echo "storePassword=$FORK_KEYSTORE_PASSWORD"
+          echo "keyAlias=$FORK_KEY_ALIAS"
+          echo "keyPassword=$FORK_KEYSTORE_PASSWORD"
+        } > keystore.properties
+        ./gradlew --no-daemon -Pbitchord.bundleWear=false :app:assembleProdRelease
+        rm -f keystore.properties local.properties "$RUNNER_TEMP/fork.keystore"
+
+    - name: Check the signatures and name the APKs
+      id: apks
+      run: |
+        set -euo pipefail
+        version=$(sed -n 's/.*bitchordVersionName"\] = "\(.*\)"/\1/p' build.gradle.kts)
+        [ -n "$version" ] || { echo "no bitchordVersionName in build.gradle.kts"; exit 1; }
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+        apksigner=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+        mkdir out
+        for apk in app/build/outputs/apk/prod/release/*.apk; do
+          "$apksigner" verify --print-certs "$apk" | tee certs.txt
+          grep -q "SHA-256 digest: $EXPECTED_CERT_SHA256" certs.txt
+          # app-prod-universal-release.apk -> BitChord-v1.9.1.apk, app-prod-arm64-v8a-release.apk -> BitChord-v1.9.1_arm64-v8a.apk
+          abi=$(basename "$apk" .apk | sed -e 's/^app-prod-//' -e 's/-release$//')
+          if [ "$abi" = "universal" ]; then name="BitChord-v$version.apk"; else name="BitChord-v${version}_$abi.apk"; fi
+          cp "$apk" "out/$name"
+        done
+        (cd out && sha256sum *.apk > SHA256SUMS.txt)
+        cat out/SHA256SUMS.txt
+
+    - name: Attest build provenance
+      uses: actions/attest-build-provenance@v4
+      with:
+        subject-path: out/*.apk
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
         name: bitchord-prod-release-signed
-        path: app/build/outputs/apk/prod/release/*.apk
+        path: out/*
 
-    # Built by the same assembleProdRelease, with the same key. The watch app
-    # only pairs with a phone app signed by the same key, so a prod watch APK
-    # for these phone builds can only come from here, never a local build.
-    - name: Upload Wear OS APK Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: bitchord-wear-prod-release-signed
-        path: wearos/build/outputs/apk/prod/release/*.apk
+    - name: Publish the release
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        VERSION: ${{ steps.apks.outputs.version }}
+      run: |
+        set -euo pipefail
+        release="fork-v$VERSION"
+        {
+          echo "BitChord $VERSION with this fork's changes (Navidrome library, lyrics, clips, stars, playlists, crossfade on skip, Android Auto; see FORK.md)."
+          echo
+          echo "Built from this fork's main at $GITHUB_SHA."
+          echo
+          echo "Signing certificate SHA-256: $EXPECTED_CERT_SHA256"
+          echo "Verify: \`gh attestation verify <apk> -R $GITHUB_REPOSITORY\`, or compare with SHA256SUMS.txt."
+          echo
+          echo "Upstream release: https://github.com/kushagrasinghx/BitChord/releases/tag/v$VERSION"
+          echo
+          gh release view "v$VERSION" -R kushagrasinghx/BitChord --json body -q .body || true
+        } > notes.md
+        if gh release view "$release" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+          gh release delete "$release" -R "$GITHUB_REPOSITORY" --yes --cleanup-tag
+        fi
+        # -R: on a fork gh defaults to the parent repository, which refuses (HTTP 403)
+        gh release create "$release" out/* -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "BitChord $VERSION (my fork)" --notes-file notes.md --latest

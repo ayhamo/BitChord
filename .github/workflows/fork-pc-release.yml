@@ -24,8 +24,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Every PC unit test, before anything is built: a failing test stops the release. Built for
-      # Linux (docker/pc-test.sh) so FFmpeg's natives load in the container.
+      # Every PC unit test, before anything is built: a failing test stops the release. docker/pc-test.sh
+      # builds for Windows as the zip is, with Linux FFmpeg on the test classpath so the decoder tests load.
       - name: PC tests
         run: |
           set -euo pipefail
