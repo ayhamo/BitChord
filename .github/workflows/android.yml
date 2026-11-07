@@ -106,6 +106,12 @@ jobs:
         for apk in app/build/outputs/apk/prod/release/*.apk; do
           "$apksigner" verify --print-certs "$apk" | tee certs.txt
           grep -q "SHA-256 digest: $EXPECTED_CERT_SHA256" certs.txt
+          # http servers on a LAN or Tailscale (app/src/prod/AndroidManifest.xml): a release that
+          # refuses them is the bug a user reported, so it is never published again.
+          # (to a file: with pipefail, grep -q closing the pipe early can fail aapt2 on a good APK)
+          "$(dirname "$apksigner")/aapt2" dump xmltree --file AndroidManifest.xml "$apk" > manifest.txt
+          grep -q 'usesCleartextTraffic([^)]*)=true' manifest.txt \
+            || { echo "::error::$apk refuses http (usesCleartextTraffic is not true)"; exit 1; }
           # app-prod-universal-release.apk -> BitChord-v1.9.1.apk, app-prod-arm64-v8a-release.apk -> BitChord-v1.9.1_arm64-v8a.apk
           abi=$(basename "$apk" .apk | sed -e 's/^app-prod-//' -e 's/-release$//')
           if [ "$abi" = "universal" ]; then name="BitChord-v$version.apk"; else name="BitChord-v${version}_$abi.apk"; fi
@@ -144,6 +150,16 @@ jobs:
           echo
           gh release view "v$VERSION" -R kushagrasinghx/BitChord --json body -q .body || true
         } > notes.md
+        # GitHub refuses this token a new tag on a commit whose workflow files differ from main's
+        # (HTTP 403 "Resource not accessible by integration"): a run for an older commit, after a
+        # later push changed a workflow, deleted the old release and then failed to make the new one
+        # (2026-11-07). Stop before deleting anything; running this workflow again builds main.
+        changed=$(gh api "repos/$GITHUB_REPOSITORY/compare/$GITHUB_SHA...main" \
+          --jq '[.files[]?.filename | select(startswith(".github/workflows/"))] | length')
+        if [ "$changed" != "0" ]; then
+          echo "::error::main has changed workflow files since $GITHUB_SHA, so GitHub won't let this run tag it. Nothing was deleted. Run 'Android Release APK' again (it builds main)."
+          exit 1
+        fi
         if gh release view "$release" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
           gh release delete "$release" -R "$GITHUB_REPOSITORY" --yes --cleanup-tag
         fi

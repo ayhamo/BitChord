@@ -80,6 +80,14 @@ jobs:
         run: |
           set -euo pipefail
           release="fork-pc-v$VERSION"
+          # Same guard as android.yml: GitHub refuses this token a tag on a commit whose workflow
+          # files differ from main's, so stop before deleting the old release.
+          changed=$(gh api "repos/$GITHUB_REPOSITORY/compare/$GITHUB_SHA...main" \
+            --jq '[.files[]?.filename | select(startswith(".github/workflows/"))] | length')
+          if [ "$changed" != "0" ]; then
+            echo "::error::main has changed workflow files since $GITHUB_SHA, so GitHub won't let this run tag it. Nothing was deleted. Run 'Fork PC build' again (it builds main)."
+            exit 1
+          fi
           if gh release view "$release" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release delete "$release" -R "$GITHUB_REPOSITORY" --yes --cleanup-tag
           fi

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  fork (owner, 2026-11-07): the released app may use plain http, like the dev flavor
+  (app/src/dev/AndroidManifest.xml). Upstream's main manifest turns cleartext off, so a
+  Navidrome or WebDAV server on a LAN or Tailscale address (http://192.168.x.x:4533) failed
+  with "CLEARTEXT communication ... not permitted" in the prod app only (a user report).
+  Navidrome only uses http for an address typed with http://, or a bare private IP
+  (NavidromeSettings.normalizeUrl); anything else still gets https://.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application
+        android:usesCleartextTraffic="true"
+        tools:replace="android:usesCleartextTraffic" />
+</manifest>

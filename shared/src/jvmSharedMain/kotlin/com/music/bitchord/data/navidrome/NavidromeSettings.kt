@@ -78,15 +78,37 @@ object NavidromeSettings {
 
     fun clear() = save("", "", "")
 
-    /** `music.example.com/` → `https://music.example.com`; anything without a host reads as blank. */
+    /**
+     * `music.example.com/` → `https://music.example.com`; anything without a host reads as blank.
+     *
+     * A bare private address (`192.168.1.5:4533`, a Tailscale `100.x.y.z`) gets `http://` instead:
+     * Navidrome serves plain http unless a proxy in front adds TLS, and a LAN or Tailscale IP has no
+     * certificate a phone would trust, so `https://` there only ever failed the handshake (a user
+     * report, 2026-11-07). A typed scheme is always kept.
+     */
     fun normalizeUrl(raw: String): String {
         val trimmed = raw.trim().trimEnd('/')
         if (trimmed.isEmpty()) return ""
-        val url = if (trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true)) trimmed else "https://$trimmed"
+        val url = when {
+            trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true) -> trimmed
+            isPrivateIpv4(trimmed.substringBefore('/').substringBefore(':')) -> "http://$trimmed"
+            else -> "https://$trimmed"
+        }
         // "not a url" normalizes to "https://not a url": only a parseable host counts. And the client's
         // own parser has the last word: java.net.URI accepts what HttpUrl refuses (a port of 99999), and
         // a saved address the client can't use crashed every start.
         return if (runCatching { java.net.URI(url).host }.getOrNull().isNullOrBlank() || url.toHttpUrlOrNull() == null) "" else url
+    }
+
+    /** Loopback, the private ranges (10/8, 172.16/12, 192.168/16) and Tailscale's 100.64/10, as a literal IPv4. */
+    internal fun isPrivateIpv4(host: String): Boolean {
+        val parts = host.split('.')
+        if (parts.size != 4) return false
+        val n = parts.map { p -> p.toIntOrNull()?.takeIf { p.length in 1..3 && it in 0..255 } ?: return false }
+        return n[0] == 127 || n[0] == 10 ||
+            (n[0] == 172 && n[1] in 16..31) ||
+            (n[0] == 192 && n[1] == 168) ||
+            (n[0] == 100 && n[1] in 64..127)
     }
 
     fun newSalt(): String =
