@@ -30,6 +30,10 @@ import kotlinx.serialization.json.putJsonArray
  * - `GET /state`: what is playing and the queue, as JSON
  * - `POST /click?x=&y=`, `POST /scroll?x=&y=&notches=`
  * - `POST /type?text=`, `POST /key?code=` (a `KeyEvent` VK_ code)
+ * - `/click` and `/key` also take `mods=shift,ctrl` (held during the event), and `/click` takes
+ *   `holdMs=` (the button stays down that long): song multi-select is entered by a hold and
+ *   extended by Shift / Ctrl+click and Ctrl+A ([ForkSongSelection]), none of which a plain
+ *   click or key could reach
  * - `POST /notice?text=`: shows a [ForkNotice]
  * - `POST /pick?path=`: the next file dialog (Export / Import data) returns that path without
  *   opening, since the native dialog can't be driven from here
@@ -62,7 +66,7 @@ internal object ForkDebugBridge {
         server.createContext("/click") { respond(it) { click(it) } }
         server.createContext("/scroll") { respond(it) { scroll(it) } }
         server.createContext("/type") { respond(it) { type(it) } }
-        server.createContext("/key") { respond(it) { key(it.query("code").toInt()) } }
+        server.createContext("/key") { respond(it) { key(it.query("code").toInt(), mods(it)) } }
         server.createContext("/notice") { respond(it) { ForkNotice.show(it.query("text")); "ok" } }
         // query() has already URL-decoded the value; decoding it again would turn a '+' into a space.
         server.createContext("/pick") { respond(it) { pick = java.nio.file.Path.of(it.query("path")); "next dialog: $pick" } }
@@ -106,10 +110,13 @@ internal object ForkDebugBridge {
 
     private fun click(exchange: HttpExchange): String {
         val (target, x, y) = at(exchange)
+        val mods = mods(exchange)
+        val holdMs = runCatching { exchange.query("holdMs").toLong() }.getOrDefault(0L)
         val ids = listOf(MouseEvent.MOUSE_MOVED, MouseEvent.MOUSE_PRESSED, MouseEvent.MOUSE_RELEASED, MouseEvent.MOUSE_CLICKED)
         ids.forEach { id ->
+            if (id == MouseEvent.MOUSE_RELEASED && holdMs > 0) Thread.sleep(holdMs)
             val button = if (id == MouseEvent.MOUSE_MOVED) MouseEvent.NOBUTTON else MouseEvent.BUTTON1
-            val mask = if (id == MouseEvent.MOUSE_PRESSED) InputEvent.BUTTON1_DOWN_MASK else 0
+            val mask = mods or if (id == MouseEvent.MOUSE_PRESSED) InputEvent.BUTTON1_DOWN_MASK else 0
             post(MouseEvent(target, id, System.currentTimeMillis(), mask, x, y, if (button == MouseEvent.NOBUTTON) 0 else 1, false, button))
         }
         return "clicked ${target.javaClass.simpleName} $x,$y"
@@ -129,10 +136,20 @@ internal object ForkDebugBridge {
         return "typed ${text.length}"
     }
 
-    private fun key(code: Int): String {
+    /** `mods=shift,ctrl` as AWT modifier masks; none when absent. */
+    private fun mods(exchange: HttpExchange): Int =
+        runCatching { exchange.query("mods") }.getOrDefault("").split(',').sumOf {
+            when (it.trim().lowercase()) {
+                "shift" -> InputEvent.SHIFT_DOWN_MASK
+                "ctrl" -> InputEvent.CTRL_DOWN_MASK
+                else -> 0
+            }.toInt()
+        }
+
+    private fun key(code: Int, mods: Int = 0): String {
         val target = focusTarget()
         listOf(KeyEvent.KEY_PRESSED, KeyEvent.KEY_RELEASED).forEach { id ->
-            post(KeyEvent(target, id, System.currentTimeMillis(), 0, code, KeyEvent.CHAR_UNDEFINED))
+            post(KeyEvent(target, id, System.currentTimeMillis(), mods, code, KeyEvent.CHAR_UNDEFINED))
         }
         return "key $code"
     }

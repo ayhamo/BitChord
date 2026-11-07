@@ -3275,6 +3275,7 @@ fun BitChordDesktopApp() {
                 modifier = Modifier.onPreviewKeyEvent { event ->
                     if (event.type != KeyEventType.KeyUp) return@onPreviewKeyEvent false
                     when {
+                        ForkSongSelection.onKey(event.key, event.isCtrlPressed || event.isMetaPressed) -> true // fork: Esc leaves a song selection, Ctrl+A selects all (ForkSongSelection)
                         event.key == Key.MediaPlayPause -> {
                             if (selectedSong != null) togglePlayPauseFromUser()
                             true
@@ -5856,6 +5857,7 @@ private fun DesktopLocalMusicPage(
         )
     }
     var drillDown by remember(persistenceKey) { mutableStateOf<Pair<String, List<Song>>?>(null) }
+    val forkSelect = rememberForkSongSelection(persistenceKey, searchQuery) // fork: multi-select in Downloads, Cached songs, Local Music (ForkSongSelection)
     val filteredSongs = remember(songs, sort, searchQuery) {
         songs.sortedForDesktopLibrary(sort).filter { song ->
             searchQuery.isBlank() || song.title.contains(searchQuery, true) || song.artist.contains(searchQuery, true) ||
@@ -5900,7 +5902,9 @@ private fun DesktopLocalMusicPage(
                 }) {
                     Icon(if (view == DesktopLibraryView.LIST) BitChordIcons.GridView else BitChordIcons.ListView, "Change view")
                 }
+                ForkSelectButton(forkSelect, songs.isNotEmpty()) // fork
             }
+            ForkSelectionBar(forkSelect, songs, title) // fork
             Spacer(Modifier.height(10.dp))
             TabRow(selectedTabIndex = selectedTab, containerColor = Color.Transparent) {
                 listOf("Songs", "Artists", "Albums").forEachIndexed { index, label ->
@@ -5921,9 +5925,9 @@ private fun DesktopLocalMusicPage(
                 }
                 Spacer(Modifier.height(6.dp))
                 val forkShown = drillDown!!.second
-                DesktopLibrarySongContent(forkShown, view, { song -> forkPlayFrom?.invoke(forkShown, song) ?: onSongClick(song) }, menu) // fork: was onSongClick
+                DesktopLibrarySongContent(forkShown, view, { song -> forkPlayFrom?.invoke(forkShown, song) ?: onSongClick(song) }, menu, forkSelect) // fork: was onSongClick; + forkSelect
             } else when (selectedTab) {
-                0 -> DesktopLibrarySongContent(filteredSongs, view, { song -> forkPlayFrom?.invoke(filteredSongs, song) ?: onSongClick(song) }, menu) // fork: was onSongClick
+                0 -> DesktopLibrarySongContent(filteredSongs, view, { song -> forkPlayFrom?.invoke(filteredSongs, song) ?: onSongClick(song) }, menu, forkSelect) // fork: was onSongClick; + forkSelect
                 1 -> DesktopLibraryGroupingContent(artists, view, onGroupClick = { drillDown = it }, forkPicture = if (persistenceKey == "navidrome") rememberForkArtistPictures() else null, forkMenu = ForkGroupMenu(BrowseType.ARTIST, deletable = persistenceKey == "downloaded") { drillDown = it }) // fork: + forkPicture (Navidrome artists' own pictures), + forkMenu
                 else -> DesktopLibraryGroupingContent(albums, view, onGroupClick = { drillDown = it }, forkMenu = ForkGroupMenu(BrowseType.ALBUM, deletable = persistenceKey == "downloaded") { drillDown = it }) // fork: + forkMenu
             }
@@ -5944,7 +5948,9 @@ private fun DesktopLibrarySongContent(
     view: DesktopLibraryView,
     onSongClick: (Song) -> Unit,
     menu: (@Composable (Song) -> Unit)? = null,
+    forkSelect: ForkSongSelection? = null, // fork: multi-select (ForkSongSelection)
 ) {
+    forkSelect?.shown = songs.map(Song::videoId) // fork: Select all and Shift ranges go by the rows on screen
     if (songs.isEmpty()) {
         DesktopEmptyPage(BitChordIcons.Search, "No matching music", "Try a different search.")
     } else if (view == DesktopLibraryView.GRID) {
@@ -5958,12 +5964,14 @@ private fun DesktopLibrarySongContent(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             gridItems(songs, key = Song::videoId) { song ->
-                Column(Modifier.fillMaxWidth().clickable { onSongClick(song) }) {
+                ForkSelectableRow(forkSelect, song, onSongClick) { forkClick -> // fork: hold / Ctrl+click selects (ForkSongSelection)
+                Column(Modifier.fillMaxWidth().clickable { forkClick(song) }) { // fork: was onSongClick
                     DesktopArtwork(song.thumbnailUrl, Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(12.dp)))
                     Spacer(Modifier.height(7.dp))
                     Text(song.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
                     Text(song.artist, color = DesktopSecondary, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
+                } // fork
             }
         } } // fork
     } else {
@@ -5976,15 +5984,17 @@ private fun DesktopLibrarySongContent(
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             items(songs, key = Song::videoId) { song ->
+                ForkSelectableRow(forkSelect, song, onSongClick) { forkClick -> // fork: hold / Ctrl+click selects (ForkSongSelection)
                 DesktopSongRow(
                     song,
                     isCurrent = isCurrentRow(song),
                     liked = false,
-                    onClick = onSongClick,
+                    onClick = forkClick, // fork: was onSongClick
                     onToggleLike = null,
                     downloaded = song.localPath != null,
                     menu = menu,
                 )
+                } // fork
             }
         } } // fork
     }
