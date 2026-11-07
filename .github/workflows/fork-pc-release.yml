@@ -1,8 +1,9 @@
 # Fork-only workflow. Every push to main (docs-only pushes aside, as android.yml) and every manual
-# run (owner, 2026-11-07; it was manual only): builds the Windows portable zip of the desktop app, with its own
-# Java inside, and publishes it as a pre-release `fork-pc-v<version>`. A pre-release is not what GitHub
-# calls "latest", so the phone's update check and the Android release workflow never see this one.
-# Running it again replaces that pre-release.
+# run: builds the Windows portable zip of the desktop app, with its own Java inside, and publishes it
+# as the release `fork-pc-v<version>`, replacing it when it exists. A normal release since 2026-11-07
+# (owner; it was a pre-release), never marked "Latest": the phone's update check reads "Latest", so
+# that stays the phone's `fork-v<version>`. The PC's check (DesktopUpdateChecker) looks for the
+# `fork-pc-v` tag in the release list instead.
 name: Fork PC build
 
 on:
@@ -27,7 +28,7 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     permissions:
-      contents: write      # create the pre-release
+      contents: write      # create the release
       id-token: write      # sign the attestation
       attestations: write  # store the attestation
     steps:
@@ -72,7 +73,7 @@ jobs:
         with:
           subject-path: out/BitChord Portable.zip
 
-      - name: publish the pre-release
+      - name: publish the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.build.outputs.version }}
@@ -83,7 +84,7 @@ jobs:
             gh release delete "$release" -R "$GITHUB_REPOSITORY" --yes --cleanup-tag
           fi
           {
-            echo "BitChord $VERSION for Windows, a test build of this fork's desktop app. Not the Android release."
+            echo "BitChord $VERSION for Windows: this fork's desktop app. Not the Android release."
             echo
             echo "Unzip it anywhere and run \`BitChord Portable\\BitChord.exe\`. Java is inside; nothing else to install."
             echo "Everything the app keeps (settings, logins, caches, offline songs) is in \`BitChord Portable\\data\`, so the folder can be moved or copied whole."
@@ -94,4 +95,4 @@ jobs:
             echo "Verify: \`gh attestation verify <zip> -R $GITHUB_REPOSITORY\`, or compare with SHA256SUMS.txt."
           } > notes.md
           # -R: on a fork gh defaults to the parent repository, which refuses (HTTP 403)
-          gh release create "$release" out/* -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "BitChord $VERSION for Windows (test build)" --notes-file notes.md
+          gh release create "$release" out/* -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest=false --title "BitChord $VERSION for Windows" --notes-file notes.md
