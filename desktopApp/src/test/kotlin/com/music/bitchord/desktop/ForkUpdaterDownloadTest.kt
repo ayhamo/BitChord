@@ -7,6 +7,8 @@ import java.net.ServerSocket
 import java.nio.file.Files
 import java.nio.file.Path
 import java.security.MessageDigest
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.io.path.exists
@@ -23,6 +25,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 
 /**
@@ -181,6 +184,83 @@ class ForkUpdaterDownloadTest {
             val dropped = info("/dl/BitChord.Portable.zip").copy(downloadUrl = "http://127.0.0.1:${socket.localPort}/BitChord.Portable.zip")
             failure(dropped) // the client's own "closed early" or ours: either refuses it
             dropper.join(5_000)
+        }
+        assertNothingLeft()
+    }
+
+    /**
+     * A server that answers with [head] and [body], then keeps the connection open without sending
+     * more until [block] is done: a stall, as a dead network or a hung proxy leaves it.
+     */
+    private fun stallingServer(head: String, body: ByteArray, block: (port: Int) -> Unit) {
+        val done = CountDownLatch(1)
+        ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { socket ->
+            val holder = thread {
+                runCatching {
+                    socket.accept().use { client ->
+                        client.getInputStream().read(ByteArray(8192)) // the request
+                        client.getOutputStream().apply { write(head.toByteArray()); write(body); flush() }
+                        done.await(20, TimeUnit.SECONDS)
+                    }
+                }
+            }
+            try {
+                block(socket.localPort)
+            } finally {
+                done.countDown()
+                holder.join(5_000)
+            }
+        }
+    }
+
+    private fun stalledHalfway(zip: ByteArray, block: (DesktopUpdateChecker.UpdateInfo) -> Unit) {
+        serve("/dl/SHA256SUMS.txt", "${sha256(zip)}  BitChord.Portable.zip\n".toByteArray())
+        stallingServer("HTTP/1.1 200 OK\r\nContent-Length: ${zip.size}\r\n\r\n", zip.copyOf(zip.size / 2)) { port ->
+            block(info("/dl/BitChord.Portable.zip").copy(downloadUrl = "http://127.0.0.1:$port/BitChord.Portable.zip"))
+        }
+    }
+
+    @Test
+    fun aDownloadThatStopsSendingIsGivenUp() {
+        stalledHalfway(appZip(padding = 300_000)) { stalled ->
+            val started = System.nanoTime()
+            val message = runBlocking {
+                assertFailsWith<ForkUpdater.UpdateFailed> { ForkUpdater.prepare(stalled, dir, stallMillis = 500) {} }.message.orEmpty()
+            }
+            assertTrue(message.startsWith("The download stopped"), message)
+            assertTrue((System.nanoTime() - started) / 1_000_000 < 5_000, "gave up long after the stall limit")
+        }
+        assertNothingLeft()
+    }
+
+    @Test
+    fun cancelWorksWhileTheDownloadIsStalled() {
+        stalledHalfway(appZip(padding = 300_000)) { stalled ->
+            val receiving = CompletableDeferred<Unit>()
+            runBlocking {
+                // The full 30 s stall limit: only Cancel can end this in time.
+                val update = async(Dispatchers.IO) {
+                    ForkUpdater.prepare(stalled, dir) { fraction -> if (fraction != null && fraction > 0f) receiving.complete(Unit) }
+                }
+                receiving.await()
+                delay(300) // past the half that arrives: now it waits on a silent connection
+                val cancelled = System.nanoTime()
+                update.cancel()
+                assertFailsWith<CancellationException> { update.await() }
+                assertTrue((System.nanoTime() - cancelled) / 1_000_000 < 3_000, "Cancel waited for the stalled read")
+            }
+        }
+        assertNothingLeft()
+    }
+
+    @Test
+    fun sumsThatNeverArriveAreGivenUp() {
+        stallingServer("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n", ByteArray(0)) { port ->
+            val stalled = info("/dl/BitChord.Portable.zip").copy(sumsUrl = "http://127.0.0.1:$port/SHA256SUMS.txt")
+            val message = runBlocking {
+                assertFailsWith<ForkUpdater.UpdateFailed> { ForkUpdater.prepare(stalled, dir, stallMillis = 500) {} }.message.orEmpty()
+            }
+            assertEquals("SHA256SUMS.txt couldn't be read (nothing arrived for 1 s). Try again.", message)
         }
         assertNothingLeft()
     }

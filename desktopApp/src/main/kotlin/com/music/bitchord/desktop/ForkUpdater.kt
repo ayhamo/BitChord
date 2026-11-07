@@ -7,17 +7,21 @@ import java.net.URLDecoder
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.net.http.HttpTimeoutException
+import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.time.Duration
+import java.util.concurrent.Flow
 import java.util.zip.ZipInputStream
-import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.future.await
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
@@ -184,6 +188,7 @@ internal object ForkUpdater {
     suspend fun prepare(
         info: DesktopUpdateChecker.UpdateInfo,
         into: Path? = updateDir,
+        stallMillis: Long = STALL_MILLIS,
         onProgress: (Float?) -> Unit,
     ): Path = withContext(Dispatchers.IO) {
         val dir = into ?: throw UpdateFailed("This copy of BitChord can't update itself.")
@@ -194,9 +199,9 @@ internal object ForkUpdater {
         val zip = dir.resolve("BitChord Portable.zip")
         val part = dir.resolve("BitChord Portable.zip.part")
         try {
-            val sums = fetchText(sumsUrl)
+            val sums = fetchText(sumsUrl, stallMillis)
             val expected = expectedSha256(sums, zipUrl) ?: throw UpdateFailed("$SUMS_NAME doesn't list the download.")
-            val actual = download(zipUrl, part, onProgress)
+            val actual = download(zipUrl, part, stallMillis, onProgress)
             if (!actual.equals(expected, ignoreCase = true)) {
                 throw UpdateFailed("The download is damaged (its SHA-256 doesn't match the release's). Try again.")
             }
@@ -218,34 +223,80 @@ internal object ForkUpdater {
         }
     }
 
-    private fun fetchText(url: String): String {
-        val response = http.send(
-            HttpRequest.newBuilder(URI(url)).timeout(Duration.ofSeconds(30)).GET().build(),
-            HttpResponse.BodyHandlers.ofString(),
-        )
+    /** A small text file; [stallMillis] bounds the whole fetch, body included (the request's timeout covers only the headers). */
+    private suspend fun fetchText(url: String, stallMillis: Long): String {
+        val response = try {
+            withTimeoutOrNull(stallMillis) {
+                http.sendAsync(
+                    HttpRequest.newBuilder(URI(url)).timeout(Duration.ofMillis(maxOf(stallMillis, 1_000L))).GET().build(),
+                    HttpResponse.BodyHandlers.ofString(),
+                ).await()
+            }
+        } catch (timeout: HttpTimeoutException) {
+            null
+        } ?: throw UpdateFailed("$SUMS_NAME couldn't be read (nothing arrived for ${(stallMillis + 999) / 1000} s). Try again.")
         if (response.statusCode() !in 200..299) throw UpdateFailed("$SUMS_NAME couldn't be read (HTTP ${response.statusCode()}).")
         return response.body()
     }
 
-    /** Streams [url] into [to], hashing as it goes; returns the SHA-256 in hex. */
-    private suspend fun download(url: String, to: Path, onProgress: (Float?) -> Unit): String {
-        val response = http.send(HttpRequest.newBuilder(URI(url)).GET().build(), HttpResponse.BodyHandlers.ofInputStream())
-        val body = response.body()
-        body.use { input ->
+    /** How long the download may go without a byte before it is given up ([download]). */
+    const val STALL_MILLIS = 30_000L
+
+    /**
+     * Streams [url] into [to], hashing as it goes; returns the SHA-256 in hex.
+     *
+     * The body arrives as the HTTP client's chunks through a channel, one requested at a time, and
+     * each is awaited with [stallMillis]: a connection that stays open but stops sending (a dead
+     * Wi-Fi, a proxy that hangs) fails with a message instead of leaving the progress bar standing
+     * forever. It also makes Cancel immediate: the earlier blocking `InputStream.read` only checked
+     * for cancellation between reads, so a stalled read ignored Cancel too. The request's own
+     * timeout covers the wait for the response's headers.
+     */
+    private suspend fun download(url: String, to: Path, stallMillis: Long, onProgress: (Float?) -> Unit): String {
+        val stalled = "The download stopped (nothing arrived for ${(stallMillis + 999) / 1000} s). Try again."
+        val request = HttpRequest.newBuilder(URI(url)).timeout(Duration.ofMillis(maxOf(stallMillis, 1_000L))).GET().build()
+        val response = try {
+            http.sendAsync(request, HttpResponse.BodyHandlers.ofPublisher()).await()
+        } catch (timeout: HttpTimeoutException) {
+            throw UpdateFailed(stalled)
+        }
+        val chunks = Channel<List<ByteBuffer>>(capacity = 1)
+        var subscription: Flow.Subscription? = null
+        response.body().subscribe(object : Flow.Subscriber<List<ByteBuffer>> {
+            override fun onSubscribe(s: Flow.Subscription) {
+                subscription = s
+                s.request(1)
+            }
+            override fun onNext(item: List<ByteBuffer>) {
+                chunks.trySend(item) // one requested at a time, so the one slot is always free
+            }
+            override fun onError(failure: Throwable) {
+                chunks.close(failure)
+            }
+            override fun onComplete() {
+                chunks.close()
+            }
+        })
+        try {
             if (response.statusCode() !in 200..299) throw UpdateFailed("The download failed (HTTP ${response.statusCode()}).")
             val total = response.headers().firstValueAsLong("Content-Length").orElse(-1L)
             val digest = MessageDigest.getInstance("SHA-256")
             Files.newOutputStream(to).use { output ->
-                val buffer = ByteArray(64 * 1024)
                 var done = 0L
                 var lastShown = -1
                 while (true) {
-                    coroutineContext.ensureActive()
-                    val read = input.read(buffer)
-                    if (read < 0) break
-                    output.write(buffer, 0, read)
-                    digest.update(buffer, 0, read)
-                    done += read
+                    val next = withTimeoutOrNull(stallMillis) { chunks.receiveCatching() } ?: throw UpdateFailed(stalled)
+                    if (next.isClosed) {
+                        val failure = next.exceptionOrNull() ?: break
+                        throw UpdateFailed("The download was cut off (${failure.message ?: failure.javaClass.simpleName}). Try again.")
+                    }
+                    for (buffer in next.getOrThrow()) {
+                        val bytes = ByteArray(buffer.remaining()).also(buffer::get)
+                        output.write(bytes)
+                        digest.update(bytes)
+                        done += bytes.size
+                    }
+                    subscription?.request(1)
                     if (total > 0) {
                         val percent = (done * 100 / total).toInt()
                         if (percent != lastShown) {
@@ -257,6 +308,8 @@ internal object ForkUpdater {
                 if (total > 0 && done != total) throw UpdateFailed("The download ended early. Try again.")
             }
             return digest.digest().joinToString("") { "%02x".format(it) }
+        } finally {
+            subscription?.cancel() // closes the connection on a stall, Cancel or failure
         }
     }
 
