@@ -347,7 +347,7 @@ private fun PlayerMeshBackdrop(
     ArtworkMeshBackdrop(
         mesh = mesh,
         seam = { seam.value },
-        modifier = Modifier.graphicsLayer { this.alpha = alpha() },
+        modifier = Modifier.graphicsLayer { this.alpha = alpha() }.forkBackdropPulse(), // fork: PC-only pulse and Bass glow on the default theme too, a bare Modifier on the phone (ForkBackdropPulse)
     )
 }
 
@@ -3436,7 +3436,8 @@ fun NowPlayingScreen(
                                         ) {
                                             drawCropped(frame.image)
                                         }
-                                    },
+                                    }
+                                    .forkCoverFade(art.request, art.loaded).forkBassGlowAnchor(art.request), // fork: Cover fade (ForkCoverFade), the PC's Bass glow (ForkBassGlow); bare Modifiers while off
                             )
 
                             // Where the clip plays when it can't have the banner:

@@ -262,6 +262,7 @@ internal object ForkBackup {
         bool("navidrome_home_shelves", "home_shelves", navidromeFork),
         int("clip_cache_mb", "clip_cache_mb", navidromeFork, allowed = ForkNavidromeSettings.CLIP_CACHE_CHOICES_MB),
         int("preload_songs", "preload_songs", navidromeFork, allowed = ForkNavidromeSettings.PRELOAD_CHOICES),
+        bool("cover_fade", ForkPlayerEffects.KEY_COVER_FADE), // "Cover fade" (ForkPlayerEffects), both apps
     )
 
     /** The phone's `AppSettings.SECRETS` and `DEVICE_LOCAL`: never carried either way. */

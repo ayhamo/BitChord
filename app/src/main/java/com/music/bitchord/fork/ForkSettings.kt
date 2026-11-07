@@ -33,6 +33,7 @@ object ForkSettings {
     private val _downloadOnMobile = MutableStateFlow(false)
     private val _preloadSongs = MutableStateFlow(0)
     private val _offlineMode = MutableStateFlow(false)
+    private val _coverFade = com.music.bitchord.ui.player.ForkCoverFade.enabled // the player reads it live
 
     /** A Navidrome song's `.background.mp4` plays full screen; see `NavidromeClips`. */
     val backdropClips: StateFlow<Boolean> = _backdropClips.asStateFlow()
@@ -57,6 +58,9 @@ object ForkSettings {
 
     /** How many Navidrome songs after the playing one are loaded whole into the song cache (0 = off); see `ForkPreload`. */
     val preloadSongs: StateFlow<Int> = _preloadSongs.asStateFlow()
+
+    /** At a song change the old cover stays until the new one loads, then dissolves into it (off by default); see `ForkCoverFade`. */
+    val coverFade: StateFlow<Boolean> = _coverFade.asStateFlow()
 
     /** Only what is on the phone is shown, as with no network; see `ForkNetwork.offline`. */
     val offlineMode: StateFlow<Boolean> = _offlineMode.asStateFlow()
@@ -85,6 +89,7 @@ object ForkSettings {
         _downloadOnMobile.value = prefs.getBoolean(KEY_DOWNLOAD_ON_MOBILE, false)
         _preloadSongs.value = prefs.getInt(KEY_PRELOAD_SONGS, 0)
         _offlineMode.value = prefs.getBoolean(KEY_OFFLINE_MODE, false)
+        _coverFade.value = prefs.getBoolean(KEY_COVER_FADE, false)
         com.music.bitchord.ui.theme.ForkSystemBars.mode.value = prefs.getString(KEY_SYSTEM_BARS, null)
             ?.let { saved -> com.music.bitchord.ui.theme.ForkSystemBars.Mode.entries.firstOrNull { it.name == saved } }
             ?: com.music.bitchord.ui.theme.ForkSystemBars.Mode.NONE
@@ -152,6 +157,11 @@ object ForkSettings {
         prefs.edit().putBoolean(KEY_OFFLINE_MODE, value).apply()
     }
 
+    fun setCoverFade(value: Boolean) {
+        _coverFade.value = value
+        prefs.edit().putBoolean(KEY_COVER_FADE, value).apply()
+    }
+
     fun setCrossfadeOnSkip(value: Boolean) {
         _crossfadeOnSkip.value = value
         prefs.edit().putBoolean(KEY_CROSSFADE_ON_SKIP, value).apply()
@@ -164,7 +174,7 @@ object ForkSettings {
     private val BACKED_UP = listOf(
         KEY_CROSSFADE_ON_SKIP, KEY_BACKDROP_CLIPS, KEY_ANIMATED_COVERS, KEY_NAVIDROME_SCROBBLE,
         KEY_NAVIDROME_HOME_SHELVES, KEY_CLIP_CACHE_MB, KEY_NAVIDROME_YT_HISTORY, KEY_DOWNLOAD_ON_MOBILE,
-        KEY_PRELOAD_SONGS,
+        KEY_PRELOAD_SONGS, KEY_COVER_FADE,
     )
 
     /**
@@ -207,6 +217,7 @@ object ForkSettings {
         _navidromeYouTubeHistory.value = prefs.getBoolean(KEY_NAVIDROME_YT_HISTORY, false)
         _downloadOnMobile.value = prefs.getBoolean(KEY_DOWNLOAD_ON_MOBILE, false)
         _preloadSongs.value = prefs.getInt(KEY_PRELOAD_SONGS, 0)
+        _coverFade.value = prefs.getBoolean(KEY_COVER_FADE, false)
         ForkClipCache.applyLimit(_clipCacheMb.value)
     }
 
@@ -236,6 +247,7 @@ object ForkSettings {
     private const val KEY_PRELOAD_SONGS = "preload_songs"
     private const val KEY_OFFLINE_MODE = "offline_mode"
     private const val KEY_SYSTEM_BARS = "system_bars"
+    private const val KEY_COVER_FADE = "cover_fade"
 
     const val DEFAULT_CLIP_CACHE_MB = 150
 
