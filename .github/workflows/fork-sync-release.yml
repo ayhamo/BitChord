@@ -1,8 +1,8 @@
 # Fork-only workflow. Once a day it checks upstream BitChord's latest release. When this fork has
 # no `fork-v<version>` for it yet, it merges that release into main, runs the phone, shared and PC
 # unit tests on the merge, pushes main (and `pc`, which follows main), and starts "Android Release APK"
-# (android.yml), which builds, signs and publishes `fork-v<version>`. The PC zip stays a manual run
-# of "Fork PC build".
+# (android.yml), which builds, signs and publishes `fork-v<version>`, and "Fork PC build"
+# (fork-pc-release.yml), which publishes the PC zip as `fork-pc-v<version>`.
 #
 # It syncs only (owner, 2026-11-07): it used to build and publish the release itself; android.yml
 # does that now for every push to main, so a merge done by hand releases the same way.
@@ -57,7 +57,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write   # push the merge
-      actions: write    # start android.yml (a push made with this token starts no workflow)
+      actions: write    # start the two releases (a push made with this token starts no workflow)
       issues: write     # open an issue when the run fails
     env:
       TAG: ${{ needs.check.outputs.tag }}
@@ -111,6 +111,7 @@ jobs:
           set -euo pipefail
           git push --atomic origin HEAD:refs/heads/main HEAD:refs/heads/pc
           gh workflow run android.yml -R "$GITHUB_REPOSITORY" --ref main
+          gh workflow run fork-pc-release.yml -R "$GITHUB_REPOSITORY" --ref main
 
       - name: open an issue when the run fails
         if: failure()

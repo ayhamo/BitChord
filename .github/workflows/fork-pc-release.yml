@@ -1,10 +1,19 @@
-# Fork-only workflow. Run by hand: builds the Windows portable zip of the desktop app, with its own
+# Fork-only workflow. Every push to main (docs-only pushes aside, as android.yml) and every manual
+# run (owner, 2026-11-07; it was manual only): builds the Windows portable zip of the desktop app, with its own
 # Java inside, and publishes it as a pre-release `fork-pc-v<version>`. A pre-release is not what GitHub
 # calls "latest", so the phone's update check and the Android release workflow never see this one.
 # Running it again replaces that pre-release.
 name: Fork PC build
 
 on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'web/**'
+      - 'backend/**'
+      - '.github/*-seen.txt'
   workflow_dispatch:
 
 permissions:
