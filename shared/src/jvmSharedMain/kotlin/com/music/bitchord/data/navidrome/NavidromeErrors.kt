@@ -43,7 +43,7 @@ object NavidromeErrors {
                 "This version of the app can't use http. Update BitChord, or use the server's https:// address"
             chain.any { it is UnknownHostException } ->
                 "Can't find a server called $host. Check the address, or use the server's IP"
-            chain.any { it is SSLException } ->
+            chain.any { it is SSLException } || (https && chain.any { it is SocketTimeoutException && it.duringHandshake() }) ->
                 if (https) {
                     "Couldn't make a secure (https) connection. If your server has no certificate, start the address with http://"
                 } else {
@@ -64,6 +64,17 @@ object NavidromeErrors {
                 "Something answered at that address, but not Navidrome. Check the address and port"
             else -> error.message?.takeIf { it.isNotBlank() } ?: "Couldn't connect"
         }
+    }
+
+    /**
+     * A timeout inside the TLS handshake (Java's `sun.security.ssl`, Android's Conscrypt): an https
+     * address on a plain-http server. Such a server may never answer the TLS hello, and then the
+     * failure is a read timeout, not an SSL error (10 runs in 40 against a test http server,
+     * 2026-11-07), and "didn't answer in time" sent the user to check the network, not the scheme.
+     */
+    private fun Throwable.duringHandshake(): Boolean = stackTrace.any { frame ->
+        frame.className.startsWith("sun.security.ssl.") || frame.className.contains("conscrypt", ignoreCase = true) ||
+            frame.methodName == "startHandshake"
     }
 
     /** [block], with a failure re-thrown as an [IOException] whose message is [describe]'s. */

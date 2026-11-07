@@ -25,7 +25,10 @@ class NavidromeErrorsTest {
         server.enqueue(response)
         server.start()
         try {
-            block(server.url("/").toString().trimEnd('/'))
+            // 127.0.0.1, not the server's "localhost": that also names ::1, where nothing listens, and
+            // when OkHttp tried ::1 first its refusal replaced the TLS error (8 runs in 40 on CI-like
+            // Docker said "Nothing answered" for https to this http server; 2026-11-07 Android run).
+            block(server.url("/").newBuilder().host("127.0.0.1").build().toString().trimEnd('/'))
         } finally {
             server.shutdown()
         }
