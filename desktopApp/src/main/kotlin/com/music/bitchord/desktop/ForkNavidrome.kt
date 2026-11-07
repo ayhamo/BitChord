@@ -390,7 +390,7 @@ internal fun ForkNavidromeScreen(
     val offline by ForkOffline.offline.collectAsState()
     LaunchedEffect(saved, attempt, offline) { // offline: the kept songs, back online: the library
         failure = null
-        runCatching { NavidromeRepository.getSongs() }
+        runCatching { NavidromeRepository.getSongsExplained() }
             .onSuccess {
                 songs = it
                 onStars(ForkNavidrome.starred())
@@ -483,7 +483,7 @@ private fun ForkNavidromeLogin(contentPadding: PaddingValues) {
                         val address = NavidromeSettings.normalizeUrl(url)
                         NavidromeRepository.testConnection(address, username.trim(), password)
                             .onSuccess { NavidromeSettings.save(address, username, password) }
-                            .onFailure { failure = it.message ?: "Couldn't connect" }
+                            .onFailure { failure = "Couldn’t connect. " + (it.message ?: "") } // as the phone's navidrome_test_failed
                         trying = false
                     }
                 },

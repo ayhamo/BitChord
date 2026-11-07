@@ -172,8 +172,12 @@ object NavidromeRepository {
         }
     }
 
+    /** [getSongs] for the library page (phone and PC): a failure's message is a plain sentence ([NavidromeErrors]). */
+    suspend fun getSongsExplained(): List<Song> = NavidromeErrors.explained(NavidromeSettings.url.value) { getSongs() }.getOrThrow()
+
+    /** The login test (phone and PC): a failure's message is a plain sentence ([NavidromeErrors]), shown as it is. */
     suspend fun testConnection(url: String, username: String, password: String): Result<Unit> =
-        runCatching { NavidromeClient(url, username, password).ping() }
+        NavidromeErrors.explained(url) { NavidromeClient(url, username, password).ping() }
 
     /**
      * [Song.albumId] and [Song.artistId] are the library's own album and artist

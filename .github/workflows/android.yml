@@ -44,6 +44,8 @@ jobs:
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0   # the changelog reads main's history back to the previous release
 
     - name: Set up JDK 17
       uses: actions/setup-java@v4
@@ -147,6 +149,10 @@ jobs:
           echo "Verify: \`gh attestation verify <apk> -R $GITHUB_REPOSITORY\`, or compare with SHA256SUMS.txt."
           echo
           echo "Upstream release: https://github.com/kushagrasinghx/BitChord/releases/tag/v$VERSION"
+          echo
+          # This fork's changes (phone code only), read before the old release is deleted below.
+          bash .github/scripts/fork-changelog.sh fork-v "$VERSION" app shared sharedUi || echo "(No changelog this time: reading it failed.)"
+          echo "### Upstream's notes for $VERSION"
           echo
           gh release view "v$VERSION" -R kushagrasinghx/BitChord --json body -q .body || true
         } > notes.md

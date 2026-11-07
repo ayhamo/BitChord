@@ -33,6 +33,8 @@ jobs:
       attestations: write  # store the attestation
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # the changelog reads main's history back to the previous release
 
       # Every PC unit test, before anything is built: a failing test stops the release. docker/pc-test.sh
       # builds for Windows as the zip is, with Linux FFmpeg on the test classpath so the decoder tests load.
@@ -88,9 +90,6 @@ jobs:
             echo "::error::main has changed workflow files since $GITHUB_SHA, so GitHub won't let this run tag it. Nothing was deleted. Run 'Fork PC build' again (it builds main)."
             exit 1
           fi
-          if gh release view "$release" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            gh release delete "$release" -R "$GITHUB_REPOSITORY" --yes --cleanup-tag
-          fi
           {
             echo "BitChord $VERSION for Windows: this fork's desktop app. Not the Android release."
             echo
@@ -101,6 +100,12 @@ jobs:
             echo
             echo "Commit: $GITHUB_SHA"
             echo "Verify: \`gh attestation verify <zip> -R $GITHUB_REPOSITORY\`, or compare with SHA256SUMS.txt."
+            echo
+            # This fork's changes (PC code only), read before the old release is deleted below.
+            bash .github/scripts/fork-changelog.sh fork-pc-v "$VERSION" desktopApp shared sharedUi || echo "(No changelog this time: reading it failed.)"
           } > notes.md
+          if gh release view "$release" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release delete "$release" -R "$GITHUB_REPOSITORY" --yes --cleanup-tag
+          fi
           # -R: on a fork gh defaults to the parent repository, which refuses (HTTP 403)
           gh release create "$release" out/* -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest=false --title "BitChord $VERSION for Windows" --notes-file notes.md
