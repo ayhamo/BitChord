@@ -77,7 +77,7 @@ object AppUpdateChecker {
             val apkUrl = apkAssetUrl(release)
             val notes = release["body"]?.jsonPrimitive?.contentOrNull
             val latest = tag.removePrefix("fork-").removePrefix("v") // fork: tags are fork-v<version>
-            if (isNewer(latest, BuildConfig.VERSION_NAME)) {
+            if (com.music.bitchord.fork.ForkAppBuild.offers(latest, com.music.bitchord.fork.ForkAppBuild.buildOf(notes), BuildConfig.VERSION_NAME, BuildConfig.FORK_BUILD, ::isNewer)) { // fork: was isNewer(latest, VERSION_NAME); a same-version rebuild is offered by its build number
                 _available.value = UpdateInfo(latest, url, apkUrl, notes)
             }
         }

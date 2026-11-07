@@ -410,7 +410,7 @@ fun SettingsScreen(
     val version = remember(context) {
         runCatching {
             context.packageManager.getPackageInfo(context.packageName, 0).versionName
-        }.getOrNull() ?: "1.0"
+        }.getOrNull()?.plus(com.music.bitchord.fork.ForkAppBuild.suffix) ?: "1.0" // fork: + " (build N)"
     }
 
     // Made fresh on every pass rather than remembered: it tallies the rows

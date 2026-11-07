@@ -54,6 +54,9 @@ internal object ForkStartup {
         withTimeoutOrNull(FIRST_FRAME_FALLBACK_MS) { firstFrame.await() }
     }
 
+    /** Whether the first frame has really been drawn ([awaitFirstFrame] also returns after its cap); ForkUpdater's clean-up waits on it. */
+    val firstFrameShown: Boolean get() = firstFrame.isCompleted
+
     /** How long Local Music waits after the first frame before scanning anyway, if its page is not opened. */
     const val LOCAL_MUSIC_DELAY_MS = 4_000L
 

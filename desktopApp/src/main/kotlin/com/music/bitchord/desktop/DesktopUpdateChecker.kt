@@ -31,6 +31,8 @@ internal object DesktopUpdateChecker {
         /** The installer for this platform, or null when the release has none. */
         val downloadUrl: String?,
         val notes: String?,
+        val build: Int = 0, // fork: the release's build number (ForkUpdater.buildOf), 0 when its notes name none
+        val sumsUrl: String? = null, // fork: the release's SHA256SUMS.txt, which the in-app update checks the zip against
     )
 
     private const val LATEST_RELEASE_URL =
@@ -47,16 +49,20 @@ internal object DesktopUpdateChecker {
         }
     }
 
-    suspend fun check(): UpdateInfo? = runCatching {
-        val release = fetch(LATEST_RELEASE_URL)?.let { json.parseToJsonElement(it) as? JsonObject }
+    suspend fun check(): UpdateInfo? = forkCheck().getOrNull() // fork: forkCheck tells "up to date" from "couldn't check"
+
+    /** fork: [check]'s body, with a failure kept, for Settings > About's "Check for updates". */
+    internal suspend fun forkCheck(): Result<UpdateInfo?> = runCatching {
+        val release = (if (ForkUpdater.testReleasesUrl != null) null else fetch(LATEST_RELEASE_URL)) // fork: a test list replaces GitHub
+            ?.let { json.parseToJsonElement(it) as? JsonObject }
         release?.let { updateFrom(it, currentVersion, platformSuffixes()) }?.let { return@runCatching it }
         // fork: the PC's own builds are the pre-releases `fork-pc-v<version>`
         // (.github/workflows/fork-pc-release.yml), which GitHub's "latest" skips: asked by "latest"
         // alone, the PC only ever saw the fork's phone release, with no file for it, and said nothing.
         // The list is newest first; the first PC build that is newer and has the zip is the one.
-        val releases = fetch(RELEASES_URL)?.let { json.parseToJsonElement(it) as? JsonArray } ?: return@runCatching null
+        val releases = fetch(ForkUpdater.testReleasesUrl ?: RELEASES_URL)?.let { json.parseToJsonElement(it) as? JsonArray } ?: error("the release list couldn't be read") // fork: test URL; a failure, not "up to date"
         forkPcUpdate(releases.mapNotNull { it as? JsonObject }, currentVersion, platformSuffixes())
-    }.getOrNull()
+    }
 
     private suspend fun fetch(url: String): String? {
         val response = http.get(url) {
@@ -70,21 +76,22 @@ internal object DesktopUpdateChecker {
     internal const val FORK_PC_TAG_PREFIX = "fork-pc-v"
 
     /** fork: the newest PC build among [releases] (GitHub's order, newest first) that is newer than [current]; drafts and the phone's releases skipped. */
-    internal fun forkPcUpdate(releases: List<JsonObject>, current: String, suffixes: List<String>): UpdateInfo? =
+    internal fun forkPcUpdate(releases: List<JsonObject>, current: String, suffixes: List<String>, currentBuild: Int = ForkUpdater.currentBuild): UpdateInfo? =
         releases.firstNotNullOfOrNull { release ->
             val tag = release["tag_name"]?.jsonPrimitive?.contentOrNull ?: return@firstNotNullOfOrNull null
             if (!tag.startsWith(FORK_PC_TAG_PREFIX) || release["draft"]?.jsonPrimitive?.contentOrNull == "true") return@firstNotNullOfOrNull null
-            updateFrom(release, current, suffixes)
+            updateFrom(release, current, suffixes, currentBuild)
         }
 
     /** The update [release] is over [current], with a file for this platform ([suffixes]); null when it is none. */
-    internal fun updateFrom(release: JsonObject, current: String, suffixes: List<String>): UpdateInfo? {
+    internal fun updateFrom(release: JsonObject, current: String, suffixes: List<String>, currentBuild: Int = ForkUpdater.currentBuild): UpdateInfo? { // fork: + currentBuild
         val tag = release["tag_name"]?.jsonPrimitive?.contentOrNull ?: return null
         val url = release["html_url"]?.jsonPrimitive?.contentOrNull ?: return null
         // fork: fork-pc-v<version> (the PC build) and fork-v<version>. `fork-` alone left "pc-v1.9",
         // whose "pc" read as 0, so a PC build was never newer than anything.
         val latest = tag.removePrefix(FORK_PC_TAG_PREFIX).removePrefix("fork-").removePrefix("v")
-        if (!isNewer(latest, current)) return null
+        val forkBuild = ForkUpdater.buildOf(release) // fork: a rebuild under the same version is offered by its build number
+        if (!ForkUpdater.offers(latest, forkBuild, current, currentBuild)) return null // fork: was !isNewer(latest, current)
         // fork: a phone-only release says nothing to the PC
         val installer = assetUrl(release, suffixes) ?: return null
         return UpdateInfo(
@@ -92,6 +99,8 @@ internal object DesktopUpdateChecker {
             releaseUrl = url,
             downloadUrl = installer,
             notes = release["body"]?.jsonPrimitive?.contentOrNull,
+            build = forkBuild, // fork
+            sumsUrl = ForkUpdater.sumsUrlOf(release), // fork
         )
     }
 

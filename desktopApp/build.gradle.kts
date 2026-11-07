@@ -433,6 +433,8 @@ val windowsPortableAssemble by tasks.registering {
     val javaRuntime = providers.gradleProperty("bitchord.windowsRuntime").orNull
     // fork: BitChord.exe (docker/pc-launcher.sh), which reads BitChord.args written below.
     val launcherExe = providers.gradleProperty("bitchord.windowsLauncher").orNull
+    // fork: the CI run's number (`github.run_number`), 0 for a local build; ForkUpdater offers a higher one.
+    val forkBuild = providers.gradleProperty("bitchord.build").orNull?.trim()?.toIntOrNull() ?: 0
     // Declared, not implied.
     inputs.file(appJar)
     inputs.files(runtime)
@@ -443,6 +445,8 @@ val windowsPortableAssemble by tasks.registering {
     inputs.property("listenTogether", togetherServer)
     inputs.property("javaRuntime", javaRuntime.orEmpty())
     inputs.property("launcher", launcherExe.orEmpty())
+    inputs.property("build", forkBuild) // fork
+    launcherExe?.let { inputs.files(it, File(it).resolveSibling("BitChordUpdate.exe")) } // fork: their content, not only the path (both are rebuilt at the same /tmp path)
     outputs.dir(stage)
     doLast {
         val target = stage.get().asFile
@@ -497,6 +501,7 @@ val windowsPortableAssemble by tasks.registering {
             }
             addAll(listOf("-Xmx512m", "-XX:+UseG1GC", "-XX:G1PeriodicGCInterval=20000", "-XX:G1PeriodicGCSystemLoadThreshold=0"))
             add("-Dbitchord.version=$version")
+            add("-Dbitchord.build=$forkBuild") // fork: ForkUpdater
             if (moduleIndex.isNotBlank()) add("-Dbitchord.module.index=$moduleIndex")
             if (lastfmKey.isNotBlank() && lastfmSharedSecret.isNotBlank()) {
                 add("-Dbitchord.lastfm.key=$lastfmKey")
@@ -511,6 +516,9 @@ val windowsPortableAssemble by tasks.registering {
         )
         File(target, "BitChord.exe").delete()
         launcherExe?.let { File(it).copyTo(File(target, "BitChord.exe"), overwrite = true) }
+        // fork: the updater (BitChordUpdate.c), built beside the launcher by docker/pc-launcher.sh
+        File(target, "BitChordUpdate.exe").delete()
+        launcherExe?.let { File(it).resolveSibling("BitChordUpdate.exe").takeIf(File::isFile)?.copyTo(File(target, "BitChordUpdate.exe"), overwrite = true) }
         // What the old BitChord-log.bat did: the same app, its output in data\bitchord.log.
         File(target, "BitChord (log).bat").writeText(
             listOf(
@@ -550,6 +558,9 @@ val windowsPortableAssemble by tasks.registering {
             }
             if (!File(target, "BitChord.exe").isFile) {
                 add("its launcher is missing: pass -Pbitchord.windowsLauncher=<BitChord.exe> (docker/pc-launcher.sh)")
+            }
+            if (launcherExe != null && !File(target, "BitChordUpdate.exe").isFile) { // fork
+                add("its updater is missing: docker/pc-launcher.sh builds BitChordUpdate.exe beside BitChord.exe")
             }
         }
         check(problems.isEmpty()) { "windowsPortable: " + problems.joinToString("; ") }

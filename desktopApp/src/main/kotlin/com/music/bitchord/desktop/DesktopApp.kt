@@ -530,28 +530,7 @@ fun BitChordDesktopApp() {
     var personalPlayingStash by remember { mutableStateOf(false) }
     val persistence = remember { DesktopPersistence() }
     remember { ForkContentPreferences.install() } // fork: Square video thumbnails reaches the shared UI before the first frame
-    var availableUpdate by remember { mutableStateOf<DesktopUpdateChecker.UpdateInfo?>(null) }
-    LaunchedEffect(Unit) { availableUpdate = DesktopUpdateChecker.check() }
-    availableUpdate?.let { update ->
-        AlertDialog(
-            onDismissRequest = { availableUpdate = null },
-            title = { Text(DesktopStrings["d_update_available", "Update available"]) },
-            text = {
-                ForkUpdateNotes(update.version, DesktopUpdateChecker.currentVersion, update.notes) // fork: was a Text with the notes cut at 600 characters
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    DesktopExternalLinks.open(update.downloadUrl ?: update.releaseUrl)
-                    availableUpdate = null
-                }) { Text(DesktopStrings["d_download", "Download"]) }
-            },
-            dismissButton = {
-                TextButton(onClick = { availableUpdate = null }) {
-                    Text(DesktopStrings["d_later", "Later"])
-                }
-            },
-        )
-    }
+    ForkUpdaterHost() // fork: the check at start and every 12 h, the dialog with the in-app download and install (ForkUpdaterUi); was a check at start and a dialog whose Download opened the browser
     var destination by remember { mutableStateOf(DesktopDestination.LISTEN_NOW) }
     var query by remember { mutableStateOf("") }
     var searchFilter by remember { mutableStateOf(SearchFilter.ALL) }
@@ -6877,6 +6856,7 @@ private fun DesktopSettingsScreen(
                 }
             }
             }
+            item { ForkAboutSettingsGroup() } // fork: About, the version with its build and "Check for updates"
             item {
                 DesktopSettingsFooter(onLicenses = onOpenLicenses)
             }
@@ -6914,7 +6894,7 @@ private fun DesktopSettingsFooter(onLicenses: () -> Unit) {
     )
     Text(
         text = buildAnnotatedString {
-            append("bitchord $version  ")
+            append("bitchord $version${ForkUpdater.footerBuild}  ") // fork: + the build number
             withLink(LinkAnnotation.Url("https://github.com/kushagrasinghx/BitChord", linkStyles)) {
                 append("GitHub")
             }

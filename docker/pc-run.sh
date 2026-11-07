@@ -24,7 +24,8 @@ if [ "${PORTABLE:-0}" = 1 ]; then
     IMPORT_FLAG=-Dbitchord.portableImport=false
     [ "${IMPORT:-0}" = 1 ] && IMPORT_FLAG=
     # The java launcher reads JDK_JAVA_OPTIONS; BitChord.exe passes the environment on.
-    export JDK_JAVA_OPTIONS="-Dbitchord.debugBridge=8765 $IMPORT_FLAG"
+    # EXTRA_JAVA_OPTS: more -D flags for a test, e.g. -Dbitchord.updateUrl=http://127.0.0.1:8770/releases.json (ForkUpdater)
+    export JDK_JAVA_OPTIONS="-Dbitchord.debugBridge=8765 $IMPORT_FLAG ${EXTRA_JAVA_OPTS:-}"
     "./BitChord Portable/BitChord.exe" --log
 else
     nohup "./BitChord Portable/runtime/bin/java.exe" -Duser.home="$W/home" -Djava.io.tmpdir="$W/home/tmp" -Dbitchord.version=1.9 \

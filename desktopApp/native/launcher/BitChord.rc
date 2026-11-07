@@ -1,13 +1,14 @@
 // BitChord.exe's icon and version (fork). docker/pc-launcher.sh writes version.h and copies the
 // app icon (desktopApp/packaging/icons/AppIcon.ico, the installer's) beside this file.
+// The fourth number is the build (ForkUpdater; 0 for a local build).
 #include <winver.h>
 #include "version.h"
 
 1 ICON "AppIcon.ico"
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION BITCHORD_V1, BITCHORD_V2, BITCHORD_V3, 0
-PRODUCTVERSION BITCHORD_V1, BITCHORD_V2, BITCHORD_V3, 0
+FILEVERSION BITCHORD_V1, BITCHORD_V2, BITCHORD_V3, BITCHORD_BUILD
+PRODUCTVERSION BITCHORD_V1, BITCHORD_V2, BITCHORD_V3, BITCHORD_BUILD
 FILEFLAGSMASK 0x3fL
 FILEFLAGS 0x0L
 FILEOS VOS_NT_WINDOWS32

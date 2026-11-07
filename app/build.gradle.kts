@@ -101,6 +101,8 @@ android {
         // the same GitHub release, told apart by file name. See
         // AppUpdateChecker.apkAssetUrl.
         buildConfigField("String", "UPDATE_APK_PREFIX", "\"BitChord-\"")
+        // fork: the release's build number (android.yml passes github.run_number; 0 locally), ForkAppBuild
+        buildConfigField("int", "FORK_BUILD", (providers.gradleProperty("bitchord.build").orNull?.trim()?.toIntOrNull() ?: 0).toString())
     }
 
     splits {

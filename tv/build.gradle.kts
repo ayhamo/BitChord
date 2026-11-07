@@ -103,6 +103,8 @@ android {
         // the updater installs the TV app here, never the phone app. See
         // AppUpdateChecker.apkAssetUrl.
         buildConfigField("String", "UPDATE_APK_PREFIX", "\"BitChordTV-\"")
+        // fork: ForkAppBuild (shared with the phone sources); -Pbitchord.build, 0 locally
+        buildConfigField("int", "FORK_BUILD", (providers.gradleProperty("bitchord.build").orNull?.trim()?.toIntOrNull() ?: 0).toString())
     }
 
     splits {

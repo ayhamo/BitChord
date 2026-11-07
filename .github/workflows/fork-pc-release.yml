@@ -53,7 +53,9 @@ jobs:
           version=$(sed -n 's/.*bitchordVersionName"\] = "\(.*\)"/\1/p' build.gradle.kts)
           echo "version=$version" >> "$GITHUB_OUTPUT"
           mkdir out
-          docker run --rm -v "$PWD:/work" -v "$PWD/out:/out" eclipse-temurin:21-jdk bash /work/docker/pc-build.sh
+          # The build number (ForkUpdater): the app offers a rebuild of the same version by it. Also
+          # in the notes below as "Build: N", which is where the app reads a release's number.
+          docker run --rm -e BITCHORD_BUILD="$GITHUB_RUN_NUMBER" -v "$PWD:/work" -v "$PWD/out:/out" eclipse-temurin:21-jdk bash /work/docker/pc-build.sh
           sudo chown -R "$(id -u):$(id -g)" out
           # GitHub stores an uploaded file's space as a dot: the zip is listed, and downloads, as
           # BitChord.Portable.zip, so that is the name the sums give (`sha256sum -c` beside the download).
@@ -64,7 +66,7 @@ jobs:
         run: |
           set -euo pipefail
           listing=$(unzip -l "out/BitChord Portable.zip")
-          for entry in "BitChord.exe" "BitChord.args" "BitChord (log).bat" "runtime/bin/javaw.exe" "lib/bitchord-app.jar"; do
+          for entry in "BitChord.exe" "BitChordUpdate.exe" "BitChord.args" "BitChord (log).bat" "runtime/bin/javaw.exe" "lib/bitchord-app.jar"; do
             # A here-string, not echo | grep -q: grep stops at the first match, and under pipefail
             # echo's broken pipe failed the step (2026-11-04).
             grep -qF "BitChord Portable/$entry" <<< "$listing" || { echo "missing: BitChord Portable/$entry"; exit 1; }
@@ -98,6 +100,8 @@ jobs:
             echo "Its first start takes over the settings and data of the earlier \`BitChord.bat\` zip, which are left where they were."
             echo "\`BitChord (log).bat\` runs the same app and writes \`data\\bitchord.log\`, for reporting a problem."
             echo
+            echo "Build: $GITHUB_RUN_NUMBER"
+            echo   # its own line: the app's update check reads it (ForkUpdater.buildOf)
             echo "Commit: $GITHUB_SHA"
             echo   # the app shows the notes as Markdown: without a blank line these two run together
             echo "Verify: \`gh attestation verify <zip> -R $GITHUB_REPOSITORY\`, or compare with SHA256SUMS.txt."
