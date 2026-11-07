@@ -1,3 +1,3 @@
 # The last release of Bntagaaa/BitChord-Desktop-Revived this fork reviewed (read by fork-desktop-revived-watch.yml).
 # After reviewing a new release, set it here and push.
-release=v1.9.0
+release=v1.9.1

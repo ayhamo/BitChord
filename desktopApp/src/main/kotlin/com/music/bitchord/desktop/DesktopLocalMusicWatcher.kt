@@ -78,13 +78,15 @@ internal object DesktopLocalMusicWatcher {
                 if (key != null) {
                     val interesting = key.pollEvents().any { event ->
                         val changed = event.context() as? Path ?: return@any false
-                        changed.toString().substringAfterLast('.', "").lowercase() in AUDIO_EXTENSIONS
+                        changed.toString().substringAfterLast('.', "").lowercase() in AUDIO_EXTENSIONS ||
+                            ForkLocalArtwork.isFolderCoverName(changed.fileName.toString()) // fork: a cover.jpg added or replaced rescans (Revived 769fa84a)
                     }
                     key.reset()
                     if (interesting) pendingSince = System.currentTimeMillis()
                 }
                 if (pendingSince > 0L && System.currentTimeMillis() - pendingSince >= SETTLE_MS) {
                     pendingSince = 0L
+                    ForkLocalArtwork.forgetFolderCovers() // fork: the rescan looks for folder covers again
                     _changes.tryEmit(Unit)
                 }
             }

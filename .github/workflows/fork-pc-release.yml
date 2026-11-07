@@ -99,6 +99,7 @@ jobs:
             echo "\`BitChord (log).bat\` runs the same app and writes \`data\\bitchord.log\`, for reporting a problem."
             echo
             echo "Commit: $GITHUB_SHA"
+            echo   # the app shows the notes as Markdown: without a blank line these two run together
             echo "Verify: \`gh attestation verify <zip> -R $GITHUB_REPOSITORY\`, or compare with SHA256SUMS.txt."
             echo
             # This fork's changes (PC code only), read before the old release is deleted below.

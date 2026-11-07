@@ -107,6 +107,14 @@ dependencies {
     val desktopHazeVersion = if (targetOs == "windows") "1.7.2" else "1.7.3"
     implementation("dev.chrisbanes.haze:haze:$desktopHazeVersion")
     implementation("dev.chrisbanes.haze:haze-materials:$desktopHazeVersion")
+    // fork: the update dialog's release notes as Markdown, with the phone's renderer and version (ForkUpdateNotes)
+    implementation("com.halilibo.compose-richtext:richtext-ui-material3:0.20.0")
+    implementation("com.halilibo.compose-richtext:richtext-commonmark:0.20.0") {
+        // Its jvm artifact names Compose's Linux desktop (desktop-jvm-linux-x64 1.5.11, Skiko 0.7's
+        // Linux renderer): the Windows zip refused it. This app's own Compose provides all of it.
+        exclude(group = "org.jetbrains.compose.desktop", module = "desktop-jvm-linux-x64")
+        exclude(group = "org.jetbrains.skiko", module = "skiko-awt-runtime-linux-x64")
+    }
 
     implementation(compose.runtime)
     implementation(compose.foundation)

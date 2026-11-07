@@ -32,18 +32,40 @@ internal object ForkLocalArtwork {
     private val FOLDER_COVER_NAMES = listOf("cover", "folder", "front", "album", "artwork")
     private val IMAGE_EXTENSIONS = listOf("jpg", "jpeg", "png")
 
-    /** A `file:` address of [audioPath]'s cover, or null when it has none and its folder neither. */
-    fun artworkUri(audioPath: Path): String? = runCatching {
+    /**
+     * A `file:` address of [audioPath]'s cover, or null when it has none and its folder neither.
+     *
+     * The cached copy is keyed by the file's size and date and by the folder image's name, size and
+     * date (Desktop Revived 8c071420): keyed by the song alone, a `cover.jpg` added or replaced
+     * after the first scan never showed, the song's empty marker answering first.
+     */
+    fun artworkUri(audioPath: Path, cacheDirectory: Path = directory): String? = runCatching {
         val absolute = audioPath.toAbsolutePath().normalize()
         val stamp = runCatching { "${Files.size(absolute)}|${Files.getLastModifiedTime(absolute).toMillis()}" }.getOrDefault("")
-        val cached = directory.resolve("${digest("$absolute|$stamp")}.jpg")
+        val folderImage = absolute.parent?.let(::folderCoverPath)
+        val folderStamp = folderImage?.let { image ->
+            runCatching { "${image.fileName}|${Files.size(image)}|${Files.getLastModifiedTime(image).toMillis()}" }.getOrDefault("")
+        }.orEmpty()
+        val cached = cacheDirectory.resolve("${digest("$CACHE_VERSION|$absolute|$stamp|$folderStamp")}.jpg")
         if (Files.isRegularFile(cached)) {
             return@runCatching if (Files.size(cached) > 0) cached.toUri().toString() else null
         }
-        val bytes = embedded(absolute) ?: folderCover(absolute)
+        val bytes = embedded(absolute)?.takeIf(::isImage) ?: folderImage?.let(::readFolderCover)
+        Files.createDirectories(cacheDirectory)
         Files.write(cached, bytes ?: ByteArray(0))
         if (bytes != null) cached.toUri().toString() else null
     }.getOrNull()
+
+    /** `cover.jpg` and the other [FOLDER_COVER_NAMES], any case: the watcher rescans when one changes. */
+    fun isFolderCoverName(fileName: String): Boolean {
+        val name = fileName.lowercase(Locale.ROOT)
+        return name.substringBeforeLast('.', "") in FOLDER_COVER_NAMES && name.substringAfterLast('.', "") in IMAGE_EXTENSIONS
+    }
+
+    /** A JPEG or PNG by its first bytes: anything else (a GIF, a BMP, junk) isn't kept as the cover. */
+    internal fun isImage(bytes: ByteArray): Boolean =
+        (bytes.size > 3 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() && bytes[2] == 0xFF.toByte()) ||
+            (bytes.size > 8 && bytes[0] == 0x89.toByte() && bytes.decodeToString(1, 4) == "PNG")
 
     /** Every cached cover, thrown away: a new Local Music folder starts again (Revived's rule). */
     fun clearCache() {
@@ -59,38 +81,51 @@ internal object ForkLocalArtwork {
 
     // ---- FLAC -------------------------------------------------------------
 
-    /** The first `PICTURE` block of the metadata at the front; the audio is never read. */
+    /** The front cover among the `PICTURE` blocks of the metadata at the front; the audio is never read. */
     private fun flac(path: Path): ByteArray? = runCatching {
         RandomAccessFile(path.toFile(), "r").use(::flacPicture)
     }.getOrNull()
 
+    /**
+     * Every metadata block is read within its own length (Desktop Revived f3e1f0ff): a picture
+     * block whose fields lie about their sizes is skipped, never read on into the next block or
+     * the audio. A file can hold several pictures (front, back, artist, a GIF icon): the front
+     * cover (type 3) is taken, else the first that is a JPEG or PNG; it used to be the first
+     * picture whatever it was.
+     */
     private fun flacPicture(raf: RandomAccessFile): ByteArray? {
         val magic = ByteArray(4)
         if (raf.read(magic) != 4 || magic.decodeToString() != "fLaC") return null
-        while (true) {
-            val flags = raf.read()
-            if (flags == -1) return null
-            val length = (raf.read() shl 16) or (raf.read() shl 8) or raf.read()
-            if (length < 0) return null
-            if (flags and 0x7F == FLAC_PICTURE) return flacPictureBlock(raf)
-            if (raf.skipBytes(length) < length) return null
-            if (flags and 0x80 != 0) return null // the last metadata block
+        var first: ByteArray? = null
+        while (raf.filePointer + 4 <= raf.length()) {
+            val flags = raf.readUnsignedByte()
+            val length = (raf.readUnsignedByte() shl 16) or (raf.readUnsignedByte() shl 8) or raf.readUnsignedByte()
+            val blockEnd = raf.filePointer + length
+            if (blockEnd > raf.length()) break
+            if (flags and 0x7F == FLAC_PICTURE) {
+                runCatching { flacPictureBlock(raf, blockEnd) }.getOrNull()?.takeIf { isImage(it.second) }?.let { (type, image) ->
+                    if (type == FLAC_FRONT_COVER) return image
+                    if (first == null) first = image
+                }
+            }
+            raf.seek(blockEnd)
+            if (flags and 0x80 != 0) break // the last metadata block
         }
+        return first
     }
 
-    /** Type, MIME, description, 16 bytes of size and colour, then the image. */
-    private fun flacPictureBlock(raf: RandomAccessFile): ByteArray? {
-        raf.readInt() // picture type: the first picture whatever it is
+    /** Type, MIME, description, 16 bytes of size and colour, then the image; null when a field runs past [end]. */
+    private fun flacPictureBlock(raf: RandomAccessFile, end: Long): Pair<Int, ByteArray>? {
+        val type = raf.readInt()
         val mime = raf.readInt()
-        if (mime !in 0..256) return null
-        raf.skipBytes(mime)
+        if (mime !in 0..256 || raf.filePointer + mime + 4 > end) return null
+        raf.seek(raf.filePointer + mime)
         val description = raf.readInt()
-        if (description !in 0..65_536) return null
-        raf.skipBytes(description)
-        raf.skipBytes(16)
+        if (description !in 0..65_536 || raf.filePointer + description + 20 > end) return null
+        raf.seek(raf.filePointer + description + 16)
         val size = raf.readInt()
-        if (size !in 1..MAX_IMAGE_BYTES) return null
-        return ByteArray(size).also(raf::readFully)
+        if (size !in 1..MAX_IMAGE_BYTES || size > end - raf.filePointer) return null
+        return type to ByteArray(size).also(raf::readFully)
     }
 
     // ---- ID3v2 ------------------------------------------------------------
@@ -216,21 +251,35 @@ internal object ForkLocalArtwork {
 
     // ---- Folder image -------------------------------------------------------
 
-    /** `cover.jpg` and the like beside the file, the convention music managers have long used. */
-    private fun folderCover(audioPath: Path): ByteArray? {
-        val dir = audioPath.parent ?: return null
-        for (name in FOLDER_COVER_NAMES) {
-            for (ext in IMAGE_EXTENSIONS) {
-                val candidate = dir.resolve("$name.$ext")
-                if (candidate.isRegularFile()) {
-                    return runCatching {
-                        Files.readAllBytes(candidate).takeIf { it.isNotEmpty() && it.size <= MAX_IMAGE_BYTES }
-                    }.getOrNull()
-                }
-            }
+    /** Folder → its cover (or none) and when that was looked up: one listing per folder per scan. */
+    private val folderCovers = java.util.concurrent.ConcurrentHashMap<Path, Pair<Path?, Long>>()
+
+    /**
+     * `cover.jpg` and the like in [dir], the convention music managers have long used, in the order
+     * of [FOLDER_COVER_NAMES] then [IMAGE_EXTENSIONS], any case. Every song's cache key needs it, so
+     * a folder is listed once and the answer reused for [FOLDER_LOOKUP_MS] (a scan's length), not
+     * up to 15 file checks per song.
+     */
+    internal fun folderCoverPath(dir: Path): Path? {
+        val now = System.nanoTime() / 1_000_000
+        folderCovers[dir]?.let { (found, at) -> if (now - at < FOLDER_LOOKUP_MS) return found }
+        val images = runCatching {
+            Files.list(dir).use { files -> files.filter { isFolderCoverName(it.fileName.toString()) && it.isRegularFile() }.toList() }
+        }.getOrDefault(emptyList())
+        val found = FOLDER_COVER_NAMES.firstNotNullOfOrNull { name ->
+            IMAGE_EXTENSIONS.firstNotNullOfOrNull { ext -> images.firstOrNull { it.fileName.toString().equals("$name.$ext", ignoreCase = true) } }
         }
-        return null
+        if (folderCovers.size > 4_096) folderCovers.clear()
+        folderCovers[dir] = found to now
+        return found
     }
+
+    /** Forgets the folder lookups: the watcher saw a cover image change. */
+    fun forgetFolderCovers() = folderCovers.clear()
+
+    private fun readFolderCover(image: Path): ByteArray? = runCatching {
+        Files.readAllBytes(image).takeIf { it.isNotEmpty() && it.size <= MAX_IMAGE_BYTES && isImage(it) }
+    }.getOrNull()
 
     private fun digest(value: String): String = MessageDigest.getInstance("SHA-256")
         .digest(value.toByteArray())
@@ -238,6 +287,11 @@ internal object ForkLocalArtwork {
         .take(32)
 
     private const val FLAC_PICTURE = 6
+    private const val FLAC_FRONT_COVER = 3
+
+    /** In the cache key: a cover kept under the old key (song only) isn't trusted, its empty markers least of all. */
+    private const val CACHE_VERSION = 2
+    private const val FOLDER_LOOKUP_MS = 5_000L
     private const val MAX_IMAGE_BYTES = 20 * 1024 * 1024
     private const val MAX_TAG_BYTES = 32 * 1024 * 1024
 }

@@ -17,6 +17,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.halilibo.richtext.markdown.Markdown
+import com.halilibo.richtext.ui.RichTextStyle
+import com.halilibo.richtext.ui.material3.RichText
 
 /**
  * Fork: the update dialog's body, with the release notes in full in a box that scrolls.
@@ -25,7 +28,8 @@ import androidx.compose.ui.unit.dp
  * changelog stopped mid-sentence and hid most of what changed; the only way to read the rest was
  * the release page. From Desktop Revived fd4e5680, which caps the box's height and scrolls it
  * instead. A scrollbar is drawn because a desktop dialog gives no other hint that more is below,
- * and the notes are selectable so a line can be copied.
+ * and the notes are selectable so a line can be copied. Since 2026-11-07 they are rendered as
+ * Markdown by the phone's own renderer (compose-richtext 0.20.0, as `UpdateAvailableDialog`).
  */
 @Composable
 internal fun ForkUpdateNotes(version: String, current: String, notes: String?) {
@@ -35,7 +39,12 @@ internal fun ForkUpdateNotes(version: String, current: String, notes: String?) {
             Text("BitChord $version is out — you have $current.")
             notes?.takeIf { it.isNotBlank() }?.let { text ->
                 Spacer(Modifier.height(12.dp))
-                SelectionContainer { Text(text.trim()) }
+                // As the phone's UpdateAvailableDialog: rendered, not raw. The releases' changelog is
+                // headings, bullets and `code` (fork-changelog.sh), which as plain text read as
+                // "### New in this build" with backticks round every name.
+                SelectionContainer {
+                    RichText(style = RichTextStyle.Default) { Markdown(text.trim()) }
+                }
             }
         }
         // Sized to the notes, not the cap: a bare fillMaxHeight() here would stretch short notes'
