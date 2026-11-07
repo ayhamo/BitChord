@@ -26,12 +26,13 @@ jobs:
         echo "LASTFM_SECRET=${{ secrets.LASTFM_SECRET }}" >> local.properties
         echo "LISTEN_TOGETHER_SERVER=${{ secrets.LISTEN_TOGETHER_SERVER }}" >> local.properties
 
-        echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > bitchord-release.jks
+        # fork: the fork's own key (as fork-sync-release.yml); upstream's KEYSTORE_* secrets don't exist here, which failed every run ("Tag number over 30")
+        echo "${{ secrets.FORK_KEYSTORE_BASE64 || secrets.KEYSTORE_BASE64 }}" | base64 -d > bitchord-release.jks
         {
           echo "storeFile=bitchord-release.jks"
-          echo "storePassword=${{ secrets.KEYSTORE_PASSWORD }}"
-          echo "keyAlias=${{ secrets.KEY_ALIAS }}"
-          echo "keyPassword=${{ secrets.KEY_PASSWORD }}"
+          echo "storePassword=${{ secrets.FORK_KEYSTORE_PASSWORD || secrets.KEYSTORE_PASSWORD }}"
+          echo "keyAlias=${{ secrets.FORK_KEY_ALIAS || secrets.KEY_ALIAS }}"
+          echo "keyPassword=${{ secrets.FORK_KEYSTORE_PASSWORD || secrets.KEY_PASSWORD }}"
         } > keystore.properties
 
     - name: Grant execute permission for gradlew
