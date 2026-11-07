@@ -178,10 +178,15 @@ internal object ForkUpdater {
     /**
      * Downloads, checks and unzips [info]'s zip into `data\update\staged\`; returns the staged app
      * folder. [onProgress] gets a fraction (null while the size is unknown). Cancelling the calling
-     * coroutine stops the download and removes what it wrote.
+     * coroutine stops the download and removes what it wrote. [into] is `data\update\` (a test's
+     * own folder in `ForkUpdaterDownloadTest`).
      */
-    suspend fun prepare(info: DesktopUpdateChecker.UpdateInfo, onProgress: (Float?) -> Unit): Path = withContext(Dispatchers.IO) {
-        val dir = updateDir ?: throw UpdateFailed("This copy of BitChord can't update itself.")
+    suspend fun prepare(
+        info: DesktopUpdateChecker.UpdateInfo,
+        into: Path? = updateDir,
+        onProgress: (Float?) -> Unit,
+    ): Path = withContext(Dispatchers.IO) {
+        val dir = into ?: throw UpdateFailed("This copy of BitChord can't update itself.")
         val zipUrl = info.downloadUrl ?: throw UpdateFailed("The release has no Windows download.")
         val sumsUrl = info.sumsUrl ?: throw UpdateFailed("The release has no $SUMS_NAME to check the download against.")
         clear(dir.resolve("staged"))
@@ -325,8 +330,8 @@ internal object ForkUpdater {
      * really came: [ForkStartup.awaitFirstFrame] gives up after 10 s for a window that starts
      * hidden, and a start that isn't confirmed keeps `old\` for a manual roll-back.
      */
-    fun cleanUpAfterStart(firstFrameShown: Boolean) {
-        val dir = updateDir ?: return
+    fun cleanUpAfterStart(firstFrameShown: Boolean, dir: Path? = updateDir) {
+        dir ?: return
         if (!Files.isDirectory(dir)) return
         DesktopTrackLog.log("update: running ${label(DesktopUpdateChecker.currentVersion, currentBuild)}")
         if (!firstFrameShown) return

@@ -1,5 +1,6 @@
 package com.music.bitchord.fork
 
+import com.music.bitchord.data.AppUpdateChecker
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -8,18 +9,16 @@ import org.junit.Test
 /** Fork: the phone's build number in the update check ([ForkAppBuild]). */
 class ForkAppBuildTest {
 
-    /** Upstream's rule (AppUpdateChecker.isNewer): numeric parts, a "-beta" older than its release. */
-    private fun isNewer(latest: String, current: String): Boolean {
-        fun parse(raw: String) = raw.substringBefore('-').split('.').map { it.toIntOrNull() ?: 0 } to raw.contains('-')
-        val (l, lPre) = parse(latest)
-        val (c, cPre) = parse(current)
-        for (i in 0 until maxOf(l.size, c.size)) {
-            val a = l.getOrElse(i) { 0 }
-            val b = c.getOrElse(i) { 0 }
-            if (a != b) return a > b
-        }
-        return cPre && !lPre
-    }
+    /**
+     * Upstream's own rule (`AppUpdateChecker.isNewer`, private there), reached by reflection so
+     * these tests follow it if upstream ever changes how versions compare.
+     */
+    private val upstreamIsNewer = AppUpdateChecker::class.java
+        .getDeclaredMethod("isNewer", String::class.java, String::class.java)
+        .apply { isAccessible = true }
+
+    private fun isNewer(latest: String, current: String): Boolean =
+        upstreamIsNewer.invoke(AppUpdateChecker, latest, current) as Boolean
 
     private fun offers(latest: String, latestBuild: Int, current: String, currentBuild: Int) =
         ForkAppBuild.offers(latest, latestBuild, current, currentBuild, ::isNewer)
@@ -51,5 +50,11 @@ class ForkAppBuildTest {
     fun `a beta and its release keep upstream's order`() {
         assertTrue(offers("1.9.1", 0, "1.9.1-beta1", 10))
         assertFalse(offers("1.9.1-beta1", 99, "1.9.1", 1))
+    }
+
+    @Test
+    fun `a local build shows no build number in Settings`() {
+        assertEquals(0, ForkAppBuild.current) // the test build gets no -Pbitchord.build
+        assertEquals("", ForkAppBuild.suffix)
     }
 }

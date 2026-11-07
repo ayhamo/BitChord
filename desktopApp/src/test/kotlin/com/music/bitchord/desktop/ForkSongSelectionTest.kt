@@ -1,6 +1,7 @@
 package com.music.bitchord.desktop
 
 import androidx.compose.ui.input.key.Key
+import com.music.bitchord.desktop.ForkSongSelection.Action
 import com.music.bitchord.data.model.Song
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -131,5 +132,71 @@ class ForkSongSelectionTest {
         assertEquals(ForkSongSelection.Kind.LOCAL, ForkSongSelection.kindOf("local"))
         assertNull(ForkSongSelection.kindOf("navidrome"))
         assertFalse(ForkSongSelection.onKey(Key.Escape, ctrl = false)) // no page shown
+    }
+
+    @Test
+    fun selectAllGreysOnlyWhenEveryShownRowIsSelected() {
+        val s = selection()
+        assertFalse(s.allShownSelected)
+        s.selectAll(order.dropLast(1))
+        assertFalse(s.allShownSelected)
+        s.toggle("e")
+        assertTrue(s.allShownSelected)
+        s.shown = emptyList()
+        assertFalse(s.allShownSelected) // an empty page has nothing to select
+    }
+
+    @Test
+    fun aRowClickAfterAHoldIsOnlyTheHoldsRelease() {
+        val s = selection()
+        s.hold("b")
+        assertEquals(ForkSongSelection.RowClick.HOLD_RELEASED, s.rowClick("b", ctrl = false, shift = false, held = true))
+        assertEquals(setOf("b"), s.selected) // not toggled off again
+    }
+
+    @Test
+    fun aRowClickPlaysOutsideSelectionAndSelectsInside() {
+        val s = selection()
+        assertEquals(ForkSongSelection.RowClick.PLAY, s.rowClick("a", ctrl = false, shift = false, held = false))
+        assertEquals(ForkSongSelection.RowClick.SELECTION, s.rowClick("a", ctrl = true, shift = false, held = false))
+        assertEquals(ForkSongSelection.RowClick.SELECTION, s.rowClick("c", ctrl = false, shift = true, held = false))
+        assertEquals(setOf("a", "b", "c"), s.selected)
+    }
+
+    private fun actions(kind: ForkSongSelection.Kind, pick: Boolean, window: Boolean) =
+        ForkSongSelection(kind).apply { shown = order; if (pick) hold("a") }.actions(hasWindow = window)
+
+    @Test
+    fun localMusicOnlyQueues() {
+        val k = ForkSongSelection.Kind.LOCAL
+        assertEquals(listOf(Action.PLAY_NEXT to false, Action.ADD_TO_QUEUE to false), actions(k, pick = false, window = true))
+        assertEquals(listOf(Action.PLAY_NEXT to true, Action.ADD_TO_QUEUE to true), actions(k, pick = true, window = false))
+    }
+
+    @Test
+    fun cachedSongsDownloadThroughTheWindowAndRemoveWithout() {
+        val k = ForkSongSelection.Kind.CACHED
+        assertEquals(listOf(Action.DOWNLOAD to false, Action.REMOVE_FROM_CACHE to false), actions(k, pick = false, window = true))
+        assertEquals(listOf(Action.DOWNLOAD to false, Action.REMOVE_FROM_CACHE to true), actions(k, pick = true, window = false))
+        assertEquals(listOf(Action.DOWNLOAD to true, Action.REMOVE_FROM_CACHE to true), actions(k, pick = true, window = true))
+    }
+
+    @Test
+    fun downloadsOnlyDeleteAndOnlyWithTheWindowUp() {
+        val k = ForkSongSelection.Kind.DOWNLOADS
+        assertEquals(listOf(Action.DELETE to false), actions(k, pick = false, window = true))
+        assertEquals(listOf(Action.DELETE to false), actions(k, pick = true, window = false))
+        assertEquals(listOf(Action.DELETE to true), actions(k, pick = true, window = true))
+    }
+
+    @Test
+    fun deletingDownloadsTakesASecondPressThatNamesTheCount() {
+        val d = ForkSongSelection.TwoClickDelete()
+        assertEquals("Delete", d.label(3, "Delete"))
+        assertFalse(d.press())
+        assertTrue(d.armed)
+        assertEquals("Delete 3? Click again", d.label(3, "Delete"))
+        assertTrue(d.press())
+        assertFalse(ForkSongSelection.TwoClickDelete().armed) // a new count starts unarmed
     }
 }

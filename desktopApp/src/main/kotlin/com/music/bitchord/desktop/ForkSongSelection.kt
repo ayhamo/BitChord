@@ -146,6 +146,59 @@ internal class ForkSongSelection(val kind: Kind) {
     /** The selected songs among [songs], in their order; the selection then ends (the phone's `chosen()`). */
     fun take(songs: List<Song>): List<Song> = songs.filter { it.videoId in selected }.also { clear() }
 
+    /** Every row on screen is selected: "Select all" greys. */
+    val allShownSelected: Boolean get() = shown.isNotEmpty() && shown.all { it in selected }
+
+    /** What a row's click does, given what its press held ([rowClick]). */
+    enum class RowClick { HOLD_RELEASED, SELECTION, PLAY }
+
+    /**
+     * A row's click: the release of a hold that already selected it is no second click; otherwise
+     * [click] decides between selection and playing.
+     */
+    fun rowClick(id: String, ctrl: Boolean, shift: Boolean, held: Boolean): RowClick = when {
+        held -> RowClick.HOLD_RELEASED
+        click(id, ctrl, shift) -> RowClick.SELECTION
+        else -> RowClick.PLAY
+    }
+
+    /** One of the bar's buttons. */
+    enum class Action { PLAY_NEXT, ADD_TO_QUEUE, DOWNLOAD, REMOVE_FROM_CACHE, DELETE }
+
+    /**
+     * The bar's buttons for this page, in order, each with whether it can be pressed: nothing with
+     * no song selected, and what goes through the window ([hasWindow]: Download, Delete) not before
+     * the window is up. Local Music only queues: nothing on that page touches the files.
+     */
+    fun actions(hasWindow: Boolean): List<Pair<Action, Boolean>> {
+        val any = selected.isNotEmpty()
+        return when (kind) {
+            Kind.LOCAL -> listOf(Action.PLAY_NEXT to any, Action.ADD_TO_QUEUE to any)
+            Kind.CACHED -> listOf(Action.DOWNLOAD to (any && hasWindow), Action.REMOVE_FROM_CACHE to any)
+            Kind.DOWNLOADS -> listOf(Action.DELETE to (any && hasWindow))
+        }
+    }
+
+    /**
+     * Deleting downloads takes two presses on the button itself, as every other delete on the PC
+     * does: the first arms it (and names how many), the second deletes. Remembered per selection
+     * size, so changing the selection disarms it.
+     */
+    @Stable
+    class TwoClickDelete {
+        var armed by mutableStateOf(false)
+            private set
+
+        /** True when this press deletes. */
+        fun press(): Boolean {
+            if (armed) return true
+            armed = true
+            return false
+        }
+
+        fun label(count: Int, plain: String): String = if (armed) "Delete $count? Click again" else plain
+    }
+
     companion object {
         /** The selection of the page on screen, for the window's keys. */
         @Volatile var current: ForkSongSelection? = null
@@ -238,11 +291,11 @@ internal fun ForkSelectableRow(
     ) {
         Box(Modifier.weight(1f)) {
             content { clicked ->
-                when {
+                when (selection.rowClick(clicked.videoId, press.ctrl, press.shift, press.held)) {
                     // The hold already selected it; its release is not a click as well.
-                    press.held -> press.held = false
-                    selection.click(clicked.videoId, press.ctrl, press.shift) -> Unit
-                    else -> onClick(clicked)
+                    ForkSongSelection.RowClick.HOLD_RELEASED -> press.held = false
+                    ForkSongSelection.RowClick.SELECTION -> Unit
+                    ForkSongSelection.RowClick.PLAY -> onClick(clicked)
                 }
                 press.ctrl = false
                 press.shift = false
@@ -289,8 +342,8 @@ internal fun ForkSelectionBar(selection: ForkSongSelection?, songs: List<Song>, 
     if (selection == null || !selection.active) return
     val window = ForkCollectionActions.window
     val count = selection.selected.size
-    val allSelected = selection.shown.isNotEmpty() && selection.shown.all { it in selection.selected }
-    var confirmDelete by remember(count) { mutableStateOf(false) }
+    val confirmDelete = remember(count) { ForkSongSelection.TwoClickDelete() }
+    val enabled = selection.actions(hasWindow = window != null).toMap()
     val shape = RoundedCornerShape(14.dp)
     Row(
         Modifier
@@ -301,7 +354,7 @@ internal fun ForkSelectionBar(selection: ForkSongSelection?, songs: List<Song>, 
             .padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = { selection.selectAll(selection.shown) }, enabled = !allSelected) {
+        IconButton(onClick = { selection.selectAll(selection.shown) }, enabled = !selection.allShownSelected) {
             Icon(Icons.Rounded.Check, DesktopStrings["select_all", "Select all"], modifier = Modifier.size(20.dp))
         }
         Text(
@@ -312,18 +365,18 @@ internal fun ForkSelectionBar(selection: ForkSongSelection?, songs: List<Song>, 
         val source = DesktopQueueSource(title, PlaybackSourceType.BROWSE)
         when (selection.kind) {
             ForkSongSelection.Kind.LOCAL -> {
-                SelectionAction(Icons.Rounded.PlaylistPlay, DesktopStrings["play_next", "Play next"], count > 0) {
+                SelectionAction(Icons.Rounded.PlaylistPlay, DesktopStrings["play_next", "Play next"], enabled[ForkSongSelection.Action.PLAY_NEXT] == true) {
                     ForkCollectionActions.queue(selection.take(songs), next = true, source = source)
                 }
-                SelectionAction(Icons.Rounded.PlaylistAdd, DesktopStrings["add_to_queue", "Add to queue"], count > 0) {
+                SelectionAction(Icons.Rounded.PlaylistAdd, DesktopStrings["add_to_queue", "Add to queue"], enabled[ForkSongSelection.Action.ADD_TO_QUEUE] == true) {
                     ForkCollectionActions.queue(selection.take(songs), next = false, source = source)
                 }
             }
             ForkSongSelection.Kind.CACHED -> {
-                SelectionAction(Icons.Rounded.Download, DesktopStrings["download", "Download"], count > 0 && window != null) {
+                SelectionAction(Icons.Rounded.Download, DesktopStrings["download", "Download"], enabled[ForkSongSelection.Action.DOWNLOAD] == true) {
                     window?.download?.invoke(selection.take(songs))
                 }
-                SelectionAction(Icons.Rounded.Delete, DesktopStrings["cached_song_remove", "Remove"], count > 0, destructive = true) {
+                SelectionAction(Icons.Rounded.Delete, DesktopStrings["cached_song_remove", "Remove"], enabled[ForkSongSelection.Action.REMOVE_FROM_CACHE] == true, destructive = true) {
                     val chosen = selection.take(songs)
                     (window?.scope ?: return@SelectionAction).launch {
                         withContext(Dispatchers.IO) { chosen.forEach { runCatching { ForkSongCache.remove(it) } } }
@@ -334,14 +387,11 @@ internal fun ForkSelectionBar(selection: ForkSongSelection?, songs: List<Song>, 
             ForkSongSelection.Kind.DOWNLOADS -> {
                 SelectionAction(
                     Icons.Rounded.Delete,
-                    if (confirmDelete) "Delete $count? Click again" else DesktopStrings["delete", "Delete"],
-                    count > 0 && window != null,
+                    confirmDelete.label(count, DesktopStrings["delete", "Delete"]),
+                    enabled[ForkSongSelection.Action.DELETE] == true,
                     destructive = true,
                 ) {
-                    if (!confirmDelete) {
-                        confirmDelete = true
-                        return@SelectionAction
-                    }
+                    if (!confirmDelete.press()) return@SelectionAction
                     val chosen = selection.take(songs)
                     val scope = window?.scope ?: return@SelectionAction
                     // Through the window's own removal, as an album's "Delete download" from this page:
