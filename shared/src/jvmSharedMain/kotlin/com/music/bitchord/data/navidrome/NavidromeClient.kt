@@ -84,8 +84,11 @@ class NavidromeClient(
     }
 
     /** The ids of every starred song. */
-    suspend fun starredSongIds(): List<String> =
-        songRows(call("getStarred2")["starred2"]?.jsonObject?.get("song")).map { it.id }
+    suspend fun starredSongIds(): List<String> = starredSongs().map { it.id }
+
+    /** Every starred song (`getStarred2`): Android Auto's Navidrome "Liked songs". */
+    suspend fun starredSongs(): List<SongRow> =
+        songRows(call("getStarred2")["starred2"]?.jsonObject?.get("song"))
 
     /** Songs the server's agents (Last.fm and the like) call similar; empty when it has none configured. */
     suspend fun similarSongs(id: String, count: Int): List<SongRow> {
