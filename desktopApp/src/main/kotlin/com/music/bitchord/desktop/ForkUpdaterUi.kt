@@ -28,6 +28,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -51,6 +52,8 @@ internal object ForkUpdateFlow {
         data class Ready(val root: Path) : Phase
         data class Failed(val message: String) : Phase
         data object Installing : Phase
+        /** The updater runs and waits, but the app didn't close: "Close now" or Later, never a new download. */
+        data object QuitStalled : Phase
     }
 
     data class Shown(val info: DesktopUpdateChecker.UpdateInfo, val phase: Phase)
@@ -94,11 +97,13 @@ internal object ForkUpdateFlow {
             else -> {
                 checkState.value = CheckState.Found(ForkUpdater.label(info.version, info.build))
                 // Never over a dialog already at work (a download, a staged update).
-                val busy = shown.value?.phase.let { it != null && it != Phase.Offered && it !is Phase.Failed }
-                if (!busy && (manual || !timedCheckSkips(info, dismissed))) shown.value = Shown(info, Phase.Offered)
+                if (replaceable(shown.value?.phase) &&(manual || !timedCheckSkips(info, dismissed))) shown.value = Shown(info, Phase.Offered)
             }
         }
     }
+
+    /** Whether a check's dialog may take the place of [phase]'s: never over a download, a staged update or the hand-over. */
+    internal fun replaceable(phase: Phase?): Boolean = phase == null || phase == Phase.Offered || phase is Phase.Failed
 
     fun later() {
         shown.value?.let { dismissed = key(it.info) }
@@ -118,7 +123,9 @@ internal object ForkUpdateFlow {
         job = scope.launch {
             try {
                 val root = ForkUpdater.prepare(current.info) { fraction ->
-                    shown.value = current.copy(phase = Phase.Downloading(fraction))
+                    // Compare-and-set: a step that lands just after Cancel or Later must not put
+                    // the progress bar (or the whole dialog) back.
+                    shown.update { withProgress(it, current.info, fraction) }
                 }
                 shown.value = current.copy(phase = Phase.Ready(root))
             } catch (cancel: CancellationException) {
@@ -130,24 +137,60 @@ internal object ForkUpdateFlow {
         }
     }
 
+    /**
+     * [shown] with a download's progress step: only while that same release is still downloading.
+     * After Cancel (back to Offered), Later (gone) or a new check's dialog, the step is dropped.
+     */
+    internal fun withProgress(shown: Shown?, info: DesktopUpdateChecker.UpdateInfo, fraction: Float?): Shown? =
+        if (shown != null && shown.info === info && shown.phase is Phase.Downloading) shown.copy(phase = Phase.Downloading(fraction)) else shown
+
+    /** How long "Install now" waits for the app to close before it says so and offers the way out. */
+    const val QUIT_GRACE_MS = 20_000L
+
+    const val QUIT_STALLED =
+        "BitChord didn't close by itself. Close it now to finish the update (the queue may not be saved), or quit it later: the update goes on once it is closed."
+
+    /**
+     * "Close now" after a quit that hung: the normal quit already failed to end the process, so
+     * this one doesn't run it (or the shutdown hooks it could hang in) again.
+     */
+    fun forceClose() {
+        DesktopTrackLog.log("update: closing at once for the updater")
+        Runtime.getRuntime().halt(0)
+    }
+
     fun cancel() {
         job?.cancel()
         job = null
         shown.value = shown.value?.copy(phase = Phase.Offered)
     }
 
-    fun install(scope: CoroutineScope) {
-        val current = shown.value ?: return
-        val root = (current.phase as? Phase.Ready)?.root ?: return
+    /**
+     * Starts the updater ([start]) and quits ([quit]: the tray's Quit, so the queue, the hand-off
+     * note and the AppCDS archive are written as on any quit). A quit normally ends this process
+     * well inside [graceMs]; if the app is still here after it (a shutdown that hangs), the dialog
+     * says so instead of sitting on "Closing BitChord…" with no button, while the updater, which
+     * waits for this process, goes on once the app is quit by hand.
+     */
+    fun install(
+        scope: CoroutineScope,
+        start: (Path) -> Unit = ForkUpdater::startUpdater,
+        quit: () -> Unit = { javax.swing.SwingUtilities.invokeLater { DesktopTrayMenu.forkQuit() } },
+        graceMs: Long = QUIT_GRACE_MS,
+    ): Job? {
+        val current = shown.value ?: return null
+        val root = (current.phase as? Phase.Ready)?.root ?: return null
         shown.value = current.copy(phase = Phase.Installing)
-        scope.launch {
-            val started = withContext(Dispatchers.IO) { runCatching { ForkUpdater.startUpdater(root) } }
+        return scope.launch {
+            val started = withContext(Dispatchers.IO) { runCatching { start(root) } }
             started.exceptionOrNull()?.let { failure ->
                 shown.value = current.copy(phase = Phase.Failed(failure.message ?: failure.toString()))
                 return@launch
             }
-            // The tray's Quit: queue, hand-off note and AppCDS archive are written as on any quit.
-            javax.swing.SwingUtilities.invokeLater { DesktopTrayMenu.forkQuit() }
+            quit()
+            delay(graceMs)
+            DesktopTrackLog.log("update: still running ${graceMs / 1000} s after Quit")
+            shown.update { if (it?.phase == Phase.Installing) it.copy(phase = Phase.QuitStalled) else it }
         }
     }
 }
@@ -177,7 +220,9 @@ internal fun ForkUpdaterHost() {
     val phase = current.phase
     AlertDialog(
         // Not while a download or the hand-over runs: Cancel stops a download.
-        onDismissRequest = { if (phase == ForkUpdateFlow.Phase.Offered || phase is ForkUpdateFlow.Phase.Failed) ForkUpdateFlow.later() },
+        onDismissRequest = {
+            if (phase == ForkUpdateFlow.Phase.Offered || phase is ForkUpdateFlow.Phase.Failed || phase == ForkUpdateFlow.Phase.QuitStalled) ForkUpdateFlow.later()
+        },
         title = { Text(DesktopStrings["d_update_available", "Update available"]) },
         text = {
             Column {
@@ -214,6 +259,10 @@ internal fun ForkUpdaterHost() {
                         Text("Closing BitChord to update…")
                         Spacer(Modifier.height(12.dp))
                     }
+                    ForkUpdateFlow.Phase.QuitStalled -> {
+                        Text(ForkUpdateFlow.QUIT_STALLED)
+                        Spacer(Modifier.height(12.dp))
+                    }
                     is ForkUpdateFlow.Phase.Failed -> {
                         Text(DesktopStrings.format("update_failed_body", label, fallback = "Couldn’t download bitchord %1\$s."))
                         Text(
@@ -239,11 +288,12 @@ internal fun ForkUpdaterHost() {
                 is ForkUpdateFlow.Phase.Ready -> TextButton(onClick = { ForkUpdateFlow.install(scope) }) { Text(DesktopStrings["install_now", "Install now"]) }
                 is ForkUpdateFlow.Phase.Failed -> TextButton(onClick = { ForkUpdateFlow.download(scope) }) { Text(DesktopStrings["try_again", "Try again"]) }
                 ForkUpdateFlow.Phase.Installing -> Unit
+                ForkUpdateFlow.Phase.QuitStalled -> TextButton(onClick = ForkUpdateFlow::forceClose) { Text("Close now") }
             }
         },
         dismissButton = {
             when (phase) {
-                ForkUpdateFlow.Phase.Offered, is ForkUpdateFlow.Phase.Ready ->
+                ForkUpdateFlow.Phase.Offered, is ForkUpdateFlow.Phase.Ready, ForkUpdateFlow.Phase.QuitStalled ->
                     TextButton(onClick = ForkUpdateFlow::later) { Text(DesktopStrings["d_later", "Later"]) }
                 is ForkUpdateFlow.Phase.Failed -> Row {
                     TextButton(onClick = {

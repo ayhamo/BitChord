@@ -1,7 +1,7 @@
 /*
  * BitChordUpdate.exe, the portable app's updater (fork, ForkUpdater.kt).
  *
- *   BitChordUpdate.exe <app folder> <staged folder> <pid> [--log]
+ *   BitChordUpdate.exe <app folder> <staged folder> <pid> [--log] [--started=<ms>]
  *
  * The app has already downloaded the release zip, checked its SHA-256 and unzipped it into
  * <app folder>\data\update\staged\ (all of that in Java, while it still ran). It then copies this
@@ -9,7 +9,9 @@
  * and quits through its normal Quit. This program:
  *
  *   1. shows a small window ("Updating BitChord…") and waits for <pid> to exit; after two minutes
- *      it asks (Retry / Cancel) instead of waiting for ever or moving files under a running app;
+ *      it asks (Retry / Cancel) instead of waiting for ever or moving files under a running app.
+ *      --started gives the app's start time (ms since 1970): a process under that PID that started
+ *      at another time is a later program that got the number after BitChord exited, not waited on;
  *   2. moves the old program files (ITEMS below) into data\update\old\ and the staged ones into
  *      the app folder. Moves, not copies: everything is on one volume, so each is a rename and the
  *      folder is never half old, half new for long. data\ itself is never touched: only the names
@@ -20,7 +22,7 @@
  *      data\update\old and staged once it has drawn its first frame; a start that never gets that
  *      far leaves old\ for a manual roll-back.
  *
- * Every step is written to data\update\update.log. Ideas from Desktop Revived 1.9.1's updater (#106:
+ * Every step is written to data\update\update.log, which holds the last update only. Ideas from Desktop Revived 1.9.1's updater (#106:
  * wait for the PID, back up, roll back, delete the backup only after a confirmed start); not its
  * PowerShell host or its swap of the whole folder, since here data\ lives inside the folder.
  *
@@ -55,6 +57,7 @@ static const wchar_t *const ITEMS[] = {
 
 static wchar_t appDir[PATH_CAP], stagedDir[PATH_CAP], updateDir[PATH_CAP], oldDir[PATH_CAP];
 static DWORD appPid;
+static ULONGLONG appStarted; /* the app's start, ms since 1970; 0 when not given (an older app) */
 static int logMode;
 static HANDLE logFile = INVALID_HANDLE_VALUE;
 static HWND window, heading, status, progress;
@@ -237,6 +240,22 @@ static DWORD start_app(void) {
     return 0;
 }
 
+/*
+ * Whether [process] started when the app said it did (--started): within two seconds, as Java and
+ * Windows may round the same creation time differently. True when there is nothing to compare.
+ */
+static int started_as_given(HANDLE process) {
+    if (!appStarted) return 1;
+    FILETIME created, exited, kernel, user;
+    if (!GetProcessTimes(process, &created, &exited, &kernel, &user)) return 1;
+    ULARGE_INTEGER ticks;
+    ticks.LowPart = created.dwLowDateTime;
+    ticks.HighPart = created.dwHighDateTime;
+    ULONGLONG ms = (ticks.QuadPart - 116444736000000000ULL) / 10000ULL; /* 100 ns since 1601 to ms since 1970 */
+    ULONGLONG apart = ms > appStarted ? ms - appStarted : appStarted - ms;
+    return apart <= 2000;
+}
+
 static int movedOut[ITEM_COUNT], movedIn[ITEM_COUNT];
 
 /* Puts back what was moved; 1 when everything went back. */
@@ -285,7 +304,13 @@ static void fail_and_restore(const wchar_t *what, DWORD error) {
 static DWORD WINAPI update(LPVOID unused) {
     (void)unused;
     /* 1. Wait for the app to be gone. */
-    HANDLE app = OpenProcess(SYNCHRONIZE, FALSE, appPid);
+    HANDLE app = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, appPid);
+    if (app && !started_as_given(app)) {
+        log_line(L"pid %lu belongs to another program now (BitChord has exited)", (unsigned long)appPid);
+        CloseHandle(app);
+        app = NULL;
+        SetLastError(0);
+    }
     if (app) {
         for (;;) {
             DWORD waited = WaitForSingleObject(app, WAIT_FOR_EXIT_MS);
@@ -387,7 +412,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR commandLine, i
         return 2;
     }
     appPid = (DWORD)wcstoul(argv[3], NULL, 10);
-    logMode = argc > 4 && wcscmp(argv[4], L"--log") == 0;
+    for (int i = 4; i < argc; i++) {
+        if (wcscmp(argv[i], L"--log") == 0) logMode = 1;
+        else if (wcsncmp(argv[i], L"--started=", 10) == 0) appStarted = _wcstoui64(argv[i] + 10, NULL, 10);
+    }
     LocalFree(argv);
 
     join(updateDir, appDir, L"data\\update");
@@ -395,8 +423,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR commandLine, i
     wchar_t logPath[PATH_CAP];
     join(logPath, updateDir, L"update.log");
     CreateDirectoryW(updateDir, NULL);
-    logFile = CreateFileW(logPath, FILE_APPEND_DATA, FILE_SHARE_READ, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    log_line(L"update: app %ls, staged %ls, pid %lu%ls", appDir, stagedDir, (unsigned long)appPid, logMode ? L", --log" : L"");
+    /* This update's log only: appended to, it grew by one run per update for good. */
+    logFile = CreateFileW(logPath, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    log_line(L"update: app %ls, staged %ls, pid %lu, started %llu%ls", appDir, stagedDir, (unsigned long)appPid, appStarted,
+             logMode ? L", --log" : L"");
 
     /*
      * The staged folder must be inside data\update\ of this app folder: the only place the app

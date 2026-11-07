@@ -16,6 +16,8 @@ import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.time.Duration
 import java.util.concurrent.Flow
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.ZipInputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -261,11 +263,15 @@ internal object ForkUpdater {
             throw UpdateFailed(stalled)
         }
         val chunks = Channel<List<ByteBuffer>>(capacity = 1)
-        var subscription: Flow.Subscription? = null
+        // Set on the HTTP client's thread, possibly after this function has already failed (an
+        // error status): whichever of onSubscribe and the `finally` below comes second cancels, so
+        // the body is never left subscribed and unread, holding the connection open.
+        val subscription = AtomicReference<Flow.Subscription?>(null)
+        val over = AtomicBoolean(false)
         response.body().subscribe(object : Flow.Subscriber<List<ByteBuffer>> {
             override fun onSubscribe(s: Flow.Subscription) {
-                subscription = s
-                s.request(1)
+                subscription.set(s)
+                if (over.get()) s.cancel() else s.request(1)
             }
             override fun onNext(item: List<ByteBuffer>) {
                 chunks.trySend(item) // one requested at a time, so the one slot is always free
@@ -296,7 +302,7 @@ internal object ForkUpdater {
                         digest.update(bytes)
                         done += bytes.size
                     }
-                    subscription?.request(1)
+                    subscription.get()?.request(1)
                     if (total > 0) {
                         val percent = (done * 100 / total).toInt()
                         if (percent != lastShown) {
@@ -309,7 +315,8 @@ internal object ForkUpdater {
             }
             return digest.digest().joinToString("") { "%02x".format(it) }
         } finally {
-            subscription?.cancel() // closes the connection on a stall, Cancel or failure
+            over.set(true)
+            subscription.get()?.cancel() // closes the connection on a stall, Cancel or failure
         }
     }
 
@@ -359,15 +366,17 @@ internal object ForkUpdater {
             ?: throw UpdateFailed("$UPDATER_EXE is missing. Download the zip from the releases page instead.")
         val updater = dir.resolve(UPDATER_EXE)
         Files.copy(source, updater, StandardCopyOption.REPLACE_EXISTING)
-        val command = mutableListOf(
-            updater.toString(),
-            app.toAbsolutePath().toString(),
-            root.toAbsolutePath().toString(),
-            ProcessHandle.current().pid().toString(),
+        val self = ProcessHandle.current()
+        val java = self.info().command().orElse("")
+        val command = updaterCommand(
+            updater = updater,
+            app = app,
+            root = root,
+            pid = self.pid(),
+            startedMillis = self.info().startInstant().map { it.toEpochMilli() }.orElse(null),
+            // Started with `BitChord.exe --log` (java.exe rather than javaw.exe): the new app logs too.
+            log = File(java).name.equals("java.exe", ignoreCase = true),
         )
-        // Started with `BitChord.exe --log` (java.exe rather than javaw.exe): the new app logs too.
-        val java = ProcessHandle.current().info().command().orElse("")
-        if (File(java).name.equals("java.exe", ignoreCase = true)) command += "--log"
         ProcessBuilder(command)
             .directory(dir.toFile())
             .redirectInput(ProcessBuilder.Redirect.from(File("NUL")))
@@ -378,8 +387,23 @@ internal object ForkUpdater {
     }
 
     /**
-     * After an update, once the new app has drawn its first frame: the old program files and the
-     * unzipped copy go. Also drops what a cancelled or failed download left. Only when the frame
+     * `BitChordUpdate.exe <app> <staged> <pid> [--log] [--started=<ms>]`. [startedMillis] is this
+     * process's start: the updater waits on [pid] only while the process under it started then, so
+     * a later program that got the number after the app exited isn't waited on for two minutes.
+     */
+    fun updaterCommand(updater: Path, app: Path, root: Path, pid: Long, startedMillis: Long?, log: Boolean): List<String> = buildList {
+        add(updater.toString())
+        add(app.toAbsolutePath().toString())
+        add(root.toAbsolutePath().toString())
+        add(pid.toString())
+        if (log) add("--log")
+        if (startedMillis != null && startedMillis > 0) add("--started=$startedMillis")
+    }
+
+    /**
+     * After an update, once the new app has drawn its first frame: the old program files, the
+     * unzipped copy and the updater's own copy go (`update.log`, the last update's, stays). Also
+     * drops what a cancelled or failed download left. Only when the frame
      * really came: [ForkStartup.awaitFirstFrame] gives up after 10 s for a window that starts
      * hidden, and a start that isn't confirmed keeps `old\` for a manual roll-back.
      */
@@ -394,6 +418,8 @@ internal object ForkUpdater {
             clear(old)
         }
         clear(dir.resolve("staged"))
+        // Still running for a moment after it starts the new app; left then, and gone at the next start.
+        runCatching { Files.deleteIfExists(dir.resolve(UPDATER_EXE)) }
         runCatching { Files.deleteIfExists(dir.resolve("BitChord Portable.zip")) }
         runCatching { Files.deleteIfExists(dir.resolve("BitChord Portable.zip.part")) }
     }

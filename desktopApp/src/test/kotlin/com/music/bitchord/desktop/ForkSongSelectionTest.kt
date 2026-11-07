@@ -107,7 +107,7 @@ class ForkSongSelectionTest {
     fun escapeLeavesAndCtrlASelectsAll() {
         val s = selection()
         ForkSongSelection.current = s
-        assertTrue(ForkSongSelection.onKey(Key.A, ctrl = true))
+        assertTrue(ForkSongSelection.onSelectAllKey(Key.A, ctrl = true))
         assertEquals(order.toSet(), s.selected)
         assertTrue(ForkSongSelection.onKey(Key.Escape, ctrl = false))
         assertFalse(s.active)
@@ -120,9 +120,9 @@ class ForkSongSelectionTest {
         val s = selection()
         s.queryBlank = false
         ForkSongSelection.current = s
-        assertFalse(ForkSongSelection.onKey(Key.A, ctrl = true))
+        assertFalse(ForkSongSelection.onSelectAllKey(Key.A, ctrl = true))
         assertFalse(s.active)
-        assertFalse(ForkSongSelection.onKey(Key.A, ctrl = false))
+        assertFalse(ForkSongSelection.onSelectAllKey(Key.A, ctrl = false))
     }
 
     @Test
@@ -174,10 +174,11 @@ class ForkSongSelectionTest {
     }
 
     @Test
-    fun cachedSongsDownloadThroughTheWindowAndRemoveWithout() {
+    fun cachedSongsDownloadAndRemoveOnlyWithTheWindowUp() {
         val k = ForkSongSelection.Kind.CACHED
         assertEquals(listOf(Action.DOWNLOAD to false, Action.REMOVE_FROM_CACHE to false), actions(k, pick = false, window = true))
-        assertEquals(listOf(Action.DOWNLOAD to false, Action.REMOVE_FROM_CACHE to true), actions(k, pick = true, window = false))
+        // Remove runs in the window's scope: enabled without it, it ended the selection and removed nothing.
+        assertEquals(listOf(Action.DOWNLOAD to false, Action.REMOVE_FROM_CACHE to false), actions(k, pick = true, window = false))
         assertEquals(listOf(Action.DOWNLOAD to true, Action.REMOVE_FROM_CACHE to true), actions(k, pick = true, window = true))
     }
 
@@ -198,5 +199,32 @@ class ForkSongSelectionTest {
         assertEquals("Delete 3? Click again", d.label(3, "Delete"))
         assertTrue(d.press())
         assertFalse(ForkSongSelection.TwoClickDelete().armed) // a new count starts unarmed
+    }
+
+    @Test
+    fun ctrlAIsNotThePreviewHandlersAnyMore() {
+        // The preview handler sees keys before a focused text field: Ctrl+A there selected every
+        // download while the user selected a search box's text. Only Esc stays there.
+        val s = selection()
+        ForkSongSelection.current = s
+        assertFalse(ForkSongSelection.onKey(Key.A, ctrl = true))
+        assertFalse(s.active)
+        assertTrue(s.selected.isEmpty())
+    }
+
+    @Test
+    fun ctrlAWhileSelectingWorksWhateverTheSearchHolds() {
+        val s = selection()
+        s.queryBlank = false
+        ForkSongSelection.current = s
+        s.begin()
+        assertTrue(ForkSongSelection.onSelectAllKey(Key.A, ctrl = true))
+        assertEquals(order.toSet(), s.selected)
+        assertFalse(ForkSongSelection.onSelectAllKey(Key.B, ctrl = true))
+    }
+
+    @Test
+    fun noPageNoSelectAll() {
+        assertFalse(ForkSongSelection.onSelectAllKey(Key.A, ctrl = true))
     }
 }

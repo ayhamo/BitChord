@@ -332,6 +332,7 @@ class ForkUpdaterDownloadTest {
         Files.writeString(dir.resolve("BitChord Portable.zip"), "zip")
         Files.writeString(dir.resolve("BitChord Portable.zip.part"), "part")
         Files.writeString(dir.resolve(ForkUpdater.UPDATER_EXE), "exe")
+        Files.writeString(dir.resolve("update.log"), "the last update")
     }
 
     @Test
@@ -340,7 +341,8 @@ class ForkUpdaterDownloadTest {
         ForkUpdater.cleanUpAfterStart(firstFrameShown = true, dir = dir)
         assertFalse(dir.resolve("old").exists())
         assertNothingLeft()
-        assertTrue(dir.resolve(ForkUpdater.UPDATER_EXE).exists(), "the updater copy is replaced on the next update, not removed")
+        assertFalse(dir.resolve(ForkUpdater.UPDATER_EXE).exists(), "the updater's copy is left behind")
+        assertEquals("the last update", dir.resolve("update.log").readText(), "the last update's log is kept")
     }
 
     @Test
@@ -349,6 +351,7 @@ class ForkUpdaterDownloadTest {
         ForkUpdater.cleanUpAfterStart(firstFrameShown = false, dir = dir)
         assertTrue(dir.resolve("old/lib/bitchord-app.jar").exists())
         assertTrue(dir.resolve("staged").exists())
+        assertTrue(dir.resolve(ForkUpdater.UPDATER_EXE).exists())
     }
 
     @Test
@@ -356,5 +359,68 @@ class ForkUpdaterDownloadTest {
         ForkUpdater.cleanUpAfterStart(firstFrameShown = true, dir = temp.resolve("never-made"))
         ForkUpdater.cleanUpAfterStart(firstFrameShown = true, dir = null)
         assertFalse(temp.resolve("never-made").exists())
+    }
+
+    // ---- the updater's command line -------------------------------------------------------------
+
+    @Test
+    fun theUpdaterIsToldTheAppsStartSoAReusedPidIsNotWaitedOn() {
+        val command = ForkUpdater.updaterCommand(
+            updater = temp.resolve("BitChordUpdate.exe"),
+            app = temp.resolve("app"),
+            root = temp.resolve("app/data/update/staged/BitChord Portable"),
+            pid = 4242,
+            startedMillis = 1_762_500_000_123,
+            log = true,
+        )
+        assertEquals(
+            listOf(
+                temp.resolve("BitChordUpdate.exe").toString(),
+                temp.resolve("app").toAbsolutePath().toString(),
+                temp.resolve("app/data/update/staged/BitChord Portable").toAbsolutePath().toString(),
+                "4242",
+                "--log",
+                "--started=1762500000123",
+            ),
+            command,
+        )
+    }
+
+    @Test
+    fun withoutAStartTimeTheUpdaterWaitsOnThePidAsBefore() {
+        val command = ForkUpdater.updaterCommand(temp.resolve("u.exe"), temp, temp, pid = 7, startedMillis = null, log = false)
+        assertEquals(4, command.size)
+        assertEquals("7", command.last())
+    }
+
+    // ---- an error answer frees its connection ---------------------------------------------------
+
+    @Test
+    fun anErrorAnswerClosesItsConnection() {
+        serve("/dl/SHA256SUMS.txt", "${"a".repeat(64)}  BitChord.Portable.zip\n".toByteArray())
+        val closed = CompletableDeferred<Boolean>()
+        ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { socket ->
+            val server = thread {
+                runCatching {
+                    socket.accept().use { client ->
+                        client.soTimeout = 5_000
+                        client.getInputStream().read(ByteArray(8192)) // the request
+                        // A long error page, sent in part and kept open: unread, it holds the connection.
+                        client.getOutputStream().apply {
+                            write("HTTP/1.1 503 Service Unavailable\r\nContent-Length: 1000000\r\n\r\n".toByteArray())
+                            write(ByteArray(1000))
+                            flush()
+                        }
+                        // The client giving the body up closes the socket: read() sees the end.
+                        closed.complete(runCatching { client.getInputStream().read() == -1 }.getOrDefault(false))
+                    }
+                }.onFailure { closed.complete(false) }
+            }
+            val failing = info("/dl/BitChord.Portable.zip").copy(downloadUrl = "http://127.0.0.1:${socket.localPort}/BitChord.Portable.zip")
+            assertEquals("The download failed (HTTP 503).", failure(failing))
+            assertTrue(runBlocking { closed.await() }, "the error answer's connection was left open")
+            server.join(6_000)
+        }
+        assertNothingLeft()
     }
 }

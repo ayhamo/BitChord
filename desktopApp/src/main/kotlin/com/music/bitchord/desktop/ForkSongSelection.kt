@@ -168,13 +168,15 @@ internal class ForkSongSelection(val kind: Kind) {
     /**
      * The bar's buttons for this page, in order, each with whether it can be pressed: nothing with
      * no song selected, and what goes through the window ([hasWindow]: Download, Delete) not before
-     * the window is up. Local Music only queues: nothing on that page touches the files.
+     * the window is up. Local Music only queues: nothing on that page touches the files. Remove (out
+     * of the song cache) runs in the window's scope too: enabled without it, it ended the selection
+     * and removed nothing.
      */
     fun actions(hasWindow: Boolean): List<Pair<Action, Boolean>> {
         val any = selected.isNotEmpty()
         return when (kind) {
             Kind.LOCAL -> listOf(Action.PLAY_NEXT to any, Action.ADD_TO_QUEUE to any)
-            Kind.CACHED -> listOf(Action.DOWNLOAD to (any && hasWindow), Action.REMOVE_FROM_CACHE to any)
+            Kind.CACHED -> listOf(Action.DOWNLOAD to (any && hasWindow), Action.REMOVE_FROM_CACHE to (any && hasWindow))
             Kind.DOWNLOADS -> listOf(Action.DELETE to (any && hasWindow))
         }
     }
@@ -211,7 +213,7 @@ internal class ForkSongSelection(val kind: Kind) {
             else -> null
         }
 
-        /** From the window's key handler (key up): Esc leaves selection, Ctrl+A selects all. */
+        /** From the window's preview key handler (key up): Esc leaves selection. */
         fun onKey(key: Key, ctrl: Boolean): Boolean {
             val selection = current ?: return false
             return when {
@@ -219,12 +221,21 @@ internal class ForkSongSelection(val kind: Kind) {
                     selection.clear()
                     true
                 }
-                key == Key.A && ctrl && (selection.active || selection.queryBlank) -> {
-                    selection.selectAll(selection.shown)
-                    true
-                }
                 else -> false
             }
+        }
+
+        /**
+         * Ctrl+A selects every song shown. From the window's bubbling key handler on key *down*,
+         * not the preview one: a focused text field (the page's search, the sidebar's) takes
+         * Ctrl+A for its own text on key down and it never gets here. From the preview handler it
+         * reached the page first, so selecting a search box's text also selected every download.
+         */
+        fun onSelectAllKey(key: Key, ctrl: Boolean): Boolean {
+            val selection = current ?: return false
+            if (key != Key.A || !ctrl || !(selection.active || selection.queryBlank)) return false
+            selection.selectAll(selection.shown)
+            return true
         }
     }
 }
@@ -377,8 +388,9 @@ internal fun ForkSelectionBar(selection: ForkSongSelection?, songs: List<Song>, 
                     window?.download?.invoke(selection.take(songs))
                 }
                 SelectionAction(Icons.Rounded.Delete, DesktopStrings["cached_song_remove", "Remove"], enabled[ForkSongSelection.Action.REMOVE_FROM_CACHE] == true, destructive = true) {
+                    val scope = window?.scope ?: return@SelectionAction // before take: the selection stays if nothing can run
                     val chosen = selection.take(songs)
-                    (window?.scope ?: return@SelectionAction).launch {
+                    scope.launch {
                         withContext(Dispatchers.IO) { chosen.forEach { runCatching { ForkSongCache.remove(it) } } }
                         ForkNotice.show(DesktopStrings["removed_from_cache", "Removed from the song cache"])
                     }
@@ -392,8 +404,8 @@ internal fun ForkSelectionBar(selection: ForkSongSelection?, songs: List<Song>, 
                     destructive = true,
                 ) {
                     if (!confirmDelete.press()) return@SelectionAction
+                    val scope = window?.scope ?: return@SelectionAction // before take, as Remove
                     val chosen = selection.take(songs)
-                    val scope = window?.scope ?: return@SelectionAction
                     // Through the window's own removal, as an album's "Delete download" from this page:
                     // the file, the record and every row's tick go together.
                     scope.launch { ForkCollectionActions.deleteDownloads("", chosen.mapTo(HashSet()) { it.videoId }, "${chosen.size} selected songs") }

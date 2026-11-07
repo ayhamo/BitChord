@@ -236,6 +236,7 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.onKeyEvent // fork: Ctrl+A (ForkSongSelection.onSelectAllKey)
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -3275,7 +3276,7 @@ fun BitChordDesktopApp() {
                 modifier = Modifier.onPreviewKeyEvent { event ->
                     if (event.type != KeyEventType.KeyUp) return@onPreviewKeyEvent false
                     when {
-                        ForkSongSelection.onKey(event.key, event.isCtrlPressed || event.isMetaPressed) -> true // fork: Esc leaves a song selection, Ctrl+A selects all (ForkSongSelection)
+                        ForkSongSelection.onKey(event.key, event.isCtrlPressed || event.isMetaPressed) -> true // fork: Esc leaves a song selection (ForkSongSelection)
                         event.key == Key.MediaPlayPause -> {
                             if (selectedSong != null) togglePlayPauseFromUser()
                             true
@@ -3343,7 +3344,7 @@ fun BitChordDesktopApp() {
                         }
                         else -> false
                     }
-                },
+                }.onKeyEvent { event -> event.type == KeyEventType.KeyDown && ForkSongSelection.onSelectAllKey(event.key, event.isCtrlPressed || event.isMetaPressed) }, // fork: Ctrl+A selects all songs when no text field took it (ForkSongSelection)
                 topBar = { compact ->
                     DesktopTopBar(
                         compact = compact,
