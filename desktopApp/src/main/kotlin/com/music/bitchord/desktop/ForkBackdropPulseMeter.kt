@@ -47,17 +47,19 @@ internal object ForkBackdropPulseSetting {
  * which are what make the field lift), each smoothed with a quick attack and a slow release so a
  * kick lifts the field and the next quiet bar lets it down gradually. Measured before the volume,
  * which the sink applies, so turning the music down does not flatten the picture. Owned by the audio
- * thread; does nothing at all while the setting is off.
+ * thread; does nothing at all while both this setting and "Bass glow" are off.
  */
 internal class ForkBackdropPulseMeter {
 
     private var low = 0f
     private var level = 0f
     private var bass = 0f
+    private var kick = 0f // the glow's: unscaled, quick release (ForkBackdropPulse.kick)
 
     fun meter(samples: FloatArray, count: Int, channels: Int, sampleRate: Int) {
-        if (!ForkBackdropPulseSetting.on) {
-            if (level != 0f || bass != 0f) silence()
+        // The "Bass glow" (ForkPlayerEffects) reads the same bass meter, so either switch keeps it running.
+        if (!ForkBackdropPulseSetting.on && !ForkPlayerEffects.bassGlowOn) {
+            if (level != 0f || bass != 0f || kick != 0f) silence()
             return
         }
         if (count <= 0) return
@@ -79,7 +81,9 @@ internal class ForkBackdropPulseMeter {
         val bassAttack = (1.0 - exp(-seconds / BASS_ATTACK_SECONDS)).toFloat()
         level += (target - level) * if (target > level) attack else release
         bass += (bassTarget - bass) * if (bassTarget > bass) bassAttack else release
-        ForkBackdropPulse.publish(level, bass)
+        val lowRms = sqrt(lowSquares / count).toFloat()
+        kick += (lowRms - kick) * if (lowRms > kick) bassAttack else (1.0 - exp(-seconds / KICK_RELEASE_SECONDS)).toFloat()
+        ForkBackdropPulse.publish(level, bass, kick)
     }
 
     /** Paused, or nothing left to play: the field settles rather than holding the last block. */
@@ -87,6 +91,7 @@ internal class ForkBackdropPulseMeter {
         low = 0f
         level = 0f
         bass = 0f
+        kick = 0f
         ForkBackdropPulse.silence()
     }
 
@@ -100,6 +105,9 @@ internal class ForkBackdropPulseMeter {
         const val ATTACK_SECONDS = 0.045
         const val BASS_ATTACK_SECONDS = 0.012
         const val RELEASE_SECONDS = 0.32
+
+        /** The glow's reading lets go of a kick within a beat, so the next one rises out of a dip. */
+        const val KICK_RELEASE_SECONDS = 0.06
     }
 }
 

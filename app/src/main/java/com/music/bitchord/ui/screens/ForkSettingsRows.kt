@@ -303,7 +303,29 @@ internal fun ForkAnimatedCoversRow() = ForkSwitchRow(
     onChange = ForkSettings::setAnimatedCovers,
 )
 
+/** "Cover fade" (Appearance): see `ForkCoverFade`. */
+@Composable
+internal fun ForkCoverFadeRow() = ForkSwitchRow(
+    icon = Icons.Rounded.Animation,
+    title = stringResource(R.string.fork_cover_fade),
+    subtitle = stringResource(R.string.fork_cover_fade_subtitle),
+    state = ForkSettings.coverFade,
+    onChange = ForkSettings::setCoverFade,
+)
+
 // ---- The fork's rows inside upstream's settings groups, so SettingsSheet carries one line each ----
+
+/**
+ * "Cover fade", after "Full-screen detail cover" in Appearance. Greyed, never hidden, while "Reduce
+ * animation" is on: the player then changes covers at once, as every other moving part stops.
+ */
+@Composable
+internal fun SettingsGroupScope.forkCoverFadeRow() {
+    val reduceAnimation by com.music.bitchord.data.settings.AppSettings.reduceAnimation.collectAsStateWithLifecycle()
+    forkDisabledWhen(reduceAnimation) {
+        row(stringResource(R.string.fork_cover_fade), "fork", "cover", "artwork", "fade", "dissolve", "transition", "player") { ForkCoverFadeRow() }
+    }
+}
 
 /** The "Navidrome" group, after "Account & integrations": what the Navidrome library adds. */
 @Composable
@@ -382,6 +404,7 @@ internal fun SettingsGroupScope.forkSettingsRows() {
         forkDisabledWhen(!forkCrossfadeOnSkipAvailable(crossfade, smartFade)) {
             row(stringResource(R.string.fork_crossfade_on_skip), "fork", "fade", "skip") { ForkCrossfadeOnSkipRow() }
         }
+        forkCoverFadeRow()
         forkDisabledWhen(!animatedCanvas) {
             row(stringResource(R.string.fork_animated_covers), "fork", "apple", "animated", "cover") { ForkAnimatedCoversRow() }
             row(stringResource(R.string.fork_backdrop_clips), "fork", "spotify", "backdrop", "video") { ForkBackdropClipsRow() }

@@ -47,12 +47,23 @@ object ForkBackdropPulse {
     var bass: Float = 0f
         private set
 
-    fun publish(level: Float, bass: Float) {
+    /**
+     * The low band's RMS as it is, unscaled and unclipped, with a quick release: what the "Bass
+     * glow" finds kicks in ([ForkBassOnsets]). Not [bass]: that one is scaled for the pulse and
+     * sits pinned at 1 through a loud master (0.98 on average over "Starboy", 2026-11-07), where
+     * no kick can rise above it, and its slow release hides the dip between two kicks.
+     */
+    @Volatile
+    var kick: Float = 0f
+        private set
+
+    fun publish(level: Float, bass: Float, kick: Float = 0f) {
         this.level = level.coerceIn(0f, 1f)
         this.bass = bass.coerceIn(0f, 1f)
+        this.kick = kick.coerceAtLeast(0f)
     }
 
-    fun silence() = publish(0f, 0f)
+    fun silence() = publish(0f, 0f, 0f)
 }
 
 /** How far the loudness zooms the backdrop at full scale. */
@@ -76,7 +87,14 @@ private const val IDLE_POLL_MS = 120L
  * recomposes the player. Clipped to its bounds first so the zoom never spills past the surface.
  * Off with "Reduce animation", as every other moving backdrop is.
  */
-fun Modifier.forkBackdropPulse(): Modifier = composed {
+fun Modifier.forkBackdropPulse(): Modifier = forkBassGlow().forkPulse()
+
+/**
+ * The pulse alone. [forkBackdropPulse] puts the "Bass glow" ([forkBassGlow]) outside it, so the
+ * halo is drawn over the zoomed backdrop without being zoomed itself, and both backdrops that carry
+ * the pulse carry the glow with no hook of their own.
+ */
+private fun Modifier.forkPulse(): Modifier = composed {
     val on by ForkBackdropPulse.enabled.collectAsState()
     val reduceAnimation by PlayerSettings.reduceAnimation.collectAsState()
     if (!on || reduceAnimation) return@composed Modifier

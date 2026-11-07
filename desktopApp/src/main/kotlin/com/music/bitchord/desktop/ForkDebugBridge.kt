@@ -90,6 +90,8 @@ internal object ForkDebugBridge {
         put("playing", playback?.isPlaying)
         put("loading", playback?.isLoading)
         put("positionMs", playback?.positionMs)
+        put("bass", com.music.bitchord.ui.player.ForkBackdropPulse.bass) // the meters the Backdrop pulse and Bass glow read
+        put("kick", com.music.bitchord.ui.player.ForkBackdropPulse.kick)
         val current = queue()
         put("queueIndex", current.index)
         put("queueSize", current.songs.size)

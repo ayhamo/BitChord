@@ -110,4 +110,6 @@
     <string name="fork_unplayable_skipped_many">Skipped %1$d songs: this device can’t play %2$s</string>
     <string name="fork_unplayable_stopped">Can’t play “%1$s”: this device has no decoder for %2$s</string>
     <string name="fork_unplayable_none">Nothing left in the queue that this device can play (%1$s)</string>
+    <string name="fork_cover_fade">Cover fade</string>
+    <string name="fork_cover_fade_subtitle">When the song changes, the old cover stays until the new one has loaded, then dissolves into it</string>
 </resources>

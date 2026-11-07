@@ -340,7 +340,8 @@ internal fun LandscapeArtwork(
                 // portrait sleeve's note on TextureView stacking order.
                 modifier = Modifier
                     .fillMaxSize()
-                    .drawWithContent { if (artLoaded || !canvasRendered) drawContent() },
+                    .drawWithContent { if (artLoaded || !canvasRendered) drawContent() }
+                    .forkCoverFade(artRequest, artLoaded).forkBassGlowAnchor(artRequest), // fork: Cover fade (ForkCoverFade), the PC's Bass glow (ForkBassGlow); bare Modifiers while off
             )
             canvas?.let { clip ->
                 key(clip.url) { // fork: one player per clip, as in portrait

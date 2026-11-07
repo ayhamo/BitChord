@@ -6644,6 +6644,7 @@ private fun DesktopSettingsScreen(
                     ForkPlayerThemeRow() // fork: v1.9.1's Player theme, in place of Legacy mesh gradient
                     ForkDisableBlendRow() // fork: v1.9.1's Disable blend effects
                     ForkBackdropPulseRow() // fork: Backdrop pulse (ForkBackdropPulseMeter)
+                    ForkPlayerEffectsRows() // fork: Cover fade, Bass glow (ForkPlayerEffects)
                     SettingsToggle(
                         DesktopStrings["d_animated_canvas", "Animated canvas"],
                         DesktopStrings["d_show_motion_artwork_when_it_is_available", "Show motion artwork when it is available"],
