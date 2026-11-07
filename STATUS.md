@@ -23,11 +23,12 @@ The single list of what is left, ticked when done. Everything not here is either
 - [ ] Cover fade (cover-to-cover transition, from the Octave video)
 - [ ] Two or three Apple AutoMix presets on our own analysis
 - [ ] "My devices" and remote control (via Listen Together, ~1 day)
-- [ ] youtube.com playlists in the app (not only YouTube Music's)
 - [ ] Suggested songs under playlists: not shown on the PC. Fixed 2026-11-06 (untested): the PC's load-more stopped when a page brought only suggestions; it now also waits on their count. Check with a signed-in PC and an owned playlist
 - [x] (done 2026-11-06; seen greyed while signed out, F5 did nothing then; the signed-in refresh not run: log line "library: refresh asked for (sidebar or key)") Sidebar ⟳ beside the playlists, F5 / Ctrl+R (offered; the Library page button and focus refresh are done)
 
 ### Updater plan, phone and PC (owner asked 2026-11-07: plan only, nothing built)
+
+Owner's decision (2026-11-07): the phone keeps upstream's update logic as it is (it follows BitChord Android). The PC gets the build number (the version stays the same, as the PC follows three forks, but each build is offered by its build number) and the in-app updater (6-8); started in a subagent the same day, with multi-select in Downloads / Local Music. Dropped from the list: youtube.com playlists in the app.
 
 Already there:
 - Phone (`AppUpdateChecker`, `UpdateAvailableDialog`): asks GitHub for this fork's "Latest" release (`fork-v<version>`) at every cold start; a dialog with the notes as Markdown; Download now with progress and Cancel; Install now hands the APK to Android's installer (one confirm tap); the universal APK first, else this phone's ABI split; no APK in the release → the releases page. Releases come from CI only, signed with the fork key, certificate checked, SHA256SUMS and an attestation published.
