@@ -98,6 +98,8 @@ dependencies {
     implementation("org.bytedeco:javacpp:$javacppVersion:$nativeClassifier")
     implementation("org.bytedeco:ffmpeg:$ffmpegVersion")
     implementation("org.bytedeco:ffmpeg:$ffmpegVersion:$nativeClassifier")
+    // fork: unit tests run on the build host; a Windows build made on Linux (docker/pc-test.sh, the PC workflow) loads Linux FFmpeg there.
+    if (targetOs == "windows" && hostIsLinux) listOf("javacpp:$javacppVersion", "ffmpeg:$ffmpegVersion").forEach { testRuntimeOnly("org.bytedeco:$it:linux-x86_64") }
 
     // The same backdrop blur the Android build uses for its floating bars.
     // On Windows, 1.7.2 keeps this Compose Desktop 1.10.3 app on the matching UI/text/animation

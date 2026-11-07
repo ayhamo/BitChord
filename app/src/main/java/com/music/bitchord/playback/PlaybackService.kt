@@ -8795,15 +8795,15 @@ class PlaybackService : MediaLibraryService() {
             pageSize: Int,
             params: LibraryParams?,
         ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> = scope.future(Dispatchers.IO) {
-            val isGridFolder = parentId == MEDIA_ROOT_ID || parentId == MEDIA_PLAYLISTS_ID
-            val items: List<MediaItem> = when (parentId) {
+            val isGridFolder = parentId == MEDIA_ROOT_ID || parentId == MEDIA_PLAYLISTS_ID || ForkAutoNavidrome.isGrid(parentId) // fork: Navidrome's album grids
+            val items: List<MediaItem> = ForkAutoNavidrome.children(this@PlaybackService, parentId) { songCache[it.videoId] = it } ?: when (parentId) { // fork: the Navidrome folder
                 MEDIA_ROOT_ID -> listOf(
                     createFolderItem(MEDIA_QUICK_PICKS_ID, getString(R.string.auto_quick_picks), folderType = MediaMetadata.FOLDER_TYPE_PLAYLISTS),
                     createFolderItem(MEDIA_RECENTS_ID, getString(R.string.auto_recents), folderType = MediaMetadata.FOLDER_TYPE_PLAYLISTS),
                     createFolderItem(MEDIA_PLAYLISTS_ID, getString(R.string.playlists), folderType = MediaMetadata.FOLDER_TYPE_PLAYLISTS, isGrid = true),
                     createFolderItem(MEDIA_LIKED_ID, getString(R.string.auto_liked), folderType = MediaMetadata.FOLDER_TYPE_PLAYLISTS),
                     createFolderItem(MEDIA_MORE_ID, getString(R.string.more), folderType = MediaMetadata.FOLDER_TYPE_MIXED),
-                )
+                ) + ForkAutoNavidrome.rootFolders(this@PlaybackService) // fork: the Navidrome folder, when a server is set up
                 MEDIA_MORE_ID -> listOf(
                     createFolderItem(MEDIA_DOWNLOADS_ID, getString(R.string.downloads), folderType = MediaMetadata.FOLDER_TYPE_MIXED),
                     createFolderItem(MEDIA_LOCAL_MUSIC_ID, getString(R.string.local_music), folderType = MediaMetadata.FOLDER_TYPE_MIXED),
@@ -8982,7 +8982,7 @@ class PlaybackService : MediaLibraryService() {
             browser: MediaSession.ControllerInfo,
             mediaId: String,
         ): ListenableFuture<LibraryResult<MediaItem>> = scope.future(Dispatchers.IO) {
-            val item = when (mediaId) {
+            val item = ForkAutoNavidrome.item(mediaId) { songCache[it] } ?: when (mediaId) { // fork: the Navidrome folder's own
                 MEDIA_ROOT_ID -> MediaItem.Builder()
                     .setMediaId(MEDIA_ROOT_ID)
                     .setMediaMetadata(
@@ -9139,6 +9139,7 @@ class PlaybackService : MediaLibraryService() {
             startIndex: Int,
             startPositionMs: Long,
         ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> = scope.future(Dispatchers.IO) {
+            ForkAutoNavidrome.queueFor(mediaItems) { songCache[it.videoId] = it }?.let { return@future it } // fork: a Navidrome list, or a song played on through its list
             val resolved = resolveMediaItems(mediaItems)
             val validIndex = startIndex.coerceIn(0, (resolved.size - 1).coerceAtLeast(0))
             MediaSession.MediaItemsWithStartPosition(
@@ -9160,6 +9161,8 @@ class PlaybackService : MediaLibraryService() {
             val resolved = mutableListOf<MediaItem>()
             for (item in mediaItems) {
                 val id = item.mediaId
+                val forkNavidrome = ForkAutoNavidrome.itemsFor(id) { songCache[it.videoId] = it } // fork: the Navidrome folder's lists and songs
+                if (forkNavidrome != null) { resolved.addAll(forkNavidrome); continue } // fork
                 val searchQuery = item.requestMetadata.searchQuery
                 when {
                     !searchQuery.isNullOrBlank() -> {

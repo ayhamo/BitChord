@@ -28,16 +28,16 @@ import kotlinx.coroutines.flow.StateFlow
  * `.hideHomeVideos`, `.squareVideoThumbnails`, `SettingsSheet`'s CONTENT_PREFERENCES group, `MainActivity`'s
  * `visibleHomeState`). Same keys as the phone, so the switches mean the same thing on both.
  *
- * Ported: Hide Recents, Hide videos from Home, Square video thumbnails. Not ported: the phone's
- * "Hide Top Picks for You" and "Hide Find Your Mood", because the PC's Home never draws either shelf
- * (`HomeScreen` only draws them for a caller that passes `onTopPickClick` / `onMoodClick`, and the
- * PC passes neither), so the switches would do nothing. "Prefer music-only version" heads the group,
- * as on the phone; it lives in `ForkMusicOnly`.
+ * Ported: Hide Recents, Hide Top Picks for You, Hide Find Your Mood (since 2026-11-06, when the PC's
+ * Home got both shelves: `ForkTopPicks`), Hide videos from Home, Square video thumbnails. "Prefer
+ * music-only version" heads the group, as on the phone; it lives in `ForkMusicOnly`.
  */
 internal object ForkContentPreferences {
     private const val KEY_HIDE_RECENTS = "hide_recents"
     private const val KEY_HIDE_HOME_VIDEOS = "hide_home_videos"
     private const val KEY_SQUARE_VIDEO_THUMBNAILS = "square_video_thumbnails"
+    private const val KEY_HIDE_TOP_PICKS = "hide_top_picks"
+    private const val KEY_HIDE_HOME_MOODS = "hide_home_moods"
 
     private val persistence = DesktopPersistence()
 
@@ -49,6 +49,22 @@ internal object ForkContentPreferences {
 
     private val _squareVideoThumbnails = MutableStateFlow(persistence.boolean(KEY_SQUARE_VIDEO_THUMBNAILS, false))
     val squareVideoThumbnails: StateFlow<Boolean> = _squareVideoThumbnails
+
+    private val _hideTopPicks = MutableStateFlow(persistence.boolean(KEY_HIDE_TOP_PICKS, false))
+    val hideTopPicks: StateFlow<Boolean> = _hideTopPicks
+
+    private val _hideHomeMoods = MutableStateFlow(persistence.boolean(KEY_HIDE_HOME_MOODS, false))
+    val hideHomeMoods: StateFlow<Boolean> = _hideHomeMoods
+
+    fun setHideTopPicks(value: Boolean) {
+        _hideTopPicks.value = value
+        persistence.saveBoolean(KEY_HIDE_TOP_PICKS, value)
+    }
+
+    fun setHideHomeMoods(value: Boolean) {
+        _hideHomeMoods.value = value
+        persistence.saveBoolean(KEY_HIDE_HOME_MOODS, value)
+    }
 
     /**
      * Hands the saved "Square video thumbnails" to the shared UI before anything is drawn, as the
@@ -118,6 +134,8 @@ internal fun ForkContentPreferencesGroup() {
     val hideRecents by ForkContentPreferences.hideRecents.collectAsState()
     val hideHomeVideos by ForkContentPreferences.hideHomeVideos.collectAsState()
     val square by ForkContentPreferences.squareVideoThumbnails.collectAsState()
+    val hideTopPicks by ForkContentPreferences.hideTopPicks.collectAsState()
+    val hideHomeMoods by ForkContentPreferences.hideHomeMoods.collectAsState()
     SettingsGroup(DesktopStrings["content_preferences", "Content Preferences"]) {
         ForkPreferMusicOnlyRow() // the phone's first row here (ForkMusicOnly)
         ForkPlainToggle(
@@ -125,6 +143,18 @@ internal fun ForkContentPreferencesGroup() {
             "recents recent history feed home",
             hideRecents,
             ForkContentPreferences::setHideRecents,
+        )
+        ForkPlainToggle(
+            DesktopStrings["hide_top_picks", "Hide Top Picks for You"],
+            "top picks for you home cards stations",
+            hideTopPicks,
+            ForkContentPreferences::setHideTopPicks,
+        )
+        ForkPlainToggle(
+            DesktopStrings["hide_home_moods", "Hide Find Your Mood"],
+            "find your mood moods home",
+            hideHomeMoods,
+            ForkContentPreferences::setHideHomeMoods,
         )
         SettingsToggle(
             DesktopStrings["hide_home_videos", "Hide videos from Home"],
