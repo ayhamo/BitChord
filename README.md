@@ -34,8 +34,8 @@
 The full list of changes, with every line touched in upstream files, is in [FORK.md](FORK.md).
 
 **Keeping up** (for whoever maintains this fork)
-- Upstream's app releases are merged and rebuilt daily (`fork-sync-release.yml`).
-- Two PC forks are followed for PC engine fixes and features, taken selectively, commit by commit, never their UI: [BitChord PC-Continued](https://github.com/jackychan4891/BitChord-PC-Continued) and [BitChord Desktop Revived](https://github.com/Bntagaaa/BitChord-Desktop-Revived). Each has a daily workflow (`fork-pc-continued-watch.yml`, `fork-desktop-revived-watch.yml`) that fails, so GitHub emails, when that fork publishes a new release; after reviewing it, set the release in `.github/pc-continued-seen.txt` or `.github/desktop-revived-seen.txt`. What was taken from each is credited in FORK.md.
+- Upstream's app releases are merged by hand; a push to main builds and publishes both apps.
+- Two PC forks are followed for PC engine fixes and features, taken selectively, commit by commit, never their UI: [BitChord PC-Continued](https://github.com/jackychan4891/BitChord-PC-Continued) and [BitChord Desktop Revived](https://github.com/Bntagaaa/BitChord-Desktop-Revived). The maintainer watches both repositories (and upstream) on GitHub for new releases. What was taken from each is credited in FORK.md.
 - Upstream's web player, [bitchord-8bw.pages.dev](https://bitchord-8bw.pages.dev/home), gets features before the apps, and its newest code isn't public yet (the author plans to open-source it). Until then, look over the live site now and then for new features worth bringing to the PC app; the `web/` folder in this repository can lag behind the site.
 
 ---

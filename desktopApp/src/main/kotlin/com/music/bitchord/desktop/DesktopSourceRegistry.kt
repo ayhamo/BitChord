@@ -3,6 +3,7 @@ package com.music.bitchord.desktop
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.sources.TrackMatcher // fork: the phone's matcher (was DesktopTrackMatcher)
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -116,11 +117,11 @@ internal object DesktopSourceRegistry {
     /** YouTube Music's copies of [song], most confident first, found by title and artist. */
     private suspend fun youTubeMatches(song: Song): List<Song> {
         if (song.title.isBlank() || song.isVideo) return emptyList()
-        for (query in DesktopTrackMatcher.queries(song)) {
+        for (query in TrackMatcher.queries(TrackMatcher.targetOf(song))) { // fork: the phone's matcher
             val candidates = DesktopSearchClient.search(query, SearchFilter.SONGS)
                 .getOrDefault(emptyList())
                 .mapNotNull { (it as? SearchResult.Track)?.song }
-            DesktopTrackMatcher.ranked(candidates, song).ifEmpty { null }?.let { return it }
+            TrackMatcher.ranked(candidates, TrackMatcher.targetOf(song)).ifEmpty { null }?.let { return it } // fork: the phone's matcher
         }
         return emptyList()
     }
@@ -194,6 +195,16 @@ internal object DesktopSourceRegistry {
                     DesktopSourceKind.YOUTUBE -> YouTubeAdapter(config)
                 }
             }
+
+    /** fork: every source ranked above YouTube that a download may ask, in rank order, as ForkDownloadSources' legs (not the stream ceiling's list: a download has its own rung) */
+    internal fun forkDownloadLegs(song: Song, quality: String?): List<ForkDownloadSources.Leg> = adapters(forDownload = true).filter { it.config.kind != DesktopSourceKind.YOUTUBE }
+        .map { source -> ForkDownloadSources.Leg(source.config.id, source.descriptor.name, source.config.kind.supportsLossless) { openBest(source, song, quality, forkNoteHandoff = false) } }
+
+    /** fork: YouTube's own copy of a YouTube row, for a download no source could serve (ForkDownloadSources) */
+    internal suspend fun forkDownloadYouTube(song: Song, quality: String?): Result<DesktopStream> = runCatching {
+        val youtube = adapters(forDownload = true).firstOrNull { it.config.kind == DesktopSourceKind.YOUTUBE } ?: error("No enabled music source is configured")
+        youtube.resolve(song, quality).getOrThrow() ?: error("${youtube.descriptor.name} did not return an audio stream")
+    }
 
     fun descriptors(): List<DesktopSourceDescriptor> = configs()
         .inSourceOrder()
@@ -362,7 +373,7 @@ internal object DesktopSourceRegistry {
             DesktopTrackLog.log("  this row is a video upload, so no source will be asked to match it")
         } else {
             DesktopTrackLog.log(
-                "  asking for: " + DesktopTrackMatcher.queries(song).joinToString(" | ").ifBlank { "(nothing)" },
+                "  asking for: " + TrackMatcher.queries(TrackMatcher.targetOf(song)).joinToString(" | ").ifBlank { "(nothing)" }, // fork: the phone's matcher
             )
         }
         val forkDirect = ForkDirectSource.active().also { if (it) ForkDirectSourceCheck.startLength(song) } // fork: Direct Source Stream's length and artist checks (ForkDirectSourceCheck)
@@ -550,6 +561,7 @@ internal object DesktopSourceRegistry {
         song: Song,
         quality: String?,
         forkDirect: Boolean = false, // fork: v1.9.1's Direct Source Stream checks (ForkDirectSourceCheck)
+        forkNoteHandoff: Boolean = true, // fork: false for a download's legs, which would overwrite what played the song
     ): DesktopStream? {
         val matches = source.matches(song).let { if (forkDirect) ForkDirectSourceCheck.strict(source.descriptor.name, it, song) else it } // fork: held to the length tolerance and a credited artist
         if (matches.isEmpty()) {
@@ -565,7 +577,7 @@ internal object DesktopSourceRegistry {
             val stream = source.resolve(match, quality).getOrNull() ?: continue
             if (!playableHere(source, stream)) continue
             if (forkDirect && ForkDirectSourceCheck.cutShort(source.descriptor.name, match, stream, song)) continue // fork: a preview or cut-off file is not the recording
-            ForkHandoffDesktop.noteOpened(song, source.config.id, match.videoId) // fork: which row this source served, for the handoff note
+            if (forkNoteHandoff) ForkHandoffDesktop.noteOpened(song, source.config.id, match.videoId) // fork: which row this source served, for the handoff note
             val served = stream.format
             if (!wantsLossless || served.isLossless || served.isDolbyAtmos) {
                 DesktopTrackLog.log(
@@ -589,7 +601,7 @@ internal object DesktopSourceRegistry {
 
     /** The matching rows in the order they are worth opening. */
     internal fun preferred(matches: List<Song>, target: Song, wantsLossless: Boolean): List<Song> {
-        val sameLength = matches.filter { DesktopTrackMatcher.withinSeconds(it, target, SAME_RECORDING_SEC) }
+        val sameLength = matches.filter { TrackMatcher.withinSeconds(it, TrackMatcher.targetOf(target), SAME_RECORDING_SEC) } // fork: the phone's matcher
         val eligible = sameLength.ifEmpty { matches }
         // fork (PC-Continued e16ed1f8): an Atmos mix is only ever its own row, so with Atmos wanted those
         // rows go first (with the setting off the order is as before)

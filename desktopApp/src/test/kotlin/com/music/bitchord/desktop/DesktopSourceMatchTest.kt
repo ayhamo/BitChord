@@ -35,7 +35,7 @@ class DesktopSourceMatchTest {
             song("b", "Shayar", "Prabhakar Raj, LarkZ", "4:07"),
             song("c", "Something Else", "Prabhakar Raj", "4:08"),
         )
-        val ranked = DesktopTrackMatcher.ranked(candidates, target)
+        val ranked = com.music.bitchord.data.sources.TrackMatcher.ranked(candidates, com.music.bitchord.data.sources.TrackMatcher.targetOf(target)) // fork: the phone's matcher
         assertEquals(listOf("a", "b"), ranked.map { it.videoId })
     }
 

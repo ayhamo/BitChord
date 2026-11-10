@@ -42,15 +42,15 @@ class DesktopParityTest {
             durationText = "6:05",
         )
 
-        assertEquals(sourceCopy, DesktopTrackMatcher.best(listOf(sourceCopy), target))
+        assertEquals(sourceCopy, com.music.bitchord.data.sources.TrackMatcher.best(listOf(sourceCopy), com.music.bitchord.data.sources.TrackMatcher.targetOf(target))) // fork: the phone's matcher
     }
 
     @Test
     fun sourceMatcherRejectsAConflictingArtist() {
         val target = Song("youtube-id", "Tera Mera Rishta", "Mithoon", null, durationText = "6:05")
-        val cover = Song("jiosaavn:cover", "Tera Mera Rishta", "Different Artist", null, durationText = "6:05")
+        val cover = Song("jiosaavn:cover", "Tera Mera Rishta", "Different Artist", null, durationText = "5:50") // fork: not to the second (the phone's matcher takes an exact runtime as the same master, ForkSharedMatcherTest)
 
-        assertEquals(null, DesktopTrackMatcher.best(listOf(cover), target))
+        assertEquals(null, com.music.bitchord.data.sources.TrackMatcher.best(listOf(cover), com.music.bitchord.data.sources.TrackMatcher.targetOf(target))) // fork: the phone's matcher
     }
 
     @Test

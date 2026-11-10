@@ -205,8 +205,10 @@ object Downloads {
         synchronized(lock) {
             if (id in pending || id in running) return
             pending[id] = song
+            // fork: published under the lock [cancel] takes (Desktop Revived 8bb8152d): after it, a
+            // cancel in between found no row and this "Queued" then stayed with nothing to run it.
+            _active.update { it + (id to DownloadState.Queued) }
         }
-        _active.update { it + (id to DownloadState.Queued) }
         DownloadSession.queued(song, from)
 
         val app = context.applicationContext
@@ -260,11 +262,11 @@ object Downloads {
     fun cancel(videoId: String) {
         val job = synchronized(lock) {
             pending.remove(videoId)
+            clear(videoId) // fork: under the lock, as enqueue publishes its row: after it, a tap again in between lost its Queued row
             if (videoId !in running) return@synchronized null
             running.remove(videoId)
         }
         job?.cancel()
-        clear(videoId)
         // A download the user called off is not something they need reminding to
         // check on, so it leaves the manager rather than sitting in it as a
         // permanent "cancelled" row.
@@ -929,8 +931,12 @@ object Downloads {
     }
 
     /** [videoId] is finished, one way or another, and no longer holds a worker. */
-    internal fun onIdle(videoId: String) {
-        synchronized(lock) { running.remove(videoId) }
+    internal fun onIdle(videoId: String, job: Job? = null) { // fork: + job
+        // fork: given [job], only that job's own claim (Desktop Revived 8bb8152d's onIdle, the PC's
+        // own fix). A track cancelled and tapped again at once is claimed anew by another worker
+        // while the old job is still unwinding; that job's onIdle then took the new claim away,
+        // so the new download could no longer be cancelled and a third tap started a second copy.
+        synchronized(lock) { if (job == null || running[videoId] === job) running.remove(videoId) }
     }
 
     /** Whether anything is still queued or in flight — see [DownloadService]'s workers. */
@@ -1003,7 +1009,7 @@ object Downloads {
             DownloadSession.retitle(id, plan.track)
             transfer(context, song, plan)
         } catch (e: CancellationException) {
-            _active.update { if (it[id] is DownloadState.Failed) it else it - id } // fork: was clear(id); keeps [onStopped]'s "tap to retry"
+            _active.update { if (it[id] is DownloadState.Failed || it[id] is DownloadState.Queued) it else it - id } // fork: was clear(id); keeps [onStopped]'s "tap to retry", and the Queued row of the same song tapped again while this job unwinds
             throw e
         } catch (e: Exception) {
             Log.w(TAG, "download failed for $id: ${e.message}", e)

@@ -1,3 +1,0 @@
-# The last release of jackychan4891/BitChord-PC-Continued this fork reviewed (read by fork-pc-continued-watch.yml).
-# After reviewing a new release, set it here and push.
-release=v1.9

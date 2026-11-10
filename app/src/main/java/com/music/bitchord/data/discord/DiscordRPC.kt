@@ -88,7 +88,7 @@ class DiscordRPC(
                 button1Text.ifEmpty { DEFAULT_BUTTON_1 },
                 song,
             )
-            buttonsList.add(resolvedText to watchUrl(song))
+            buttonsList.add(resolvedText to com.music.bitchord.data.navidrome.NavidromeDiscordCover.listenUrl(song)) // fork: was watchUrl(song), a dead link for a server's song
         }
         if (button2Visible) {
             val resolvedText = resolveVariables(
@@ -111,7 +111,7 @@ class DiscordRPC(
             name = name,
             details = songTitleWithRate,
             state = song.artist,
-            detailsUrl = watchUrl(song),
+            detailsUrl = com.music.bitchord.data.navidrome.NavidromeDiscordCover.listenUrl(song), // fork: was watchUrl(song)
             // Asked for at a size Discord's own card actually draws — the row
             // thumbnail our lists use is 160px and reads soft blown up to the
             // 96dp sleeve in a presence card.
@@ -119,8 +119,7 @@ class DiscordRPC(
             // A track with no artwork — or with artwork Discord can't reach,
             // which is anything that isn't an http URL — sends none, and Discord
             // draws the BitChord application's own icon in its place.
-            largeImage = song.artworkAt(ART_PX)
-                ?.takeIf { it.startsWith("http") && "/rest/getCoverArt" !in it } // fork: Discord can't reach a private server, and its address stays here
+            largeImage = com.music.bitchord.data.navidrome.NavidromeDiscordCover.coverFor(song, ART_PX) // fork: only a public cover; a server song gets its YouTube / iTunes one (waits ≤ 3 s; this job is cancelled by the next push)
                 ?.let(RpcImage::ExternalImage),
             smallImage = null,
             // The card's optional third information line. Kept absent for

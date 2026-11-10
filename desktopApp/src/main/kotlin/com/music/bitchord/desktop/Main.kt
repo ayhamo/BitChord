@@ -207,6 +207,7 @@ private fun desktopMain() = application {
             LocalDesktopWindowActions provides actions,
             LocalDesktopWindowScope provides this,
             LocalDensity provides ForkUiScale.density(), // fork: the UI scale setting (Desktop Revived 8782585b)
+            com.music.bitchord.ui.LocalForkLyricsOnScreen provides ForkLyricsUnfocused.provided(visible, state.isMinimized), // fork: lyrics may keep moving unfocused (ForkLyricsUnfocused)
         ) {
             ForkFirstFrameProbe() // fork: logs the first frame, and lets deferred start-up work go (ForkStartup)
             BitChordDesktopApp()

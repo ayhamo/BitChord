@@ -3,6 +3,7 @@ package com.music.bitchord.desktop
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.sources.TrackMatcher // fork: the phone's matcher (was DesktopTrackMatcher)
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp // fork: was cio.CIO, see below
 import io.ktor.client.plugins.HttpTimeout
@@ -449,8 +450,42 @@ internal class DesktopAddonClient(rawBaseUrl: String, private val forkSourceId: 
          * is decided by [DesktopSourceRegistry]'s own caps. A cold multi-backend addon needs well
          * over ten seconds to mint a lossless URL, and cutting it off there is what left a Hi-Res
          * copy unfound while a 320 kbps one played.
+         *
+         * Fork: 45 s (was 20 s), the phone's `AddonClient` ceiling since 38535595. A TorBox-backed
+         * addon cold-caching a long FLAC is silent for 20-32 s before it answers at all (32.1 s was
+         * the worst a real Nebula addon took), and 20 s cut every such answer off. Waits that must
+         * be short still are: [DesktopSourceRegistry]'s 20 s substitute cap bounds playback; the
+         * longer ceiling reaches the 90 s quality upgrade, downloads and Settings' checks.
          */
-        const val CALL_TIMEOUT_MS = 20_000L
+        const val CALL_TIMEOUT_MS = 45_000L
+
+        /**
+         * Fork: the longest silence one read may sit through, lifted above [CALL_TIMEOUT_MS] as the
+         * phone lifts its read timeout to 60 s. That cold-caching wait is silence, not a trickle,
+         * and without this the engine's own read timeout applies: Ktor's OkHttp engine hands
+         * OkHttp no socket timeout unless one is set here, and OkHttp's default is 10 s, so the PC
+         * gave up on a silent addon after 10 s whatever [CALL_TIMEOUT_MS] said
+         * (`ForkAddonTimeoutsTest`).
+         */
+        const val READ_TIMEOUT_MS = 60_000L
+
+        /** Fork: the phone's connect timeout (`Http.client`'s 20 s; OkHttp's own default is 10 s). */
+        const val CONNECT_TIMEOUT_MS = 20_000L
+
+        /**
+         * Fork: the client both addon clients use, so their timeouts are one set and can be
+         * tested. The parameters exist for `ForkAddonTimeoutsTest`; callers take the defaults.
+         */
+        internal fun forkAddonHttp(
+            callTimeoutMs: Long = CALL_TIMEOUT_MS,
+            readTimeoutMs: Long = READ_TIMEOUT_MS,
+        ) = HttpClient(OkHttp) {
+            install(HttpTimeout) {
+                requestTimeoutMillis = callTimeoutMs
+                socketTimeoutMillis = readTimeoutMs
+                connectTimeoutMillis = CONNECT_TIMEOUT_MS
+            }
+        }
         const val MANIFEST_TTL_MS = 10 * 60 * 1000L
         const val SEARCH_TTL_MS = 10 * 60 * 1000L
         const val STREAM_TTL_MS = 5 * 60 * 1000L
@@ -487,9 +522,7 @@ internal class DesktopAddonClient(rawBaseUrl: String, private val forkSourceId: 
          * (eljohnzc, aurix; owner, 2026-11-03), which then worked on a retry. OkHttp checks a pooled
          * connection before reusing it.
          */
-        private val http = HttpClient(OkHttp) {
-            install(HttpTimeout) { requestTimeoutMillis = CALL_TIMEOUT_MS }
-        }
+        private val http = forkAddonHttp() // fork: the phone's call, read and connect timeouts
 
         /** A base URL from whatever the user pasted. */
         fun normalizeBase(raw: String): String {
@@ -659,10 +692,10 @@ internal object DesktopAddonSource {
     /** Every copy this addon holds of [song], most confident first. */
     suspend fun matches(config: DesktopSourceConfig, song: Song): List<Song> {
         if (song.title.isBlank() || song.isVideo) return emptyList()
-        for (query in DesktopTrackMatcher.queries(song)) {
+        for (query in TrackMatcher.queries(TrackMatcher.targetOf(song))) { // fork: the phone's matcher
             val candidates = search(config, query, 25).getOrDefault(emptyList())
                 .mapNotNull { (it as? SearchResult.Track)?.song }
-            DesktopTrackMatcher.ranked(candidates, song).ifEmpty { null }?.let { return it }
+            TrackMatcher.ranked(candidates, TrackMatcher.targetOf(song)).ifEmpty { null }?.let { return it } // fork: the phone's matcher
         }
         return emptyList()
     }
@@ -937,7 +970,5 @@ internal object DesktopSourceFormats {
         }
     }
 
-    private val http = HttpClient(OkHttp) { // fork: was CIO, see DesktopAddonClient.http
-        install(HttpTimeout) { requestTimeoutMillis = DesktopAddonClient.CALL_TIMEOUT_MS }
-    }
+    private val http = DesktopAddonClient.forkAddonHttp() // fork: was CIO, see DesktopAddonClient.http; the phone's timeouts
 }

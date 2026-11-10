@@ -20,7 +20,7 @@ import kotlin.math.sin
 internal class DesktopRateConverter(
     val fromRate: Int,
     val toRate: Int,
-    private val channels: Int,
+    val channels: Int, // fork: read by the engine, which rebuilds a converter whose channel count no longer matches the output's
 ) {
     /** Input frames advanced per output frame. */
     private val step = fromRate.toDouble() / toRate

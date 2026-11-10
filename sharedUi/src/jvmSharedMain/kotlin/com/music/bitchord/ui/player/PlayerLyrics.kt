@@ -139,6 +139,7 @@ import com.music.bitchord.ui.haptics.Haptics
 import com.music.bitchord.ui.haptics.rememberHaptics
 import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.rememberIsForeground
+import com.music.bitchord.ui.forkLyricsOnScreen // fork
 import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.abs
@@ -735,7 +736,7 @@ private fun rememberLyricClock(
     // One loop for the whole run, reading the playhead itself. Keyed on the
     // reading instead, every reading restarted it, and each restart spent a
     // frame waiting for its first frame time — a hitch twice a second.
-    val foreground = rememberIsForeground()
+    val foreground = forkLyricsOnScreen(rememberIsForeground()) // fork: the PC may keep this running unfocused (ForkLyricsOnScreen)
     LaunchedEffect(engine, playhead, isPlaying, foreground) {
         if (!isPlaying || !foreground) return@LaunchedEffect
         engine.restart()
@@ -1576,7 +1577,7 @@ internal fun LyricsTranslationMotion(
     content: @Composable (State<Float>?) -> Unit,
 ) {
     val progress = remember { Animatable(1f) }
-    val foreground = rememberIsForeground()
+    val foreground = forkLyricsOnScreen(rememberIsForeground()) // fork: as the lyric clock (ForkLyricsOnScreen)
     // Reopening the panel or returning from the background must not replay a
     // previous toggle. A new toggle cancels the previous effect automatically.
     var consumedTrigger by remember { mutableIntStateOf(trigger) }
@@ -1971,6 +1972,11 @@ internal fun LyricsPanel(
             snapshotFlow { listState.layoutInfo }.first {
                 it.viewportSize.height > 0 && (!centered || it.beforeContentPadding > 0)
             }
+            // fork (Desktop Revived 2961b748): the first placement waits one frame. The wait above
+            // can be woken by the LazyColumn's own measure (layoutInfo is written there), and
+            // scrolling from inside that measure is lost or centres off a stale row size. Only the
+            // first placement: a hand-over to the next line starts on an already measured list.
+            if (!placed) withFrameNanos { } // fork
             // Keep the same anchor whether the playback controls are visible or hidden.
             val visible = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == focusLine }
             when {

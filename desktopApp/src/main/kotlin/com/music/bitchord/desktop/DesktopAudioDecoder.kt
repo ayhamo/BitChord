@@ -38,6 +38,7 @@ import org.bytedeco.ffmpeg.global.avutil.AV_SAMPLE_FMT_FLT
 import org.bytedeco.ffmpeg.global.avutil.AV_SAMPLE_FMT_S16
 import org.bytedeco.ffmpeg.global.avutil.AV_SAMPLE_FMT_S32
 import org.bytedeco.ffmpeg.global.avutil.av_channel_layout_default
+import org.bytedeco.ffmpeg.global.avutil.av_channel_layout_from_mask
 import org.bytedeco.ffmpeg.global.avutil.av_dict_get
 import org.bytedeco.ffmpeg.global.avutil.av_dict_set
 import org.bytedeco.ffmpeg.global.avutil.av_frame_alloc
@@ -70,6 +71,8 @@ internal data class DesktopPcmFormat(
     val channels: Int,
     val bytesPerSample: Int,
     val isFloat: Boolean = false,
+    /** Fork: the speakers of a layout of more than two channels (WAVEFORMATEXTENSIBLE bits), 0 = the count's usual one; see [ForkChannelLayout]. */
+    val forkChannelMask: Long = 0L,
 ) {
     val frameBytes: Int get() = channels * bytesPerSample
 
@@ -146,6 +149,12 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
         if (duration != null && duration > 0 && positionUs >= duration - FORK_CUT_SHORT_US) return
         throw java.io.IOException("the stream stopped at ${positionUs / 1_000}ms (FFmpeg error $error)")
     }
+
+    /** Fork (ForkMultichannel): the format swresample writes, [outputFormat] unless a stereo source is padded onto more channels. */
+    private var forkSwrFormat: DesktopPcmFormat = outputFormat
+
+    /** Fork (ForkMultichannel): pads a stereo source onto a multichannel [outputFormat]; null when nothing is padded. */
+    private var forkPad: ForkChannelAdapter? = null
 
     /** Fork: make-up for a multichannel source folded to stereo, 1 when nothing was; see [ForkDownmixMakeup]. */
     private var forkDownmixMakeup = 1f
@@ -253,7 +262,12 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
             atmosEnabled = DesktopAddonSettings.dolbyAtmosEnabled,
         )
         measuredFormat = measure(decoder.name()?.string, context, opened)
-        resampler = buildResampler(context, outputFormat)
+        // fork (ForkMultichannel): a deck asked for more than two channels gets the source's own layout
+        // mapped onto them by FFmpeg, or a stereo/mono source decoded to stereo as before and padded
+        // onto the front left/right in [readSamples]; a stereo deck is what it always was
+        forkSwrFormat = ForkChannelLayout.decodeFormat(outputFormat, context.ch_layout().nb_channels())
+        forkPad = ForkChannelAdapter().takeIf { forkSwrFormat.channels != outputFormat.channels }
+        resampler = buildResampler(context, forkSwrFormat) // fork: was outputFormat
         packet = av_packet_alloc()
         frame = av_frame_alloc()
         drained = false
@@ -377,6 +391,9 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
 
     private fun buildResampler(context: AVCodecContext, target: DesktopPcmFormat): SwrContext {
         val outLayout = AVChannelLayout()
+        // fork (ForkMultichannel): more than two channels in the output device's own speaker order, not
+        // FFmpeg's default for the count (6 is 5.1 with back speakers there, Windows' is with side ones)
+        if (target.channels > 2) av_channel_layout_from_mask(outLayout, ForkChannelLayout.maskOf(target)) else
         av_channel_layout_default(outLayout, target.channels)
         val swr = SwrContext(null)
         val status = swr_alloc_set_opts2(
@@ -435,6 +452,10 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
             )
         }
         if (forkDownmixMakeup != 1f) ForkDownmixMakeup.apply(samples, count, forkDownmixMakeup) // fork
+        forkPad?.let { pad -> // fork (ForkMultichannel): stereo onto the front left/right of a multichannel deck
+            sampleCount = pad.adapt(samples, count, forkSwrFormat, outputFormat)
+            return pad.output
+        }
         sampleCount = count
         return samples
     }
@@ -461,7 +482,7 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
 
     private fun convert(decoded: AVFrame): ByteArray? {
         val swr = resampler ?: return null
-        val target = outputFormat
+        val target = forkSwrFormat // fork: what swresample writes (was outputFormat; differs only for a padded stereo source)
         val capacity = swr_get_out_samples(swr, decoded.nb_samples()).coerceAtLeast(decoded.nb_samples())
         ensureOutputCapacity(capacity, target)
         val planes = outputPlanes ?: return null

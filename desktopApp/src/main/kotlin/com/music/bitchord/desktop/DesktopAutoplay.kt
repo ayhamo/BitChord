@@ -4,6 +4,7 @@ import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.sources.TrackMatcher // fork: the phone's matcher (was DesktopTrackMatcher)
 import com.music.bitchord.playback.QueueBuilder
 
 /** Most Autoplay-suggested tracks kept queued ahead of the current one at once. */
@@ -42,20 +43,30 @@ internal object DesktopAutoplay {
     /** The YouTube id to seed a station on. */
     suspend fun youtubeSeedFor(song: Song): String? {
         if (DesktopMusicSources.hasYouTubeOriginal(song)) return song.videoId
-        val query = DesktopTrackMatcher.queries(song).firstOrNull() ?: return null
+        val target = TrackMatcher.targetOf(song) // fork: the phone's matcher, as its youtubeSeedFor
+        val query = TrackMatcher.queries(target).firstOrNull() ?: return null // fork: the phone's matcher
         // YouTube specifically, not the configured sources.
         return DesktopSearchClient.search(query, SearchFilter.SONGS)
             .getOrNull()
-            ?.mapNotNull { result ->
-                when (result) {
-                    is SearchResult.Track -> result.song
-                    is SearchResult.TopTrack -> result.song
-                    is SearchResult.Browse -> null
-                }
-            }
-            ?.let { DesktopTrackMatcher.best(it, song) }
+            ?.let { forkSeedAmong(it, target) } // fork: the pick, pulled out for ForkSharedMatcherTest
             ?.videoId
     }
+
+    /**
+     * Fork: which of YouTube's answers seeds the station — the phone's `youtubeSeedFor` pick
+     * ([TrackMatcher.best] over the rows), out of [youtubeSeedFor] so it can be tested without a
+     * network. Top results count as rows here as they always did on the PC; the phone only reads
+     * plain track rows, but a top result is a track row YouTube put first, not another kind of
+     * answer.
+     */
+    internal fun forkSeedAmong(results: List<SearchResult>, target: TrackMatcher.Target): Song? =
+        results.mapNotNull { result ->
+            when (result) {
+                is SearchResult.Track -> result.song
+                is SearchResult.TopTrack -> result.song
+                is SearchResult.Browse -> null
+            }
+        }.let { TrackMatcher.best(it, target) }
 
     /** One batch of station tracks to append after [existing]. */
     suspend fun tracksFor(

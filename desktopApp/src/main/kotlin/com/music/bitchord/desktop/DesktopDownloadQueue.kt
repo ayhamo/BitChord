@@ -84,12 +84,16 @@ object DesktopDownloadQueue {
     fun enqueue(song: Song) {
         val id = song.videoId
         if (id.isBlank()) return
-        val item = synchronized(lock) {
+        synchronized(lock) {
             if (id in pending || id in running) return
-            DesktopDownloadItem(song, DesktopDownloadState.Queued, sequence.incrementAndGet())
-                .also { pending[id] = it }
+            val item = DesktopDownloadItem(song, DesktopDownloadState.Queued, sequence.incrementAndGet())
+            pending[id] = item
+            // fork: published under the lock [cancel] and the workers take (Desktop Revived 8bb8152d's
+            // race, fixed by hand). Published after it, a cancel landing in between found no row to
+            // remove and the row then appeared as a "Queued" that nothing would ever run; and a
+            // worker that had already taken the track had its Running row overwritten by Queued.
+            _active.update { it + (id to item) }
         }
-        _active.update { it + (id to item) }
         ensureWorkers()
     }
 
@@ -105,17 +109,34 @@ object DesktopDownloadQueue {
     fun cancel(videoId: String) {
         val job = synchronized(lock) {
             pending.remove(videoId)
-            if (videoId !in running) return@synchronized null
+            // A download called off is not something anyone needs reminding to check on, so it
+            // leaves the manager rather than sitting in it as a permanent "cancelled" row.
+            // fork: under the lock, with the claim (Desktop Revived 8bb8152d): removed after it, an
+            // enqueue of the same track in between (cancel, then download again) lost its new row.
+            _active.update { it - videoId }
             running.remove(videoId)
         }
         job?.cancel()
         DesktopDownloadManager.cancel(videoId)
-        // A download called off is not something anyone needs reminding to check on, so it leaves
-        // the manager rather than sitting in it as a permanent "cancelled" row.
-        _active.update { it - videoId }
     }
 
-    fun cancelAll() = _active.value.keys.toList().forEach(::cancel)
+    /**
+     * fork: every row at once, failed ones included, under one lock (Desktop Revived 8bb8152d). It
+     * cancelled the rows it had read one by one, so a track enqueued meanwhile, or one whose row was
+     * not published yet, was left behind running.
+     */
+    fun cancelAll() {
+        val (ids, jobs) = synchronized(lock) {
+            val ids = (pending.keys + running.keys + _active.value.keys).toSet()
+            val jobs = running.values.filterNotNull()
+            pending.clear()
+            running.clear()
+            _active.value = emptyMap()
+            ids to jobs
+        }
+        jobs.forEach(Job::cancel)
+        ids.forEach(DesktopDownloadManager::cancel)
+    }
 
     /** Drops the finished and failed rows, leaving whatever is still going. */
     fun clearFinished() {
@@ -154,11 +175,13 @@ object DesktopDownloadQueue {
      * cancelled the rest of the queue sat there with nobody left to take it.
      */
     private suspend fun work() {
+        // fork: whether takeNext already gave this worker's place back, under the lock that found the
+        // queue empty; see takeNext.
+        var released = false
         try {
             while (true) {
-                val item = takeNext() ?: return
+                val item = takeNext() ?: run { released = true; return }
                 val id = item.song.videoId
-                _active.update { it + (id to item.copy(state = DesktopDownloadState.Running(0f))) }
                 val track = scope.async(start = CoroutineStart.LAZY) {
                     transfer(item.song) { downloaded, total ->
                         val fraction = if (total != null && total > 0L) {
@@ -169,7 +192,10 @@ object DesktopDownloadQueue {
                         _active.update { current ->
                             // Only while it is still the running row: a cancel removes it, and
                             // putting it back here would resurrect a row nobody asked for.
-                            if (id !in current) current
+                            // fork: this request's row, by its sequence (Desktop Revived 8bb8152d): by
+                            // id, a cancelled transfer's last progress overwrote the Queued row of the
+                            // same track asked for again, and its cancel then took that row away.
+                            if (current[id]?.sequence != item.sequence) current
                             else current + (id to item.copy(state = DesktopDownloadState.Running(fraction)))
                         }
                     }
@@ -188,14 +214,18 @@ object DesktopDownloadQueue {
                 onIdle(id, track)
                 result.fold(
                     onSuccess = { saved ->
-                        _active.update { it - id }
+                        // fork: only this request's row (by sequence, Desktop Revived 8bb8152d); a newer
+                        // request for the same track keeps its own. The file is on disk either way, so
+                        // the library still hears of it.
+                        _active.update { current -> if (current[id]?.sequence == item.sequence) current - id else current }
                         _finished.tryEmit(saved)
                     },
                     onFailure = { failed(id, item, it) },
                 )
             }
         } finally {
-            synchronized(lock) { workers-- }
+            // fork: only a worker that ended some other way still holds its place here.
+            if (!released) synchronized(lock) { workers-- }
         }
     }
 
@@ -207,9 +237,14 @@ object DesktopDownloadQueue {
             _active.update { current -> if (current[id]?.sequence == item.sequence) current - id else current }
             return
         }
-        if (id !in _active.value) return
+        // fork: by sequence (Desktop Revived 8bb8152d). Checked by id, a failure of a request already
+        // cancelled turned the same track's new Queued or Running row into this old "Failed".
+        if (_active.value[id]?.sequence != item.sequence) return
         val reason = cause.message?.takeIf(String::isNotBlank) ?: "The download did not finish"
-        _active.update { it + (id to item.copy(state = DesktopDownloadState.Failed(reason))) }
+        _active.update { current ->
+            if (current[id]?.sequence != item.sequence) current
+            else current + (id to item.copy(state = DesktopDownloadState.Failed(reason)))
+        }
         DesktopTrackLog.log("download failed for '${item.song.title}' — $reason")
     }
 
@@ -219,12 +254,26 @@ object DesktopDownloadQueue {
      * Claims it as running under the same lock that removed it, so there is no instant where a
      * track is in neither the queue nor the running slot and a [cancel] for it would quietly do
      * nothing.
+     *
+     * fork: its Running row is published under the same lock (Desktop Revived 8bb8152d). Published
+     * after it, a cancel landing in between removed the row, and the worker then put it back as a
+     * Running row for a track nobody wanted any more.
+     *
+     * fork: an empty queue gives the worker's place back under the lock that found it empty. It
+     * used to be given back afterwards (in `work`'s finally), and a track enqueued in that gap found
+     * every place still taken, started no worker, and stayed Queued for good once the leaving
+     * workers were gone: the same race Revived fixed by starting workers again from the finally.
      */
     private fun takeNext(): DesktopDownloadItem? = synchronized(lock) {
-        val entry = pending.entries.firstOrNull() ?: return null
+        val entry = pending.entries.firstOrNull() ?: run {
+            workers--
+            return null
+        }
         pending.remove(entry.key)
         running[entry.key] = null
-        entry.value
+        val item = entry.value
+        _active.update { it + (item.song.videoId to item.copy(state = DesktopDownloadState.Running(0f))) }
+        item
     }
 
     /** Attaches the job fetching [videoId] and starts it, unless it has been cancelled meanwhile. */

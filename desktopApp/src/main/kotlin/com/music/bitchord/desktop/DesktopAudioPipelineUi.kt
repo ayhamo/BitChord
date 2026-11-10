@@ -83,7 +83,7 @@ internal fun DesktopAudioPipelineDialog(
                 )
             }
             PipelineStage(DesktopStrings["pipeline_output_device", "Output"]) {
-                PipelineRow(DesktopStrings["pipeline_output_api", "Output API"], "javax.sound")
+                PipelineRow(DesktopStrings["pipeline_output_api", "Output API"], pipeline.outputApi) // fork: was "javax.sound" whatever the sink used
                 PipelineRow(DesktopStrings["pipeline_device_name", "Device"], pipeline.deviceName)
                 PipelineRow(
                     DesktopStrings["pipeline_pcm_format", "PCM format"],

@@ -9,7 +9,7 @@ name: Android Release APK
 # attestation, replacing that release when it already exists. The app's updater (pointed at this
 # fork) offers it when the version is newer than the installed one.
 #
-# fork-sync-release.yml only merges upstream's releases into main; it starts this afterwards.
+# Upstream's releases are merged by hand (the daily sync workflow was removed, owner 2026-11-10).
 # A failing test or build publishes nothing (GitHub emails the failure).
 on:
   push:
@@ -19,7 +19,6 @@ on:
       - 'docs/**'
       - 'web/**'
       - 'backend/**'
-      - '.github/*-seen.txt'
   workflow_dispatch:
 
 permissions:

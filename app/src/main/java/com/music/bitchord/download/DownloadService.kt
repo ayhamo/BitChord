@@ -135,7 +135,7 @@ class DownloadService : Service() {
             val job = scope.launch { Downloads.run(this@DownloadService, song) }
             Downloads.onRunning(song.videoId, job)
             job.join()
-            Downloads.onIdle(song.videoId)
+            Downloads.onIdle(song.videoId, job) // fork: + job, only this job's claim
         }
     }
 

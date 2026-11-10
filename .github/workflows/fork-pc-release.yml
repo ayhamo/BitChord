@@ -14,7 +14,6 @@ on:
       - 'docs/**'
       - 'web/**'
       - 'backend/**'
-      - '.github/*-seen.txt'
   workflow_dispatch:
 
 permissions:

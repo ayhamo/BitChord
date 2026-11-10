@@ -197,6 +197,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      */
     private val shortDecodes = ConcurrentHashMap<String, Int>()
 
+    private val oomRetry = ForkOomRetry { SystemClock.elapsedRealtime() } // fork: an OOM is retried, not written off (ForkOomRetry)
+
     /** Tracks already looked for on disk this session; see [restoreOnce]. */
     private val restoreAttempted = ConcurrentHashMap.newKeySet<String>()
 
@@ -397,6 +399,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // The strike count belongs to the attempt that was given up on, not to
         // the track for the rest of the session; a reopened track starts level.
         if (recorded != null && !recorded.isUsable) shortDecodes.remove(trackId)
+        if (recorded != null && !recorded.isUsable) oomRetry.reset(trackId) // fork: so are its OOM strikes
         // One head attempt per track: a partial container that will not parse
         // now is unlikely to parse ten ticks later, and retrying a decode every
         // 250ms would cost more than the analysis it is trying to bring
@@ -413,6 +416,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             cache.requestAnalysisHead(analysisUri)
             return
         }
+        if (usableComplete && !oomRetry.mayRun(trackId)) return // fork: waiting after an OOM (ForkOomRetry)
         if (!running.add(trackId)) return
 
         executor.execute {
@@ -447,6 +451,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                         results[trackId] = whole
                         provisional.remove(trackId)
                         shortDecodes.remove(trackId)
+                        oomRetry.reset(trackId) // fork
                         // Only the whole-track pass is persisted. A head result
                         // is missing everything past its window — the outro, the
                         // mix-out anchor, the energy curve — and storing one
@@ -491,7 +496,12 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 // a different, complete file and deserves its own attempt.
                 // [headWorthTrying] has already made sure the head is not tried
                 // twice, so this cannot spin.
-                if (usableComplete) {
+                // fork: an OutOfMemoryError is about the heap at that moment, not the track, so
+                // below the cap nothing is recorded: any provisional head result stays published
+                // and the next request after ForkOomRetry's wait tries again. At the cap it is
+                // written off as before.
+                val oomRetrying = usableComplete && ForkOomRetry.isOom(error) && oomRetry.retryLater(trackId) // fork
+                if (usableComplete && !oomRetrying) { // fork: `&& !oomRetrying`
                     // Recorded as ready-but-empty so a track that cannot be
                     // analysed is not retried on every tick for the rest of the
                     // session.
@@ -963,9 +973,14 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         effectiveDuration: Double,
     ): Structural {
         val structRate = TrackFeatures.sampleRate
-        val decoded = copy.open()?.use { AudioDecoder.decodeRegion(it, 0.0, effectiveDuration) { stopped } }
-            ?: return Structural(null)
-        val (pcm, _) = decoded
+        // fork: resampled to structRate chunk by chunk as it decodes, not decoded whole at the
+        // container's rate first: that held ~104 MB for a 4.5-minute 48 kHz song and ran out of
+        // memory on a 256 MB heap. Same samples as one resample call; see ForkChunkedResampler.
+        val stream = ForkChunkedResampler(structRate, effectiveDuration, TrackFeatures::resample) // fork
+        copy.open()?.use { source -> // fork
+            AudioDecoder.streamRegion(source, 0.0, effectiveDuration, { stopped }) { chunk, _, rate -> stream.push(chunk, rate) }
+        } ?: return Structural(null)
+        val pcm = stream.finish().takeIf { it.decoded } ?: return Structural(null) // fork
 
         // A decode that stops early is indistinguishable, downstream, from a
         // track that simply goes quiet: [TrackFeatures] is handed the
@@ -976,7 +991,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // track being faded out minutes early. Refused outright rather than
         // published, because a missing analysis degrades to a plain crossfade
         // while a confidently wrong one does not degrade at all.
-        val decodedSeconds = if (pcm.sampleRate > 0) pcm.samples.size / pcm.sampleRate else 0.0
+        val decodedSeconds = pcm.inputSeconds // fork: was pcm.samples.size / pcm.sampleRate
         if (decodedSeconds < effectiveDuration * MIN_DECODED_FRACTION) {
             Log.w(
                 TAG,
@@ -1030,11 +1045,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             return Structural(null, decodedShort = true)
         }
 
-        val samples = if (abs(pcm.sampleRate - structRate) > 1.0) {
-            TrackFeatures.resample(pcm.samples, pcm.sampleRate, structRate) ?: return Structural(null)
-        } else {
-            pcm.samples
-        }
+        val samples = pcm.samples ?: return Structural(null) // fork: resampled while decoding (null as the resample's null was)
 
         return Structural(TrackFeatures.analyze(samples, effectiveDuration))
     }
@@ -1569,6 +1580,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         provisional.clear()
         restoreAttempted.clear()
         shortDecodes.clear()
+        oomRetry.clear() // fork
         badRenditions.clear()
         triedRenditions.clear()
         discarded.clear()

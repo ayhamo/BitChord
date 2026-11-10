@@ -1,10 +1,17 @@
 package com.music.bitchord.desktop
 
 import com.music.bitchord.data.model.Song
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -94,6 +101,87 @@ class DesktopDownloadQueueTest {
         assertEquals("3 downloads failed", summary(total = 3, failed = 3, busy = false))
         // Still going, so the count is what matters rather than the failures behind it.
         assertEquals("5 tracks", summary(total = 5, failed = 1, busy = true))
+    }
+
+    /**
+     * Desktop Revived 8bb8152d's race, as it reached this queue: a cancelled transfer still
+     * reporting progress (a read finishing as the cancel lands) overwrote the row of the same track
+     * asked for again, and its cancellation then took that new row out of the manager while the new
+     * transfer ran.
+     */
+    @Test
+    fun `a cancelled transfer cannot take over the row of the same track asked for again`() = runBlocking {
+        val gate = CompletableDeferred<Unit>()
+        val calls = AtomicInteger()
+        DesktopDownloadQueue.transfer = { song, progress ->
+            if (calls.incrementAndGet() == 1) {
+                // The old transfer: it doesn't see its cancel until this read is reported.
+                withContext(NonCancellable) {
+                    gate.await()
+                    progress(1, 2)
+                }
+                Result.success(song)
+            } else {
+                awaitCancellation()
+            }
+        }
+        try {
+            DesktopDownloadQueue.enqueue(song("again"))
+            withTimeout(5_000) { DesktopDownloadQueue.active.first { it["again"]?.state is DesktopDownloadState.Running } }
+            DesktopDownloadQueue.cancel("again")
+            DesktopDownloadQueue.enqueue(song("again"))
+            // Queued: the old transfer still holds its worker until it unwinds.
+            val renewed = DesktopDownloadQueue.active.value.getValue("again").sequence
+            // Every state the row passes through while the old transfer reports and ends, and the
+            // worker it frees takes the new request.
+            val seen = java.util.Collections.synchronizedList(mutableListOf<DesktopDownloadItem?>())
+            val watch = launch(Dispatchers.Default) { DesktopDownloadQueue.active.collect { seen += it["again"] } }
+            delay(100)
+            gate.complete(Unit)
+            withTimeout(5_000) { while (calls.get() < 2) delay(10) }
+            delay(300)
+            watch.cancel()
+            assertTrue(seen.isNotEmpty())
+            assertTrue(seen.all { it?.sequence == renewed }, "the new request's row was replaced or removed: $seen")
+            val row = DesktopDownloadQueue.active.value["again"]
+            assertEquals(renewed, row?.sequence)
+            assertEquals(DesktopDownloadState.Running(0f), row?.state)
+        } finally {
+            // Never leave the old transfer holding a worker for the tests after this one.
+            gate.complete(Unit)
+        }
+    }
+
+    /**
+     * A track enqueued just as the queue drained: the last workers had found it empty but not yet
+     * given their places back, so it started nobody and stayed Queued. Timing-dependent, so tried
+     * many times; each round is a fresh drain.
+     */
+    @Test
+    fun `a track enqueued as the queue drains is still downloaded`() = runBlocking {
+        DesktopDownloadQueue.transfer = { song, _ -> Result.success(song) }
+        repeat(300) { round ->
+            val id = "drain$round"
+            DesktopDownloadQueue.enqueue(song(id))
+            withTimeout(5_000) { DesktopDownloadQueue.active.first { id !in it } }
+        }
+    }
+
+    @Test
+    fun `cancel all also stops what is running and leaves nothing behind`() = runBlocking {
+        DesktopDownloadQueue.transfer = { _, _ -> awaitCancellation() }
+        val ids = (0 until DesktopDownloadQueue.WORKERS + 2).map { "all$it" }
+        ids.forEach { DesktopDownloadQueue.enqueue(song(it)) }
+        withTimeout(5_000) {
+            DesktopDownloadQueue.active.first { rows -> rows.values.count { it.state is DesktopDownloadState.Running } == DesktopDownloadQueue.WORKERS }
+        }
+        DesktopDownloadQueue.cancelAll()
+        assertTrue(DesktopDownloadQueue.active.value.isEmpty())
+        // The workers come back free: a new track runs at once.
+        DesktopDownloadQueue.transfer = { song, _ -> Result.success(song) }
+        DesktopDownloadQueue.enqueue(song("after"))
+        withTimeout(5_000) { DesktopDownloadQueue.active.first { "after" !in it } }
+        Unit
     }
 
     @Test

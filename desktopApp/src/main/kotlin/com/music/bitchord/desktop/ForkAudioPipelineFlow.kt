@@ -217,6 +217,7 @@ internal fun ForkAudioPipelineDialog(
                 ForkPipelineSection(3, Icons.Rounded.GraphicEq, DesktopStrings["pipeline_dsp", "DSP"], columnCoordinates, stageActivation, onStageIconPositioned) {
                     // The order the samples meet them in: the level correction runs after the equaliser
                     // on the PC (DesktopAudioEngine, ForkLoudnessStage), unlike the phone's DspChain.
+                    ForkPipelineRow(DesktopStrings["pipeline_channels", "Channels"], forkChannelLabel(pipeline.forkDspChannels)) // ForkMultichannel: what the mix and effects run on
                     ForkPipelineRow(DesktopStrings["equalizer", "Equalizer"], if (pipeline.equalizerEnabled) on else off)
                     if (pipeline.equalizerEnabled) {
                         val preset by DesktopEqualizerSettings.preset.collectAsState()
@@ -234,13 +235,16 @@ internal fun ForkAudioPipelineDialog(
 
                 ForkPipelineSection(4, Icons.AutoMirrored.Rounded.VolumeUp, DesktopStrings["pipeline_output_device", "Output device"], columnCoordinates, stageActivation, onStageIconPositioned) {
                     ForkPipelineRow(DesktopStrings["pipeline_device_name", "Device name"], pipeline.deviceName ?: "System default")
-                    ForkPipelineRow(DesktopStrings["pipeline_output_api", "Output API"], "javax.sound")
+                    ForkPipelineRow(DesktopStrings["pipeline_output_api", "Output API"], pipeline.outputApi) // was "javax.sound" whatever the sink used
                     ForkPipelineRow(
                         DesktopStrings["pipeline_pcm_format", "PCM format"],
                         pipeline.outputBytesPerSample?.let { if (pipeline.outputIsFloat == true) "32-bit float" else "${it * 8}-bit" },
                     )
                     ForkPipelineRow(DesktopStrings["pipeline_sample_rate", "Sample rate"], outRate?.let(::forkRateText))
                     ForkPipelineRow(DesktopStrings["pipeline_channels", "Channels"], forkChannelLabel(pipeline.outputChannels))
+                    // ForkMultichannel: what Windows mixes at (the device's capability) and the channels' whole path
+                    pipeline.forkDeviceLayout?.let { ForkPipelineRow(DesktopStrings["fork_pipeline_device_layout", "Device layout"], it) }
+                    ForkPipelineRow(DesktopStrings["fork_pipeline_channel_path", "Channel path"], pipeline.forkChannelPath)
                     ForkPipelineRow(DesktopStrings["pipeline_buffers", "Buffers"], forkBufferText(pipeline))
                 }
             }
@@ -485,5 +489,6 @@ private fun forkChannelLabel(channels: Int?): String? = when (channels) {
     null -> null
     1 -> DesktopStrings["mono", "Mono"]
     2 -> DesktopStrings["stereo", "Stereo"]
+    6, 8 -> "${ForkChannelLayout.name(channels)} ($channels ch)" // ForkMultichannel
     else -> "$channels ch"
 }

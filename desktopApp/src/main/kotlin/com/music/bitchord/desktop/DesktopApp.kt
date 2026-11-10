@@ -962,6 +962,21 @@ fun BitChordDesktopApp() {
         playCurrent()
     }
 
+    // fork: Play / Shuffle on an album or playlist page play all of it, later pages included, as the phone's service does (ForkPlayContext)
+    val forkPlayContext = remember { ForkPlayContext(scope) }
+    forkPlayContext.hooks = ForkPlayContext.Hooks(queue = { liveQueue }, shuffleOn = { shuffle }, prepare = { canonicalSong(it) }, apply = { grown, pre -> liveQueue = grown; preShuffleOrder = pre(preShuffleOrder); saveQueue() }, mirror = { snap -> openedCollection?.takeIf { it.browseId == snap.browseId }?.let { c -> ForkPlayContext.mirrored(c.songs, c.continuation, snap)?.let { (rows, next) -> openedCollection = c.copy(songs = rows, continuation = next) } } }, inParty = { DesktopListenTogether.state.value.inParty })
+    fun forkPlayPage(songs: List<Song>, index: Int, shuffled: Boolean) {
+        val page = openedCollection
+        val before = liveQueue
+        playSongs(if (shuffled) songs.shuffled() else songs, if (shuffled) 0 else index, page?.let { collectionSource(it) })
+        val started = liveQueue.current
+        if (page == null || started == null || liveQueue === before || DesktopListenTogether.state.value.inParty) return
+        // A sorted page has no "next page" to continue into (the phone passes no token for one), and a list that isn't the page's own (a server artist's radio) isn't grown with it.
+        val unsorted = (ForkCollectionSort.sorts.value[page.browseId] ?: ForkCollectionSort.Sort.DEFAULT) == ForkCollectionSort.Sort.DEFAULT
+        val token = page.continuation.takeIf { unsorted && ForkPlayContext.isPageList(songs, page.songs) }
+        forkPlayContext.start(page.browseId, page.songs, started, token, started.queueSource(), shuffled, liveQueue)
+    }
+
     // fork: saved queues. playSongs would keep what was queued by hand, and a saved queue replaces
     // it; only a party, whose queue isn't this computer's, takes the rules for a pick.
     ForkQueues.currentQueue = { liveQueue }
@@ -2825,7 +2840,7 @@ fun BitChordDesktopApp() {
                     val current = openedCollection
                     if (current != null && current.browseId == collection.browseId) {
                         openedCollection = current.copy(
-                            songs = (current.songs + songs).distinctBy(Song::videoId),
+                            songs = ForkPlayContext.mergeRows(current.songs, songs), // fork: was (current.songs + songs).distinctBy(Song::videoId), which dropped a song the playlist lists twice
                             continuation = next,
                         ).forkWithSuggested(forkSuggested) // fork: suggestions that arrive on a later page
                     }
@@ -4177,7 +4192,7 @@ fun BitChordDesktopApp() {
                                 playSongs(songs, index, openedArtist?.let { artistSource(it) })
                             },
                             onShuffle = { songs ->
-                                playSongs(songs, 0, openedArtist?.let { artistSource(it) })
+                                playSongs(songs.shuffled(), 0, openedArtist?.let { artistSource(it) }) // fork (fixes upstream): was playSongs(songs, 0, …), in order unless the shuffle switch was on; as the album page's Shuffle
                             },
                             onOpenMenu = { song -> openMenu(song) },
                             onShelfItemClick = ::openShelfItem,
@@ -4214,10 +4229,10 @@ fun BitChordDesktopApp() {
                                 .takeIf { openedCollection?.owned == true },
                             likedIds = likedIds,
                             onPlaySongs = { songs, index ->
-                                playSongs(songs, index, openedCollection?.let { collectionSource(it) })
+                                forkPlayPage(songs, index, shuffled = false) // fork: was playSongs(songs, index, …): only the rows loaded so far played (ForkPlayContext)
                             },
                             onShuffle = { songs ->
-                                playSongs(songs.shuffled(), 0, openedCollection?.let { collectionSource(it) })
+                                forkPlayPage(songs, 0, shuffled = true) // fork: was playSongs(songs.shuffled(), 0, …)
                             },
                             onDownloadAll = { songs -> openedCollection?.let { ForkPlaylistSync.remember(it.browseId, it.type, it.title, it.subtitle, it.thumbnailUrl, songs) }; downloadAll(songs) }, // fork: was ::downloadAll; recorded for "Keep playlists updated"
                             animatedCanvas = animatedCanvas,
@@ -6402,6 +6417,7 @@ private fun DesktopSettingsScreen(
                             lyricsBlur,
                             onLyricsBlurChange,
                         )
+                        ForkLyricsUnfocusedRow() // fork: Keep lyrics moving when unfocused (ForkLyricsUnfocused)
                         SettingsNavigationRow(
                             title = DesktopStrings["lyrics_sources", "Lyrics sources"],
                             subtitle = enabledLyricsSources
@@ -6742,6 +6758,7 @@ private fun DesktopSettingsScreen(
                         DesktopStrings["pipeline_output_device", "Output device"],
                         DesktopAudioDevices.label(),
                     ) { onOpenAudioOutput() }
+                    ForkMultichannelRow() // fork: Multichannel output (ForkMultichannel)
                 }
             }
             if (section == DesktopSettingsSection.OUTPUT_PRECISION) item {

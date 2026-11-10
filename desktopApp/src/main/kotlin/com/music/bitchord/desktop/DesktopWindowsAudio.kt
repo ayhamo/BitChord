@@ -17,6 +17,10 @@ internal object DesktopWindowsAudio {
                 .isSuccess
     }
 
+    /** Fork (ForkWindowsAudioLayout): the same library carries the multichannel open and the mix-format probe. */
+    internal val forkAvailable: Boolean get() = available
+    internal fun forkLastError(): String = if (available) nativeLastError() else ""
+
     fun open(device: String, format: DesktopPcmFormat): Result<Int> = runCatching {
         check(available) { "native Windows audio is unavailable" }
         val bytes = nativeOpen(

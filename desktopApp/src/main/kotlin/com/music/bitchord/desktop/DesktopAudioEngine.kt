@@ -188,6 +188,8 @@ class DesktopPlaybackEngine(
         var forkRecoveryTicket: Any? = null
         /** Fork: when this deck was opened, for [ForkInstantDeck.fresh]. */
         val forkOpenedAtNs: Long = System.nanoTime()
+        /** Fork (ForkMultichannel): maps this deck onto the output's channels when the two differ; see [readSource]. */
+        val forkChannels = ForkChannelAdapter()
 
         /** Back to the decoder at the listener's speed, dropping any beatmatch stretch. */
         fun dropTempo() {
@@ -232,6 +234,8 @@ class DesktopPlaybackEngine(
     private val forkPulse = ForkBackdropPulseMeter() // fork: Backdrop pulse
     /** Fork: dead air metered on the playing song, for a mix out of a tail that has gone silent. */
     private val forkSilence = ForkSilentTail()
+    /** Fork (ForkMultichannel): the stereo fold the two meters above read; before [thread] too. */
+    private val forkMeterView = ForkChannelAdapter()
 
     private val thread = Thread(::pump, "BitChord-Audio").apply {
         isDaemon = true
@@ -370,7 +374,8 @@ class DesktopPlaybackEngine(
                 headers = stream.headers,
                 // Float throughout: the processors work in it and the sink converts once, at the
                 // end.
-                requested = DesktopPcmFormat(44_100, 2, bytesPerSample = 4, isFloat = true),
+                // fork (ForkMultichannel): the output device's channels with Multichannel output on, else this stereo
+                requested = ForkMultichannel.deckFormat(), // was DesktopPcmFormat(44_100, 2, bytesPerSample = 4, isFloat = true)
                 windowed = stream.windowedReads,
                 transport = stream.transport,
             ).map {
@@ -987,8 +992,11 @@ class DesktopPlaybackEngine(
                 skippedUs = skippedFrames.coerceAtLeast(0L) * 1_000_000.0 / rate * deck,
             )
         }
-        if (fadeRemaining <= 0 && forkLoopRun == null) forkSilence.meter(samples, count, sink.format.channels) // fork: ForkSilentTail
-        forkPulse.meter(samples, count, sink.format.channels, sink.format.sampleRate) // fork: the backdrop's meters (ForkBackdropPulseMeter)
+        // fork (ForkMultichannel): metered as its stereo fold, so silent padded channels don't read as a quieter song
+        val forkMetered = forkMeterView.stereoView(samples, count, sink.format)
+        val forkMeteredChannels = sink.format.channels.coerceAtMost(2)
+        if (fadeRemaining <= 0 && forkLoopRun == null) forkSilence.meter(forkMetered, forkMeterView.viewCount, forkMeteredChannels) // fork: ForkSilentTail
+        forkPulse.meter(forkMetered, forkMeterView.viewCount, forkMeteredChannels, sink.format.sampleRate) // fork: the backdrop's meters (ForkBackdropPulseMeter)
         // fork (Desktop Revived 337653d8): only the frames the device accepted move the clock (ForkPcmWrite)
         forkWritePcmFully(samples, count, sink.format.channels.coerceAtLeast(1), sink.format.bytesPerSample, sink::write, { framesWritten += it })
         if (count > 0 && _state.value.awaitingAudio) _state.update { it.copy(awaitingAudio = false) }
@@ -1196,8 +1204,15 @@ class DesktopPlaybackEngine(
      * Android never meets it: each of its players has its own output.
      */
     private fun readSource(track: Track, forkWaitMs: Long = Long.MAX_VALUE): FloatArray? { // fork: forkWaitMs, see readCurrent
-        val block = track.decoder.readSamples(forkWaitMs) ?: return null
-        val count = track.decoder.sampleCount
+        var block = track.decoder.readSamples(forkWaitMs) ?: return null // fork: var
+        var count = track.decoder.sampleCount // fork: var
+        // fork (ForkMultichannel): a deck decoded for another layout than the output now has (the device changed
+        // between two songs, or Multichannel output was switched) is mapped onto it here, before its rate is: every
+        // stage after this one (stretch, mix, sends, meters) then only ever sees the output's channels
+        if (ForkChannelLayout.differs(track.decoder.outputFormat, sink.format)) {
+            count = track.forkChannels.adapt(block, count, track.decoder.outputFormat, sink.format)
+            block = track.forkChannels.output
+        }
         val from = track.decoder.outputFormat.sampleRate
         val to = sink.format.sampleRate
         if (from <= 0 || to <= 0 || from == to) {
@@ -1205,7 +1220,9 @@ class DesktopPlaybackEngine(
             sourceReadCount = count
             return block
         }
-        val converter = track.converter?.takeIf { it.fromRate == from && it.toRate == to }
+        // fork: the channel count too; with Multichannel output a deck can start against a stereo output and
+        // keep playing after it reopens at 6 or 8 channels, when a stereo converter would read 8-channel blocks
+        val converter = track.converter?.takeIf { it.fromRate == from && it.toRate == to && it.channels == sink.format.channels.coerceAtLeast(1) }
             ?: DesktopRateConverter(from, to, sink.format.channels.coerceAtLeast(1)).also {
                 DesktopTrackLog.log("converting '${track.song.title}' from $from Hz to the stream's $to Hz")
                 track.converter = it
@@ -3413,13 +3430,24 @@ class DesktopPlaybackEngine(
             decodedSampleRateHz = decoded?.sampleRate,
             decodedChannels = decoded?.channels,
             outputSampleRateHz = out.sampleRate.takeIf { sink.isOpen },
-            outputChannels = out.channels.takeIf { sink.isOpen },
+            outputChannels = sink.forkLineChannels.takeIf { sink.isOpen }, // fork: what the line takes (was out.channels, which is the DSP's while folding)
             outputIsFloat = out.isFloat.takeIf { sink.isOpen },
             outputBytesPerSample = out.bytesPerSample.takeIf { sink.isOpen },
             deviceName = sink.deviceName,
             bufferBytes = sink.bufferBytes,
             equalizerEnabled = equalizerEnabled,
             skipSilence = skipSilenceEnabled,
+            // fork (ForkMultichannel): the real output API and where the channels go between file and device
+            outputApi = sink.forkOutputApi,
+            forkDspChannels = out.channels.takeIf { sink.isOpen },
+            forkDeviceLayout = ForkMultichannel.deviceLayoutText(),
+            forkChannelPath = ForkChannelLayout.path(
+                source = track?.decoder?.measuredFormat?.channels,
+                deck = decoded?.channels,
+                dsp = out.channels.takeIf { sink.isOpen },
+                line = sink.forkLineChannels.takeIf { sink.isOpen },
+                device = ForkMultichannel.lastMix?.first,
+            ),
         )
     }
 

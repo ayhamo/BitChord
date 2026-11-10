@@ -39,7 +39,8 @@ object DesktopDownloadManager {
         var claim: String? = null
         return try {
             require(song.localPath == null) { "This track is already local" }
-            val stream = DesktopMusicSources.resolve(song, quality, forDownload = true).getOrThrow()
+            val forkKept = ForkDownloadSources.resolve(song, quality) // fork: was DesktopMusicSources.resolve(song, quality, forDownload = true): the sources raced in a budget, the file named from its bytes (the phone's be8c5d66)
+            val stream = forkKept.stream
             val directory = Path.of(ForkPortable.userHome, "Music", "BitChord") // fork: was user.home; downloads stay the listener's files
             Files.createDirectories(directory)
             val safeName = buildString {
@@ -49,8 +50,8 @@ object DesktopDownloadManager {
             }.replace(ILLEGAL_FILENAME, "_").trim().take(180).ifBlank { song.videoId }
             // A manifest is an index of the audio, not the audio: fetched as a file it saved a few
             // KB of XML as `.flac`. Its segments are fMP4, so it can only become FLAC or M4A.
-            val manifest = DesktopManifestDownload.isManifest(stream)
-            val extension = stream.format.fileExtension().let { if (manifest && it != "flac") "m4a" else it }
+            val manifest = forkKept.manifest // fork: was DesktopManifestDownload.isManifest(stream); an extensionless index is found by its bytes
+            val extension = forkKept.extension { it.format.fileExtension() } // fork: was stream.format.fileExtension() with the same manifest rule, now inside; the label only when the bytes couldn't be read
             // Fork: a name another track's record (or download in flight) holds gets " (2)" and so on,
             // and the .part carries the track id. Keyed by name alone, two different tracks with the
             // same "Artist - Title" shared one file: the second was "already downloaded" as the

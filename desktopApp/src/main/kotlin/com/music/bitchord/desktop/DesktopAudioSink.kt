@@ -28,6 +28,25 @@ internal class DesktopAudioSink {
     var format: DesktopPcmFormat = DesktopPcmFormat(44_100, 2, 2)
         private set
 
+    /**
+     * Fork (ForkMultichannel): the stereo line a multichannel [format] is folded onto, when the device
+     * refused the multichannel one; null when the line takes [format] as it is.
+     */
+    @Volatile
+    private var forkFoldTo: DesktopPcmFormat? = null
+    private val forkFold = ForkChannelAdapter()
+
+    /** Fork: the channels the device line takes (the fold's two, else [format]'s), for the pipeline panel. */
+    val forkLineChannels: Int get() = forkFoldTo?.channels ?: format.channels
+
+    /** Fork: which API the samples go out through, for the pipeline panel (it always said "javax.sound"). */
+    val forkOutputApi: String?
+        get() = when {
+            windowsOutput -> "WASAPI shared"
+            line != null -> if (DesktopPlatform.isWindows) "Java Sound (DirectSound)" else "Java Sound"
+            else -> null
+        }
+
     /** Playback gain, applied to the samples rather than to a mixer control. */
     @Volatile
     var gain: Float = 1f
@@ -41,10 +60,12 @@ internal class DesktopAudioSink {
     fun open(requested: DesktopPcmFormat): Result<DesktopPcmFormat> = runCatching {
         val selectedDevice = DesktopAudioDevices.selected.value
         if (DesktopPlatform.isWindows) {
-            val native = DesktopWindowsAudio.open(selectedDevice, requested)
+            // fork (ForkMultichannel): more than two channels open with their speaker mask (was DesktopWindowsAudio.open for all)
+            val native = if (requested.channels > 2) ForkWindowsAudioLayout.open(selectedDevice, requested) else DesktopWindowsAudio.open(selectedDevice, requested)
             if (native.isSuccess) {
                 val previous = line
                 line = null
+                forkFoldTo = null // fork
                 windowsOutput = true
                 windowsBufferBytes = native.getOrThrow()
                 // Read live from the native side instead: it moves the stream itself when the
@@ -61,6 +82,17 @@ internal class DesktopAudioSink {
                 return@runCatching requested
             }
             DesktopTrackLog.log("WASAPI output unavailable; trying Java Sound: ${native.exceptionOrNull()?.message}")
+            if (requested.channels > 2) ForkMultichannel.refused(selectedDevice, native.exceptionOrNull()?.message ?: "no reason given") // fork
+        }
+        // fork (ForkMultichannel): a multichannel stream refused above plays on a stereo line (WASAPI, else
+        // Java Sound, whose DirectSound line has no speaker mask) with the engine's channels folded in [write];
+        // [format] stays the engine's, so its processors keep the layout the decks are decoded in
+        if (requested.channels > 2) {
+            val stereoLine = open(requested.copy(channels = 2, forkChannelMask = 0L)).getOrThrow()
+            forkFoldTo = stereoLine
+            format = stereoLine.copy(channels = requested.channels, forkChannelMask = requested.forkChannelMask)
+            DesktopTrackLog.log("audio output: ${requested.channels} ch folded to the stereo line")
+            return@runCatching format
         }
 
         if (windowsOutput) {
@@ -114,6 +146,7 @@ internal class DesktopAudioSink {
         // failed switch into silent playback on every other device too.
         val previous = line
         line = opened
+        forkFoldTo = null // fork
         openedOn = mixer?.mixerInfo?.name
         openedForSelection = selectedDevice
         format = accepted
@@ -151,6 +184,13 @@ internal class DesktopAudioSink {
 
     /** Writes [count] interleaved samples, blocking until the device takes them. */
     fun write(samples: FloatArray, count: Int): Int {
+        // fork (ForkMultichannel): folded to the stereo line, and the bytes it took counted back in the engine's channels
+        forkFoldTo?.let { stereoLine ->
+            if (samples !== forkFold.output) {
+                val folded = forkFold.adapt(samples, count, format, stereoLine)
+                return write(forkFold.output, folded) / stereoLine.channels * format.channels
+            }
+        }
         if (windowsOutput) {
             val written = DesktopWindowsAudio.write(samples, count, gain)
             diagnose(samples, count, written)

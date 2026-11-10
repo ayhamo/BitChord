@@ -20,6 +20,14 @@ internal data class DesktopAudioPipeline(
     val bufferBytes: Int = 0,
     val equalizerEnabled: Boolean = false,
     val skipSilence: Boolean = false,
+    /** Fork: "WASAPI shared" or "Java Sound …", what the sink actually writes to (the panel always said "javax.sound"). */
+    val outputApi: String? = null,
+    /** Fork (ForkMultichannel): the channels the engine processes and mixes in. */
+    val forkDspChannels: Int? = null,
+    /** Fork (ForkMultichannel): Windows' mix format for the output, the device's own capability. */
+    val forkDeviceLayout: String? = null,
+    /** Fork (ForkMultichannel): source → decoder → DSP → line channels, e.g. "5.1 → 7.1". */
+    val forkChannelPath: String? = null,
 ) {
     /** The decoder under its usual name, the same one the quality badge shows. */
     val decoderLabel: String?

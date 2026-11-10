@@ -5,6 +5,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <audioclient.h>
+#include <mmreg.h> // fork: WAVEFORMATEXTENSIBLE, for more than two channels (ForkMultichannel)
 #include <dwmapi.h>
 #include <functiondiscoverykeys_devpkey.h>
 #include <mmdeviceapi.h>
@@ -535,6 +536,8 @@ int g_audio_rate = 0;
 UINT32 g_audio_channels = 0;
 UINT32 g_audio_bytes_per_sample = 0;
 bool g_audio_float = false;
+// fork: the speaker mask of a stream of more than two channels (ForkMultichannel), 0 for stereo.
+DWORD g_audio_channel_mask = 0;
 // Whether playback wants the stream running — independent of there being a client right now.
 bool g_audio_started = false;
 uint64_t g_audio_submitted_frames = 0;
@@ -670,6 +673,7 @@ void release_audio_locked() {
     g_audio_channels = 0;
     g_audio_bytes_per_sample = 0;
     g_audio_float = false;
+    g_audio_channel_mask = 0; // fork
     g_audio_started = false;
     g_audio_submitted_frames = 0;
     g_audio_played_offset = 0;
@@ -789,6 +793,25 @@ bool start_client_locked(IMMDevice* device) {
     format.nAvgBytesPerSec = format.nSamplesPerSec * format.nBlockAlign;
     format.cbSize = 0;
 
+    // fork (ForkMultichannel): more than two channels go as WAVEFORMATEXTENSIBLE with the speaker mask
+    // Kotlin decoded for, interleaved in the mask's bit order (FFmpeg's order too). A plain
+    // WAVEFORMATEX is only defined for mono and stereo; without a mask Windows has to guess which
+    // speaker each of six channels is. The stereo path is left exactly as it was.
+    WAVEFORMATEXTENSIBLE extensible{};
+    WAVEFORMATEX* requested = &format;
+    if (g_audio_channels > 2 && g_audio_channel_mask != 0) {
+        // KSDATAFORMAT_SUBTYPE_PCM / _IEEE_FLOAT, spelled out so nothing has to link ksuser.
+        static const GUID subtype_pcm = {0x00000001, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}};
+        static const GUID subtype_float = {0x00000003, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}};
+        extensible.Format = format;
+        extensible.Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
+        extensible.Format.cbSize = static_cast<WORD>(sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX));
+        extensible.Samples.wValidBitsPerSample = format.wBitsPerSample;
+        extensible.dwChannelMask = g_audio_channel_mask;
+        extensible.SubFormat = g_audio_float ? subtype_float : subtype_pcm;
+        requested = &extensible.Format;
+    }
+
 #ifndef AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
 #define AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM 0x80000000
 #endif
@@ -798,7 +821,7 @@ bool start_client_locked(IMMDevice* device) {
     const DWORD flags = AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
     // 200 ms keeps network/decoder jitter away from the device without making controls sluggish.
     status = g_audio_client->Initialize(
-        AUDCLNT_SHAREMODE_SHARED, flags, 2'000'000, 0, &format, nullptr);
+        AUDCLNT_SHAREMODE_SHARED, flags, 2'000'000, 0, requested, nullptr); // fork: was &format
     if (FAILED(status)) {
         set_audio_error(L"Starting WASAPI shared mode", status);
         release_client_locked();
@@ -855,7 +878,7 @@ void reroute_locked() {
     device->Release();
 }
 
-int open_audio(const std::wstring& wanted, int sample_rate, int channels, int bytes_per_sample, bool floating) {
+int open_audio(const std::wstring& wanted, int sample_rate, int channels, int bytes_per_sample, bool floating, DWORD channel_mask = 0) { // fork: channel_mask
     std::lock_guard<std::mutex> guard(g_audio_mutex);
     release_audio_locked();
     g_audio_error.clear();
@@ -876,6 +899,7 @@ int open_audio(const std::wstring& wanted, int sample_rate, int channels, int by
     g_audio_channels = static_cast<UINT32>(channels);
     g_audio_bytes_per_sample = static_cast<UINT32>(bytes_per_sample);
     g_audio_float = floating;
+    g_audio_channel_mask = channels > 2 ? channel_mask : 0; // fork (ForkMultichannel)
     g_audio_started = true;
     const bool opened = start_client_locked(device);
     device->Release();
@@ -967,6 +991,71 @@ int write_audio(const float* samples, int sample_count, float gain) {
         g_audio_submitted_frames += frames;
     }
     return static_cast<int>(frame_at * g_audio_channels * g_audio_bytes_per_sample);
+}
+
+/**
+ * fork (ForkMultichannel): the shared-mode mix format of the endpoint [wanted] resolves to, as its
+ * channel count and speaker mask (0 when Windows answers with a plain WAVEFORMATEX). This is what
+ * the Windows audio engine itself mixes at: a surround speaker setup's layout, and (expected, not
+ * yet seen on the owner's PC) 7.1 for headphones while Dolby Atmos for Headphones or Windows Sonic
+ * is on. False when it can't be read.
+ */
+bool mix_format(const std::wstring& wanted, UINT32* channels, DWORD* mask) {
+    std::lock_guard<std::mutex> guard(g_audio_mutex);
+    ComScope com;
+    if (!com.ready()) return false;
+    IMMDevice* device = resolve_device_locked(wanted);
+    if (device == nullptr) return false;
+    IAudioClient* client = nullptr;
+    HRESULT status = device->Activate(
+        __uuidof(IAudioClient), CLSCTX_ALL, nullptr, reinterpret_cast<void**>(&client));
+    device->Release();
+    if (FAILED(status) || client == nullptr) return false;
+    WAVEFORMATEX* format = nullptr;
+    status = client->GetMixFormat(&format);
+    if (FAILED(status) || format == nullptr) {
+        client->Release();
+        return false;
+    }
+    *channels = format->nChannels;
+    *mask = 0;
+    if (format->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
+        format->cbSize >= sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX)) {
+        *mask = reinterpret_cast<WAVEFORMATEXTENSIBLE*>(format)->dwChannelMask;
+    }
+    // Spatial sound (Dolby Atmos for Headphones, Windows Sonic, DTS) leaves a headphone
+    // endpoint's mix format at stereo: the spatial renderer sits after the mix. A shared-mode
+    // stream of up to 7.1 is still taken whole and placed by that renderer, which is what
+    // IsFormatSupported says (S_OK, not S_FALSE with a stereo "closest") while it is on. So a
+    // stereo mix format is asked about 7.1, then 5.1, before it is reported as stereo.
+    if (*channels <= 2) {
+        const DWORD layouts[2][2] = {{8, 0x63F}, {6, 0x60F}};
+        for (const auto& layout : layouts) {
+            WAVEFORMATEXTENSIBLE wanted_format{};
+            wanted_format.Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
+            wanted_format.Format.nChannels = static_cast<WORD>(layout[0]);
+            wanted_format.Format.nSamplesPerSec = format->nSamplesPerSec;
+            wanted_format.Format.wBitsPerSample = 32;
+            wanted_format.Format.nBlockAlign = static_cast<WORD>(layout[0] * 4);
+            wanted_format.Format.nAvgBytesPerSec = format->nSamplesPerSec * wanted_format.Format.nBlockAlign;
+            wanted_format.Format.cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
+            wanted_format.Samples.wValidBitsPerSample = 32;
+            wanted_format.dwChannelMask = layout[1];
+            wanted_format.SubFormat = {0x00000003, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}}; // _IEEE_FLOAT
+            WAVEFORMATEX* closest = nullptr;
+            const HRESULT supported = client->IsFormatSupported(
+                AUDCLNT_SHAREMODE_SHARED, &wanted_format.Format, &closest);
+            if (closest != nullptr) CoTaskMemFree(closest);
+            if (supported == S_OK) {
+                *channels = layout[0];
+                *mask = layout[1];
+                break;
+            }
+        }
+    }
+    CoTaskMemFree(format);
+    client->Release();
+    return true;
 }
 
 jobjectArray list_devices(JNIEnv* env) {
@@ -1160,6 +1249,50 @@ Java_com_music_bitchord_desktop_DesktopWindowsAudio_nativeLastError(JNIEnv* env,
     return env->NewString(
         reinterpret_cast<const jchar*>(g_audio_error.c_str()),
         static_cast<jsize>(g_audio_error.size()));
+}
+
+// fork (ForkMultichannel): the multichannel open and the mix-format probe, bound to the fork class
+// ForkWindowsAudioLayout so DesktopWindowsAudio's own exports stay as they were.
+JNIEXPORT jint JNICALL
+Java_com_music_bitchord_desktop_ForkWindowsAudioLayout_nativeOpenLayout(
+    JNIEnv* env,
+    jclass,
+    jstring device,
+    jint sample_rate,
+    jint channels,
+    jint bytes_per_sample,
+    jboolean floating,
+    jlong channel_mask) {
+    if (g_vm == nullptr) env->GetJavaVM(&g_vm);
+    const jchar* chars = env->GetStringChars(device, nullptr);
+    const jsize length = env->GetStringLength(device);
+    std::wstring wanted(reinterpret_cast<const wchar_t*>(chars), static_cast<size_t>(length));
+    env->ReleaseStringChars(device, chars);
+    return static_cast<jint>(open_audio(
+        wanted,
+        static_cast<int>(sample_rate),
+        static_cast<int>(channels),
+        static_cast<int>(bytes_per_sample),
+        floating == JNI_TRUE,
+        static_cast<DWORD>(channel_mask)));
+}
+
+JNIEXPORT jlongArray JNICALL
+Java_com_music_bitchord_desktop_ForkWindowsAudioLayout_nativeMixFormat(JNIEnv* env, jclass, jstring device) {
+    if (g_vm == nullptr) env->GetJavaVM(&g_vm);
+    const jchar* chars = env->GetStringChars(device, nullptr);
+    const jsize length = env->GetStringLength(device);
+    std::wstring wanted(reinterpret_cast<const wchar_t*>(chars), static_cast<size_t>(length));
+    env->ReleaseStringChars(device, chars);
+    UINT32 channels = 0;
+    DWORD mask = 0;
+    const bool known = mix_format(wanted, &channels, &mask);
+    jlongArray result = env->NewLongArray(known ? 2 : 0);
+    if (known && result != nullptr) {
+        const jlong values[2] = {static_cast<jlong>(channels), static_cast<jlong>(mask)};
+        env->SetLongArrayRegion(result, 0, 2, values);
+    }
+    return result;
 }
 
 }  // extern "C"

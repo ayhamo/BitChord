@@ -3,6 +3,7 @@ package com.music.bitchord.desktop
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.sources.TrackMatcher // fork: the phone's matcher (was DesktopTrackMatcher)
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
@@ -138,10 +139,10 @@ internal object DesktopJioSaavn {
     /** Every copy this catalogue holds of [song], most confident first. */
     suspend fun matches(song: Song): List<Song> {
         if (song.title.isBlank() || song.isVideo) return emptyList()
-        for (query in DesktopTrackMatcher.queries(song)) {
+        for (query in TrackMatcher.queries(TrackMatcher.targetOf(song))) { // fork: the phone's matcher
             val candidates = search(query, 25).getOrDefault(emptyList())
                 .mapNotNull { (it as? SearchResult.Track)?.song }
-            DesktopTrackMatcher.ranked(candidates, song).ifEmpty { null }?.let { return it }
+            TrackMatcher.ranked(candidates, TrackMatcher.targetOf(song)).ifEmpty { null }?.let { return it } // fork: the phone's matcher
         }
         return emptyList()
     }

@@ -61,6 +61,7 @@ internal object DesktopDiscordRpc {
     private var ipc: DesktopDiscordIpc? = null
     private var lastKey: String? = null
     private var lastProbeAt = 0L
+    private val forkCover = ForkDiscordCoverQueue(ART_PX) // fork
 
     private val _localClient = MutableStateFlow(false)
 
@@ -174,11 +175,11 @@ internal object DesktopDiscordRpc {
         val key = "${song.videoId}|${state.durationMs}|$speed|$quality"
         val position = state.positionMs
         val duration = state.durationMs.takeIf { it > 0 } ?: 0L
-        scope.launch {
+        forkCover.then(scope, song) launch@{ forkArt -> // fork: only a public cover, looked up off the serial scope (ForkDiscordCover)
             // Only marked sent once a push lands, so a failed one is tried again
             // on the next change instead of being skipped as a duplicate.
             if (key == lastKey) return@launch
-            val now = System.currentTimeMillis()
+            val now = forkArt.askedAt // fork: the instant `position` was read; was System.currentTimeMillis() here
             val elapsed = (position / speed).toLong()
             val remaining = ((duration - position).coerceAtLeast(0L) / speed).toLong()
             val title = if (speed != 1.0f) {
@@ -188,7 +189,7 @@ internal object DesktopDiscordRpc {
             }
             // The socket first, and the gateway only if there is no socket:
             // publishing through both would put the same presence up twice.
-            val activity = ipcActivity(song, title, now - elapsed, now + remaining, quality)
+            val activity = ipcActivity(song, title, now - elapsed, now + remaining, quality, forkArt.url) // fork: + the cover
             val held = ipc
             val local = held ?: reconnect("track")
             if (local != null) {
@@ -222,12 +223,10 @@ internal object DesktopDiscordRpc {
                         .ifBlank { DesktopDiscordSettings.APP_NAME },
                     details = title,
                     state = song.artist,
-                    detailsUrl = watchUrl(song),
+                    detailsUrl = com.music.bitchord.data.navidrome.NavidromeDiscordCover.listenUrl(song), // fork: was watchUrl(song)
                     // No usable artwork sends none, and Discord draws the
                     // BitChord application's icon instead.
-                    largeImage = song.artworkAt(ART_PX)
-                        ?.takeIf { it.startsWith("http") }
-                        ?.let(RpcImage::ExternalImage),
+                    largeImage = forkArt.url?.let(RpcImage::ExternalImage), // fork: was song.artworkAt(ART_PX) if http; a server cover never goes to Discord
                     smallImage = null,
                     largeText = quality,
                     buttons = buttonLabels(song).takeIf { it.isNotEmpty() },
@@ -254,6 +253,7 @@ internal object DesktopDiscordRpc {
     }
 
     fun clear() {
+        forkCover.drop() // fork: a push still waiting for its cover must not put the card back up
         scope.launch {
             lastKey = null
             runCatching { ipc?.setActivity(null) }
@@ -276,6 +276,7 @@ internal object DesktopDiscordRpc {
         startMs: Long,
         endMs: Long,
         quality: String?,
+        art: String? = null, // fork: the cover NavidromeDiscordCover allows, not the song's own
     ): JsonObject = buildJsonObject {
         put("type", DesktopDiscordSettings.activityNumber(DesktopDiscordSettings.activityType.value))
         DesktopDiscordSettings.activityName.value.takeIf(String::isNotBlank)?.let { put("name", it) }
@@ -289,7 +290,7 @@ internal object DesktopDiscordRpc {
             put("end", endMs)
         }
         putJsonObject("assets") {
-            song.artworkAt(ART_PX)?.takeIf { it.startsWith("http") }?.let { put("large_image", it) }
+            art?.let { put("large_image", it) } // fork: was song.artworkAt(ART_PX) if http, a server's getCoverArt address included
             quality?.let { put("large_text", it) }
         }
         val labels = buttonLabels(song)
@@ -313,7 +314,7 @@ internal object DesktopDiscordRpc {
         val settings = DesktopDiscordSettings
         if (settings.button1Visible.value) {
             val text = settings.button1Text.value.ifEmpty { DesktopDiscordSettings.DEFAULT_BUTTON_1 }
-            add(settings.resolveVariables(text, song.title, song.artist, song.albumName) to watchUrl(song))
+            add(settings.resolveVariables(text, song.title, song.artist, song.albumName) to com.music.bitchord.data.navidrome.NavidromeDiscordCover.listenUrl(song)) // fork: was watchUrl(song), a dead link for a server's song
         }
         if (settings.button2Visible.value) {
             val text = settings.button2Text.value.ifEmpty { DesktopDiscordSettings.DEFAULT_BUTTON_2 }

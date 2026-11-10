@@ -2,6 +2,7 @@ package com.music.bitchord.desktop
 
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.sources.TrackMatcher // fork: the phone's matcher (was DesktopTrackMatcher)
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -541,12 +542,12 @@ internal object DesktopModuleSource {
         if (!configured(config) || song.title.isBlank() || song.isVideo) return emptyList()
         val indexUrl = config.baseUrl.trim().takeIf(String::isNotBlank) ?: return emptyList()
         val modules = manager.modules(indexUrl).getOrDefault(emptyList())
-        for (query in DesktopTrackMatcher.queries(song)) {
+        for (query in TrackMatcher.queries(TrackMatcher.targetOf(song))) { // fork: the phone's matcher
             // Preserve the configured index order.
             for (module in modules) {
                 val candidates = searchModule(module, config.id, indexUrl, query, 25)
                     .mapNotNull { (it as? SearchResult.Track)?.song }
-                DesktopTrackMatcher.ranked(candidates, song).ifEmpty { null }?.let { return it }
+                TrackMatcher.ranked(candidates, TrackMatcher.targetOf(song)).ifEmpty { null }?.let { return it } // fork: the phone's matcher
             }
         }
         return emptyList()
