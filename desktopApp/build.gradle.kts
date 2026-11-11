@@ -500,6 +500,7 @@ val windowsPortableAssemble by tasks.registering {
                 add("-XX:+AutoCreateSharedArchive")
             }
             addAll(listOf("-Xmx512m", "-XX:+UseG1GC", "-XX:G1PeriodicGCInterval=20000", "-XX:G1PeriodicGCSystemLoadThreshold=0"))
+            addAll(listOf("-Xms48m", "-XX:MinHeapFreeRatio=5", "-XX:MaxHeapFreeRatio=15")) // fork (owner, 2026-11-11): a small first heap; by default Java starts at 1/64 of RAM (506 MB on a 32 GB PC), holds it for the first ~16 s and grows back to it, for 75-100 MB of live data
             add("-Dbitchord.version=$version")
             add("-Dbitchord.build=$forkBuild") // fork: ForkUpdater
             if (moduleIndex.isNotBlank()) add("-Dbitchord.module.index=$moduleIndex")
@@ -607,6 +608,7 @@ compose.desktop {
         mainClass = composeMainClass
         jvmArgs("-Xmx512m")
         jvmArgs("-XX:+UseG1GC", "-XX:G1PeriodicGCInterval=20000", "-XX:G1PeriodicGCSystemLoadThreshold=0")
+        jvmArgs("-Xms48m", "-XX:MinHeapFreeRatio=5", "-XX:MaxHeapFreeRatio=15") // fork (owner, 2026-11-11): a small first heap; by default Java starts at 1/64 of RAM (506 MB on a 32 GB PC), holds it for the first ~16 s and grows back to it, for 75-100 MB of live data
         jvmArgs("-Dbitchord.version=$appVersion")
         if (desktopModuleIndexUrl.isNotBlank()) {
             jvmArgs("-Dbitchord.module.index=$desktopModuleIndexUrl")

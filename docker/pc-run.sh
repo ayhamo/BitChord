@@ -29,5 +29,5 @@ if [ "${PORTABLE:-0}" = 1 ]; then
     "./BitChord Portable/BitChord.exe" --log
 else
     nohup "./BitChord Portable/runtime/bin/java.exe" -Duser.home="$W/home" -Djava.io.tmpdir="$W/home/tmp" -Dbitchord.version=1.9 \
-        -Dbitchord.debugBridge=8765 -Xmx512m -XX:+UseG1GC -XX:G1PeriodicGCInterval=20000 -XX:G1PeriodicGCSystemLoadThreshold=0 -cp "$W/BitChord Portable/lib/*" com.music.bitchord.desktop.MainKt > run.log 2>&1 &
+        -Dbitchord.debugBridge=8765 -Xms48m -Xmx512m -XX:MinHeapFreeRatio=5 -XX:MaxHeapFreeRatio=15 -XX:+UseG1GC -XX:G1PeriodicGCInterval=20000 -XX:G1PeriodicGCSystemLoadThreshold=0 -cp "$W/BitChord Portable/lib/*" com.music.bitchord.desktop.MainKt > run.log 2>&1 &
 fi
