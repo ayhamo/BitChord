@@ -79,6 +79,16 @@ object ForkSettings {
     /** "Shorter blend when keys clash" (Advanced AutoDJ only, off by default); mirrored into `ForkAutoDj.keyAware`. */
     val automixKeyAware: StateFlow<Boolean> = _automixKeyAware.asStateFlow()
 
+    private val _automixPhraseBars = MutableStateFlow(0)
+
+    /**
+     * "Automix phrase length": 0 (Auto: each blend's length from the two songs), 8 or 16 bars, the PC's
+     * setting of the same name (Desktop Revived d150d26f). `CrossfadeController` passes it to
+     * `planTransition` as `phraseBars`, for every Automix style; a fixed length is the planner's blend,
+     * so it turns the loop mix away, as on the PC.
+     */
+    val automixPhraseBars: StateFlow<Int> = _automixPhraseBars.asStateFlow()
+
     /** The clip cache's saved size, read on its own: the cache opens on another thread before [init] runs. */
     fun applySavedClipLimit(context: Context) {
         ForkClipCache.applyLimit(context.getSharedPreferences("bitchord_fork", Context.MODE_PRIVATE).getInt(KEY_CLIP_CACHE_MB, DEFAULT_CLIP_CACHE_MB))
@@ -104,12 +114,7 @@ object ForkSettings {
         _preloadSongs.value = prefs.getInt(KEY_PRELOAD_SONGS, 0)
         _offlineMode.value = prefs.getBoolean(KEY_OFFLINE_MODE, false)
         _coverFade.value = prefs.getBoolean(KEY_COVER_FADE, false)
-        _automixStyle.value = com.music.bitchord.playback.smart.AutomixStyle.fromKey(prefs.getString(KEY_AUTOMIX_STYLE, null))
-        _automixKeyAware.value = prefs.getBoolean(KEY_AUTOMIX_KEY_AWARE, false)
-        com.music.bitchord.playback.smart.ForkAutoDj.keyAware = _automixKeyAware.value
-        // The Automix overview's picks per pair of songs (ForkMixPicks), read by the AutoDJ styles.
-        com.music.bitchord.playback.smart.ForkMixPicks.style = _automixStyle.value
-        com.music.bitchord.playback.smart.ForkMixPicks.load(prefs.getString(KEY_AUTOMIX_PAIR_PICKS, null))
+        readAutomix()
         com.music.bitchord.playback.smart.ForkMixPicks.save = { prefs.edit().putString(KEY_AUTOMIX_PAIR_PICKS, it).apply() }
         com.music.bitchord.ui.theme.ForkSystemBars.mode.value = prefs.getString(KEY_SYSTEM_BARS, null)
             ?.let { saved -> com.music.bitchord.ui.theme.ForkSystemBars.Mode.entries.firstOrNull { it.name == saved } }
@@ -189,6 +194,23 @@ object ForkSettings {
         prefs.edit().putString(KEY_AUTOMIX_STYLE, value.key).apply()
     }
 
+    /** Automix style, key-aware, phrase length and the overview's picks, from the prefs (start-up and a restored backup). */
+    private fun readAutomix() {
+        _automixStyle.value = com.music.bitchord.playback.smart.AutomixStyle.fromKey(prefs.getString(KEY_AUTOMIX_STYLE, null))
+        _automixKeyAware.value = prefs.getBoolean(KEY_AUTOMIX_KEY_AWARE, false)
+        com.music.bitchord.playback.smart.ForkAutoDj.keyAware = _automixKeyAware.value
+        _automixPhraseBars.value = prefs.getInt(KEY_AUTOMIX_PHRASE_BARS, 0).takeIf { it in PHRASE_BAR_CHOICES } ?: 0
+        // The Automix overview's picks per pair of songs (ForkMixPicks), read by the AutoDJ styles.
+        com.music.bitchord.playback.smart.ForkMixPicks.style = _automixStyle.value
+        com.music.bitchord.playback.smart.ForkMixPicks.load(prefs.getString(KEY_AUTOMIX_PAIR_PICKS, null))
+    }
+
+    fun setAutomixPhraseBars(value: Int) {
+        val bars = value.takeIf { it in PHRASE_BAR_CHOICES } ?: 0
+        _automixPhraseBars.value = bars
+        prefs.edit().putInt(KEY_AUTOMIX_PHRASE_BARS, bars).apply()
+    }
+
     fun setAutomixKeyAware(value: Boolean) {
         _automixKeyAware.value = value
         com.music.bitchord.playback.smart.ForkAutoDj.keyAware = value
@@ -208,6 +230,8 @@ object ForkSettings {
         KEY_CROSSFADE_ON_SKIP, KEY_BACKDROP_CLIPS, KEY_ANIMATED_COVERS, KEY_NAVIDROME_SCROBBLE,
         KEY_NAVIDROME_HOME_SHELVES, KEY_CLIP_CACHE_MB, KEY_NAVIDROME_YT_HISTORY, KEY_DOWNLOAD_ON_MOBILE,
         KEY_PRELOAD_SONGS, KEY_COVER_FADE,
+        // Automix style and what goes with it (the PC maps the same keys, ForkBackup.FORK there).
+        KEY_AUTOMIX_STYLE, KEY_AUTOMIX_KEY_AWARE, KEY_AUTOMIX_PHRASE_BARS, KEY_AUTOMIX_PAIR_PICKS,
     )
 
     /**
@@ -237,6 +261,7 @@ object ForkSettings {
                 when (val value = backupValue(key, values[key])) {
                     is Boolean -> putBoolean(key, value)
                     is Int -> putInt(key, value)
+                    is String -> putString(key, value)
                     else -> remove(key)
                 }
             }
@@ -251,6 +276,7 @@ object ForkSettings {
         _downloadOnMobile.value = prefs.getBoolean(KEY_DOWNLOAD_ON_MOBILE, false)
         _preloadSongs.value = prefs.getInt(KEY_PRELOAD_SONGS, 0)
         _coverFade.value = prefs.getBoolean(KEY_COVER_FADE, false)
+        readAutomix()
         ForkClipCache.applyLimit(_clipCacheMb.value)
     }
 
@@ -264,6 +290,11 @@ object ForkSettings {
     internal fun backupValue(key: String, value: Any?): Any? = when (key) {
         KEY_CLIP_CACHE_MB -> (value as? Int)?.takeIf { it in CLIP_CACHE_CHOICES_MB }
         KEY_PRELOAD_SONGS -> (value as? Int)?.takeIf { it in PRELOAD_CHOICES }
+        KEY_AUTOMIX_PHRASE_BARS -> (value as? Int)?.takeIf { it in PHRASE_BAR_CHOICES }
+        // A style this build doesn't know is the default, as a missing one is.
+        KEY_AUTOMIX_STYLE -> (value as? String)?.takeIf { key -> com.music.bitchord.playback.smart.AutomixStyle.entries.any { it.key == key } }
+        // Read leniently by ForkMixPicks.load: a line it can't read is dropped, the rest kept.
+        KEY_AUTOMIX_PAIR_PICKS -> value as? String
         in BACKED_UP -> value as? Boolean
         else -> null
     }
@@ -284,6 +315,7 @@ object ForkSettings {
     private const val KEY_AUTOMIX_STYLE = "automix_style"
     private const val KEY_AUTOMIX_KEY_AWARE = "automix_key_aware"
     private const val KEY_AUTOMIX_PAIR_PICKS = "automix_pair_picks"
+    private const val KEY_AUTOMIX_PHRASE_BARS = "automix_phrase_bars"
 
     const val DEFAULT_CLIP_CACHE_MB = 150
 
@@ -292,4 +324,7 @@ object ForkSettings {
 
     /** The pre-load counts offered (0 = off). */
     val PRELOAD_CHOICES = listOf(0, 1, 2, 3, 5)
+
+    /** The Automix phrase lengths offered, in bars (0 = Auto), as the PC's. */
+    val PHRASE_BAR_CHOICES = listOf(0, 8, 16)
 }

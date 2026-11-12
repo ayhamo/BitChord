@@ -185,6 +185,44 @@ class ForkBackupTest {
         listOf("close_to_tray", "liked_ids.3", "window_backdrop", "volume").forEach { assertTrue(ForkBackup.pcOnly(it), it) }
     }
 
+    /** Automix style, key-aware, phrase length and the overview's picks: the phone's keys both ways, only values both apps have. */
+    @Test
+    fun `the Automix settings and picks travel between the phone and the PC`() {
+        val of = ForkBackupFormat.PrefValue.Companion::of
+        fun section(vararg values: Pair<String, Any>) = kotlinx.serialization.json.buildJsonObject {
+            put("settings", kotlinx.serialization.json.buildJsonObject {
+                values.forEach { (key, value) -> put(key, ForkBackupFormat.json.encodeToJsonElement(ForkBackupFormat.PrefValue.serializer(), of(value)!!)) }
+            })
+        }
+        val picks = "a->b\tloop\t\nc->d\tfilter\t8"
+        ForkBackup.apply(
+            ForkBackupFormat.BackupFile(
+                fork = section(
+                    "automix_style" to "advanced_autodj", "automix_key_aware" to true,
+                    "automix_phrase_bars" to 16, "automix_pair_picks" to picks,
+                ),
+            ),
+        )
+        assertEquals("advanced_autodj", main.get("automix_style", null))
+        assertEquals("true", main.get("automix_key_aware", null))
+        assertEquals("16", main.get("automix_phrase_bars", null))
+        assertEquals(picks, main.get("automix_pair_picks", null))
+        val settings = exported()["fork"]!!.jsonObject["settings"]!!.jsonObject
+        fun pref(value: Any) = ForkBackupFormat.json.encodeToJsonElement(ForkBackupFormat.PrefValue.serializer(), of(value)!!)
+        assertEquals(pref("advanced_autodj"), settings["automix_style"])
+        assertEquals(pref(true), settings["automix_key_aware"])
+        assertEquals(pref(16), settings["automix_phrase_bars"])
+        assertEquals(pref(picks), settings["automix_pair_picks"])
+        // Not PC-only: they leave in the phone's part, never a second time in the PC's own.
+        assertFalse(ForkBackup.pcOnly("automix_style"))
+        assertFalse(ForkBackup.pcOnly("automix_pair_picks"))
+
+        // A style or length neither app has: the PC's default, as an unread key.
+        ForkBackup.apply(ForkBackupFormat.BackupFile(fork = section("automix_style" to "turntable", "automix_phrase_bars" to 32)))
+        assertNull(main.get("automix_style", null))
+        assertNull(main.get("automix_phrase_bars", null))
+    }
+
     @Test
     fun `values of the wrong type or outside what Settings offers are left at the default`() {
         val of = ForkBackupFormat.PrefValue.Companion::of

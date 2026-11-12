@@ -113,6 +113,13 @@
     <string name="fork_unplayable_none">Nothing left in the queue that this device can play (%1$s)</string>
     <string name="fork_cover_fade">Cover fade</string>
     <string name="fork_cover_fade_subtitle">When the song changes, the old cover stays until the new one has loaded, then dissolves into it</string>
+    <string name="fork_automix_phrase_length">Automix phrase length</string>
+    <string name="fork_automix_phrase_auto">Auto</string>
+    <string name="fork_automix_phrase_8">8 bars</string>
+    <string name="fork_automix_phrase_16">16 bars</string>
+    <string name="fork_automix_phrase_auto_detail">Chooses each transition\'s length from the two tracks</string>
+    <string name="fork_automix_phrase_8_detail">Mixes over exactly 8 bars, both edges on the beat grid</string>
+    <string name="fork_automix_phrase_16_detail">Mixes over exactly 16 bars, both edges on the beat grid</string>
     <string name="fork_automix_style">Automix style</string>
     <string name="fork_automix_style_bitchord">BitChord</string>
     <string name="fork_automix_style_original">Web AutoDJ</string>

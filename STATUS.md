@@ -2,7 +2,30 @@
 
 Snapshot for picking the work up again. Plan: `FORK_PLAN.md`. Every touched upstream line: `FORK.md`.
 
-## Where it stands (2026-11-12): all built and tested, nothing committed, nothing pushed
+## Where it stands (2026-11-12, evening): four fixes built, tested, audited, committed and pushed
+
+On top of 3fe06464 (pushed). Tests: phone shared 346 + app 1402, PC 883, all pass. Builds: the phone APK (`assembleDevDebug`) and the PC Portable zip.
+
+**Done**
+- **12 dB filters for Web/Advanced AutoDJ (both apps):** `ForkMixShelf` now has its own 12 dB/oct low- and high-pass (one Butterworth section each, as in the extension), gliding in log frequency. The upstream 24 dB transition filters are held open during these mixes. On the PC, the playing deck starts open and glides in (`startOpen`), so an Advanced filter mix doesn't click at its start.
+- **Lyrics: old lines stayed under a new song** when neither the player nor the catalogue gave a length. `MainViewModel.forkDropStaleLyrics` clears them as a new lookup would.
+- **Automix style, key-aware, phrase length and the pair picks are in the backup**, both ways between the phone and the PC (`ForkSettings.BACKED_UP`, PC `ForkBackup.FORK`).
+- **Phone phrase length setting** (Auto / 8 bars / 16 bars), as on the PC. A fixed length is kept to the last/first 30 s, and it refuses the loop mix. That check now runs before the pick check (both apps), so after a Blend/Filter pick the overview keeps Loop greyed with the true reason.
+- **Overview kept a stale "no loop mix" reason** after its cause was undone (a fixed length back to Auto, a pick cleared), because the cached loop plan was reused silently. Both apps now note the cached plan's verdict again on reuse (fall-back reason included). Audited clean; checked on the phone that the verdict holds across ticks.
+
+**Tested in the apps**
+- **Phone (emulator):**
+  - The phrase row and its subtitles.
+  - The overview shows "8 Bars" with Loop greyed, also after a Filter pick.
+  - A Web AutoDJ Filter preview ran from Romeo into XOXO, and the next pair logged "no loop mix (a fixed 8-bar overlap is chosen)".
+  - Put back afterwards: phrase length Auto, style Web AutoDJ, test picks removed.
+- **PC (bridge 8775, muted):**
+  - A Filter pick + Preview ran "DJ_FILTER, 4 bars" from Dusk Till Dawn into Starboy, with no errors.
+  - The test pick was removed afterwards.
+
+**Not tested:** the sound of the new filters (not by ear), and the lyrics case (needs a song with no length, which the emulator can't reproduce on demand).
+
+## Earlier: 2026-11-12, committed and pushed (fdb88601, 3fe06464)
 
 Builds: Android `assembleDevDebug` + all unit tests (app, shared, sharedUi) pass; PC tests and the Portable zip pass (`out/BitChord Portable.zip`).
 

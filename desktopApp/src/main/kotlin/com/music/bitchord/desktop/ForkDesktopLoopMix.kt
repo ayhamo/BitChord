@@ -105,11 +105,12 @@ internal object ForkLoopMixRules {
      */
     fun refusal(p: ForkLoopPair): String? = when {
         !p.automix -> "Automix is off"
+        // From Desktop Revived d150d26f: a fixed 8 or 16-bar overlap asked for is the planner's blend;
+        // the loop mix picks its own length. Checked before the picks: a Loop pick couldn't undo it, so the
+        // overview keeps Loop greyed with this reason rather than offering it after a Blend/Filter pick.
+        p.phraseBars != 0 -> "a fixed ${p.phraseBars}-bar overlap is chosen"
         // A blend, filter mix, fade or length picked for the pair in the Automix overview (ForkMixPicks).
         ForkMixPicks.loopRefusal(p.outSong.videoId, p.inSong.videoId) != null -> ForkMixPicks.PICKED_REASON
-        // From Desktop Revived d150d26f: a fixed 8 or 16-bar overlap asked for is the planner's blend;
-        // the loop mix picks its own length.
-        p.phraseBars != 0 -> "a fixed ${p.phraseBars}-bar overlap is chosen"
         p.inParty -> "in a Listen Together party"
         p.speed != 1f -> "playback speed is not 1x"
         p.skipSilence -> "skip silence is on"
@@ -560,6 +561,8 @@ internal class ForkLoopMixSession private constructor(
 internal class ForkDesktopLoopMix(private val scope: CoroutineScope) {
     private var planKey: String? = null
     private var planned: LoopMix.Plan? = null
+    /** [planned]'s verdict, noted again when the cached plan is reused. */
+    private var plannedWhy: String? = null
     private var lastVerdict = ""
 
     /** Why the pair gets no loop mix; null when it does. For the log. */
@@ -637,7 +640,10 @@ internal class ForkDesktopLoopMix(private val scope: CoroutineScope) {
             "|${outLyrics === noLyricsYet}${inLyrics === noLyricsYet}"
         val cached = planned
         // Kept while its loop is still far enough ahead to set up; a seek past that plans again.
+        // Noted again: a refusal shown meanwhile (a fixed length, a pick, then undone) would otherwise stay
+        // in the Automix overview, greying Loop, until the next song.
         if (key == planKey && (cached == null || cached.out.loopStart - p.positionSec >= ForkLoopMixRules.MIN_LEAD_SECONDS)) {
+            note(pair, cached, plannedWhy)
             return cached
         }
         val why = StringBuilder()
@@ -656,7 +662,8 @@ internal class ForkDesktopLoopMix(private val scope: CoroutineScope) {
         planKey = key
         planned = plan
         val lyricsNote = "lyrics ${if (outLyrics.spans != null) "out" else "-"}/${if (inLyrics.spans != null) "in" else "-"}"
-        note(pair, plan, if (plan == null) "$why; $lyricsNote" else null)
+        plannedWhy = if (plan == null) "$why; $lyricsNote" else null
+        note(pair, plan, plannedWhy)
         return plan
     }
 
@@ -715,6 +722,7 @@ internal class ForkDesktopLoopMix(private val scope: CoroutineScope) {
         DesktopTrackLog.log("loop mix falls back to a blend: $reason")
         cancelBuild()
         planned = null
+        plannedWhy = reason // the reused (null) plan is noted with this
         refusal = reason
     }
 
@@ -734,6 +742,7 @@ internal class ForkDesktopLoopMix(private val scope: CoroutineScope) {
         cancelBuild()
         planKey = null
         planned = null
+        plannedWhy = null
         refusal = null
     }
 

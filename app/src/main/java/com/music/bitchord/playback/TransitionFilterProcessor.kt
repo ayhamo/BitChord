@@ -577,7 +577,7 @@ interface TransitionFilters {
     /** Drops any echo on either sink. Called whenever a transition ends, however it ended. */
     fun parkEchoes() = Unit
 
-    fun forkShelves(incoming: Boolean, lowDb: Float, highDb: Float) = Unit // fork: each sink's ForkMixShelf, by session role as incoming()/outgoing()
+    fun forkShelves(incoming: Boolean, lowDb: Float, highDb: Float, lowPassHz: Float = ForkMixShelf.OPEN_HZ, highPassHz: Float = ForkMixShelf.OFF_HZ) = Unit // fork: each sink's ForkMixShelf (shelves and 12 dB cuts), by session role as incoming()/outgoing()
 
     /** Parks both. Called whenever a transition ends, however it ended. */
     fun open() {

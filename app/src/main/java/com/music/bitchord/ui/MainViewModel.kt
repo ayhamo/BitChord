@@ -406,7 +406,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // dropped as a duplicate, and leave the track marked as being looked up
         // by nobody — which is what left a paused track loading for ever, since
         // pausing is when the duration is most likely to arrive a frame late.
-        if (localUri == null && durationMs <= 0L) return
+        if (localUri == null && durationMs <= 0L) { if (currentLyricsRequest?.videoId != videoId) forkDropStaleLyrics(sources.isEmpty()); return } // fork: was `return`
         lyricsFor = key
         lyricsGeneration += 1
         val generation = lyricsGeneration
@@ -463,6 +463,29 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _lyricsSource.value = selected?.source
             _lyricsChecked.value = true
         }
+    }
+
+    /**
+     * Fork: a new song whose length isn't known yet (no file, no duration from the player or the
+     * catalogue) used to leave the last song's lines up under it until a length came, or for good.
+     * Drops them and everything the drawer held for that song, as a new lookup does, and gives up
+     * the claim so the song is looked up once its length arrives (and the last one again if the
+     * listener goes back). The generation moves on so a hand-picked provider still loading for the
+     * last song can't put its lines back.
+     */
+    private fun forkDropStaleLyrics(lyricsOff: Boolean) {
+        lyricsFor = null
+        currentLyricsRequest = null
+        lyricsGeneration += 1
+        lyricsJob?.cancel()
+        selectedLyricsSource = null
+        manualLyricsJobs.values.forEach(Job::cancel)
+        manualLyricsJobs.clear()
+        lyricsProviderResults.clear()
+        _lyricsProviderStates.value = LyricsSource.entries.associateWith { LyricsProviderState.NOT_FETCHED }
+        _lyrics.value = null
+        _lyricsSource.value = null
+        _lyricsChecked.value = lyricsOff // with lyrics off the player drops the strip, as it does once a lookup is skipped
     }
 
     /**

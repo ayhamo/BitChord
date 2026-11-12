@@ -263,6 +263,12 @@ internal object ForkBackup {
         int("clip_cache_mb", "clip_cache_mb", navidromeFork, allowed = ForkNavidromeSettings.CLIP_CACHE_CHOICES_MB),
         int("preload_songs", "preload_songs", navidromeFork, allowed = ForkNavidromeSettings.PRELOAD_CHOICES),
         bool("cover_fade", ForkPlayerEffects.KEY_COVER_FADE), // "Cover fade" (ForkPlayerEffects), both apps
+        // Automix style, "Shorter blend when keys clash", the phrase length and the overview's picks (ForkDesktopAutomixStyle,
+        // DesktopApp's "Automix phrase length"): the phone's keys, styles and lengths; the picks' text is the same on both.
+        named("automix_style", "automix_style", com.music.bitchord.playback.smart.AutomixStyle.entries.map { it.key }),
+        bool("automix_key_aware"),
+        int("automix_phrase_bars", allowed = listOf(0, 8, 16)),
+        text("automix_pair_picks"),
     )
 
     /** The phone's `AppSettings.SECRETS` and `DEVICE_LOCAL`: never carried either way. */

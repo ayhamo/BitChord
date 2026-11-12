@@ -1971,7 +1971,7 @@ class PlaybackService : MediaLibraryService() {
                     transitionFilterB.parkEcho()
                 }
 
-                override fun forkShelves(incoming: Boolean, lowDb: Float, highDb: Float) = (if (incoming) activeFilter else spareFilter).forkShelf.set(lowDb, highDb) // fork
+                override fun forkShelves(incoming: Boolean, lowDb: Float, highDb: Float, lowPassHz: Float, highPassHz: Float) = (if (incoming) activeFilter else spareFilter).forkShelf.set(lowDb, highDb, lowPassHz, highPassHz) // fork
             },
             analysisRunningFor = { item -> trackAnalyzer.isAnalysing(item.mediaId) },
             // The standby is still the spare when this runs — it only becomes

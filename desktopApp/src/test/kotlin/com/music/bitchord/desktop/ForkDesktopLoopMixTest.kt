@@ -2,6 +2,8 @@ package com.music.bitchord.desktop
 
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.TrackAnalysisState
+import com.music.bitchord.playback.smart.AutomixStyle
+import com.music.bitchord.playback.smart.ForkMixPicks
 import com.music.bitchord.playback.smart.LoopMix
 import com.music.bitchord.playback.smart.TrackAnalysis
 import kotlin.math.abs
@@ -237,5 +239,19 @@ class ForkDesktopLoopMixTest {
         assertEquals("a better copy is crossing in", ForkLoopMixRules.refusal(pair(swapping = true)))
         assertEquals("waiting on analysis", ForkLoopMixRules.refusal(pair(state = TrackAnalysisState.ANALYSING)))
         assertEquals("a fixed 16-bar overlap is chosen", ForkLoopMixRules.refusal(pair(phraseBars = 16)))
+    }
+
+    /** A fixed length wins over a pick: a Loop pick couldn't undo it, so the overview keeps Loop greyed with this reason. */
+    @Test
+    fun `a fixed length is the reason even when the pair has a pick`() {
+        try {
+            ForkMixPicks.style = AutomixStyle.ORIGINAL
+            ForkMixPicks.set("a->b", ForkMixPicks.Pick(style = ForkMixPicks.Style.FILTER))
+            assertEquals(ForkMixPicks.PICKED_REASON, ForkLoopMixRules.refusal(pair()))
+            assertEquals("a fixed 8-bar overlap is chosen", ForkLoopMixRules.refusal(pair(phraseBars = 8)))
+        } finally {
+            ForkMixPicks.set("a->b", ForkMixPicks.Pick()) // Auto clears the pick
+            ForkMixPicks.style = AutomixStyle.BITCHORD
+        }
     }
 }

@@ -1114,6 +1114,8 @@ class CrossfadeController(
             mode = CrossfadeMode.SMART,
             advanced = advanced,
             forkStyle = com.music.bitchord.fork.ForkSettings.automixStyle.value, // fork: Automix style (ForkAutoDj)
+            phraseBars = com.music.bitchord.fork.ForkSettings.automixPhraseBars.value, // fork: Automix phrase length, the PC's (Desktop Revived d150d26f)
+            mixWindow = com.music.bitchord.fork.ForkSettings.automixPhraseBars.value != 0, // fork: a fixed length kept to the last/first 30 s, as the PC's (16 slow bars run near a minute); Auto plans unchanged
         )
         // One line per distinct verdict rather than one per 250ms tick, so the
         // log says what the planner decided for this pair without burying it.
@@ -2407,6 +2409,7 @@ class CrossfadeController(
     /** The pair (and analyses) the cached loop plan belongs to, and that plan; null when none is possible. */
     private var loopPlanKey: String? = null
     private var loopPlanned: LoopMix.Plan? = null
+    private var forkLoopPlannedWhy: String? = null // fork: the cached plan's verdict, noted again on reuse (ForkMixPicks)
 
     /** Why the pair gets no loop mix, for the log and the stats line; null when it does. */
     private var loopRefusal: String? = null
@@ -2447,6 +2450,7 @@ class CrossfadeController(
 
     /** Why [current] -> [next] can't be a loop mix right now, or null when it can. */
     private fun loopRefusalFor(player: ExoPlayer, current: MediaItem, next: MediaItem, state: SmartAnalysis): String? = when {
+        com.music.bitchord.fork.ForkSettings.automixPhraseBars.value != 0 -> "a fixed ${com.music.bitchord.fork.ForkSettings.automixPhraseBars.value}-bar overlap is chosen" // fork: the planner's blend, as on the PC (ForkDesktopLoopMix); before the pick check so the overview keeps Loop greyed with a true reason
         com.music.bitchord.playback.smart.ForkMixPicks.loopRefusal(current.mediaId, next.mediaId) != null -> com.music.bitchord.playback.smart.ForkMixPicks.PICKED_REASON // fork: a style or length picked for the pair (ForkMixPicks)
         !LoopMixRenderer.available -> "no renderer"
         AppSettings.playbackSpeed.value != 1f -> "playback speed is not 1x"
@@ -2497,6 +2501,7 @@ class CrossfadeController(
         // Kept while its loop is still far enough ahead to set up; a seek past
         // that plans again from the new playhead.
         if (key == loopPlanKey && (cached == null || cached.out.loopStart * 1000 - player.currentPosition >= LOOP_MIN_LEAD_MS)) {
+            noteLoopVerdict(pair, cached, forkLoopPlannedWhy) // fork: a refusal noted meanwhile (a fixed length, a pick) gives way to the plan again
             return cached
         }
         val why = StringBuilder()
@@ -2513,7 +2518,8 @@ class CrossfadeController(
         loopPlanKey = key
         loopPlanned = plan
         val lyricsNote = "lyrics ${if (outLyrics.spans != null) "out" else "-"}/${if (inLyrics.spans != null) "in" else "-"}"
-        noteLoopVerdict(pair, plan, if (plan == null) "$why; $lyricsNote" else null)
+        forkLoopPlannedWhy = if (plan == null) "$why; $lyricsNote" else null // fork
+        noteLoopVerdict(pair, plan, forkLoopPlannedWhy) // fork: was the same expression inline
         return plan
     }
 
@@ -2858,6 +2864,7 @@ class CrossfadeController(
         Log.d(TAG, "loop mix falls back to a blend: $reason")
         loopPlanned = null
         loopRefusal = reason
+        forkLoopPlannedWhy = reason // fork: the reused (null) plan is noted with this, not as a plan-less null
         loopBail(reason, settle = false)
     }
 
@@ -3138,7 +3145,7 @@ class CrossfadeController(
             }
         }
 
-        override fun forkShelves(incoming: Boolean, lowDb: Float, highDb: Float) { if (if (incoming) aimIncoming else aimOutgoing) filters.forkShelves(incoming == handedOff, lowDb, highDb) } // fork: by track, as incoming()/outgoing()
+        override fun forkShelves(incoming: Boolean, lowDb: Float, highDb: Float, lowPassHz: Float, highPassHz: Float) { if (if (incoming) aimIncoming else aimOutgoing) filters.forkShelves(incoming == handedOff, lowDb, highDb, lowPassHz, highPassHz) } // fork: by track, as incoming()/outgoing()
     }
 
     /**

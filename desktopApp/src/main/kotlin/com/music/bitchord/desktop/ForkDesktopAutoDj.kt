@@ -51,8 +51,9 @@ internal object ForkDesktopAutomixStyle {
 }
 
 /**
- * Fork: the engine's side of an AutoDJ mix ([TransitionPlan.forkAutoDj]): faders and filters in
- * place of [DesktopTransitionRide]'s, the version-1 shelves on both decks, and no beat-roll, reverb
+ * Fork: the engine's side of an AutoDJ mix ([TransitionPlan.forkAutoDj]): faders in place of
+ * [DesktopTransitionRide]'s, the cuts (12 dB, in [ForkMixShelf]) and version-1 shelves on both decks
+ * with the transition filters held open, and no beat-roll, reverb
  * or texture (the extension has none). Audio thread only, hence the reused [frame].
  */
 internal object ForkDesktopAutoDj {
@@ -64,9 +65,9 @@ internal object ForkDesktopAutoDj {
     /** True when [plan] is an AutoDJ mix, which then takes the filters from here. */
     fun aim(plan: TransitionPlan, progress: Float, outgoing: TransitionFilter, incoming: TransitionFilter): Boolean {
         val shape = plan.forkAutoDj ?: return false
-        ForkAutoDjCurves.at(shape, progress, frame)
-        outgoing.setCutoffs(frame.outLowPassHz, frame.outHighPassHz)
-        incoming.setCutoffs(frame.inLowPassHz, frame.inHighPassHz)
+        // The cuts are the shelves' 12 dB sections ([shelve]), as the extension's; these 24 dB filters stay open.
+        outgoing.open()
+        incoming.open()
         return true
     }
 
@@ -88,8 +89,10 @@ internal object ForkDesktopAutoDj {
             return
         }
         ForkAutoDjCurves.at(shape, 0f, frame)
-        outgoingShelf.snap(frame.outLowDb, frame.outHighDb)
-        incomingShelf.snap(frame.inLowDb, frame.inHighDb)
+        // The outgoing song is playing: it starts open and glides into the curve, as the transition filters did.
+        // The incoming one is silent here, so it can start right on the curve.
+        outgoingShelf.startOpen(frame.outLowDb, frame.outHighDb, frame.outLowPassHz, frame.outHighPassHz)
+        incomingShelf.snap(frame.inLowDb, frame.inHighDb, frame.inLowPassHz, frame.inHighPassHz)
     }
 
     /** Shelves one block of each deck in place, aimed at [progress] (flat for any other mix: untouched). */
@@ -105,8 +108,8 @@ internal object ForkDesktopAutoDj {
     ) {
         val shape = plan?.forkAutoDj ?: return
         ForkAutoDjCurves.at(shape, progress.coerceIn(0f, 1f), frame)
-        outgoingShelf.set(frame.outLowDb, frame.outHighDb)
-        incomingShelf.set(frame.inLowDb, frame.inHighDb)
+        outgoingShelf.set(frame.outLowDb, frame.outHighDb, frame.outLowPassHz, frame.outHighPassHz)
+        incomingShelf.set(frame.inLowDb, frame.inHighDb, frame.inLowPassHz, frame.inHighPassHz)
         outgoingShelf.process(outgoing, outgoingCount, channels, sampleRate)
         if (incoming != null) incomingShelf.process(incoming, incomingCount, channels, sampleRate)
     }

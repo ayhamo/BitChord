@@ -18,10 +18,11 @@ internal object ForkAutoDjRide {
 
     fun ride(shape: ForkAutoDj.Shape, progress: Float, tracks: TransitionFilters) {
         ForkAutoDjCurves.at(shape, progress, frame)
-        tracks.incoming(frame.inLowPassHz, frame.inHighPassHz)
-        tracks.outgoing(frame.outLowPassHz, frame.outHighPassHz)
-        tracks.forkShelves(true, frame.inLowDb, frame.inHighDb)
-        tracks.forkShelves(false, frame.outLowDb, frame.outHighDb)
+        // The cuts are the shelf's 12 dB sections, as the extension's; the 24 dB transition filters stay open.
+        tracks.incoming(TransitionFilterProcessor.OPEN_HZ, TransitionFilterProcessor.OFF_HZ)
+        tracks.outgoing(TransitionFilterProcessor.OPEN_HZ, TransitionFilterProcessor.OFF_HZ)
+        tracks.forkShelves(true, frame.inLowDb, frame.inHighDb, frame.inLowPassHz, frame.inHighPassHz)
+        tracks.forkShelves(false, frame.outLowDb, frame.outHighDb, frame.outLowPassHz, frame.outHighPassHz)
     }
 
     fun rise(shape: ForkAutoDj.Shape, progress: Float): Float {
