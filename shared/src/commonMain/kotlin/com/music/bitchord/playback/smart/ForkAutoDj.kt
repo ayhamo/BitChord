@@ -18,7 +18,7 @@ import kotlin.math.roundToInt
  */
 enum class AutomixStyle(val key: String, val label: String) {
     BITCHORD("bitchord", "BitChord"),
-    ORIGINAL("original_autodj", "Original AutoDJ"),
+    ORIGINAL("original_autodj", "Web AutoDJ"),
     ADVANCED("advanced_autodj", "Advanced AutoDJ"),
     ;
 
@@ -273,17 +273,25 @@ object ForkAutoDj {
         sungOut: List<LoopMix.Span>? = null,
         sungIn: List<LoopMix.Span>? = null,
         keyAware: Boolean = false,
+        /** Fork: the overview's pick for this pair ([ForkMixPicks]); its length comes first. */
+        pick: ForkMixPicks.Pick? = null,
     ): Mix {
         val both = !from.stub && !to.stub
         val cur = if (both) from else stub(from.id, from.durationSec)
         val next = if (both) to else stub(to.id, 0.0)
         val fromGrid = cur.grid
         val toGrid = next.grid
+        val pinnedBars = pick?.bars
         fun requested(entry: Double, filter: Boolean) =
-            if (barsSetting > 0) barsSetting else autoBars(cur, next, fromGrid!!, entry, filter)
+            pinnedBars ?: if (barsSetting > 0) barsSetting else autoBars(cur, next, fromGrid!!, entry, filter)
 
+        if (pick?.style == ForkMixPicks.Style.FADE && both) return fallback(cur, next, earliest, ForkMixPicks.PICKED_REASON)
         if (fromGrid == null || cur.confidence < MIN_GRID_CONFIDENCE) {
             return fallback(cur, next, earliest, if (both) "this song has no beat grid at its end" else "songs not analysed in time")
+        }
+        if (pick?.style == ForkMixPicks.Style.FILTER) {
+            val inGrid = toGrid?.takeIf { next.confidence >= MIN_GRID_CONFIDENCE }
+            return filterMix(cur, next, fromGrid, inGrid, requested(inGrid?.downbeatSec ?: 0.0, true), pos, earliest, ForkMixPicks.PICKED_REASON, v2, sungOut, sungIn)
         }
         if (toGrid == null || next.confidence < MIN_GRID_CONFIDENCE) {
             return filterMix(cur, next, fromGrid, null, requested(0.0, true), pos, earliest, "next song has no beat grid", v2, sungOut, sungIn)
@@ -303,7 +311,7 @@ object ForkAutoDj {
         val rampSongSec = rampBeats * fromGrid.beatSec
         // AutoDJ's key-aware length (its own toggle, version 2): keys that clash get a short blend.
         val keyClash = if (v2 && keyAware) keysClash(cur, next) else null
-        val bars = if (keyClash != null) keyClashBars(fromGrid) else requested(toGrid.downbeatSec, false)
+        val bars = if (keyClash != null && pinnedBars == null) keyClashBars(fromGrid) else requested(toGrid.downbeatSec, false)
         val effBars = effectiveBlendBars(bars, cur.confidence, next.confidence)
         val outSpan = effBars * fromGrid.barSec
         val dur = outSpan / outRate
@@ -588,7 +596,7 @@ object ForkAutoDj {
 
     // ---- into upstream's TransitionPlan ----
 
-    private class Latch(val key: String, val plan: TransitionPlan, val armAt: Double, val end: Double)
+    private class Latch(val key: String, val plan: TransitionPlan, val armAt: Double, val end: Double, val mix: Mix)
 
     @Volatile
     private var latch: Latch? = null
@@ -615,23 +623,34 @@ object ForkAutoDj {
     ): TransitionPlan? {
         if (style == AutomixStyle.BITCHORD || albumSequential) return null
         val length = max(duration.takeIf { it.isFinite() } ?: 0.0, (currentTrack?.durationMs ?: 0L) / 1000.0)
-        if (length < MIN_DURATION_SEC) return null
-        if (spokenOrLive(currentTrack) || spokenOrLive(nextTrack)) return null
+        if (length < MIN_DURATION_SEC || spokenOrLive(currentTrack) || spokenOrLive(nextTrack)) {
+            ForkMixPicks.notePlannedNothing()
+            return null
+        }
         val pos = max(0.0, currentTime.takeIf { it.isFinite() } ?: 0.0)
         val v2 = style == AutomixStyle.ADVANCED
         val curId = currentTrack?.id ?: analysis.trackId
         val nextId = nextTrack?.id ?: nextAnalysis.trackId
         val bars = phraseBars.takeIf { it == 8 || it == 16 } ?: 0
+        // Fork: the overview's pick for the pair (ForkMixPicks). A Loop pick is the loop mix's, which runs
+        // first; when it can't, the planner plans as with no pick, as the extension does.
+        val pair = ForkMixPicks.pair(curId, nextId)
+        val pick = ForkMixPicks.picks.value[pair]?.takeIf { it.style != ForkMixPicks.Style.LOOP }
+        // The pick is not in the key: once armed, the held plan is the one the standby deck is cued for and
+        // the ramp runs on, so a pick made now is for the next time (the overview says so). Before the
+        // latch holds, each tick plans afresh with the pick in force.
         val key = "${style.key}|$curId|$nextId|$length|$bars|$keyAware"
         latch?.takeIf { it.key == key && pos >= it.armAt - 0.5 && pos < it.end }?.let { held ->
+            ForkMixPicks.notePlanned(pair, held.mix, pos, currentTrack?.title.orEmpty(), nextTrack?.title.orEmpty(), armed = true)
             return held.plan.copy(shouldStart = pos >= held.plan.transitionStart)
         }
         val nextLength = max(nextAnalysis.duration.takeIf { it.isFinite() } ?: 0.0, (nextTrack?.durationMs ?: 0L) / 1000.0)
         val from = side(analysis, curId, length, outgoing = true, usable = ready(analysis, currentTrack))
         val to = side(nextAnalysis, nextId, nextLength, outgoing = false, usable = ready(nextAnalysis, nextTrack))
-        val mix = plan(from, to, pos, pos + LEAD_SEC, v2, bars, sungOut = if (v2) sungFor(curId) else null, sungIn = if (v2) sungFor(nextId) else null, keyAware = keyAware)
+        val mix = plan(from, to, pos, pos + LEAD_SEC, v2, bars, sungOut = if (v2) sungFor(curId) else null, sungIn = if (v2) sungFor(nextId) else null, keyAware = keyAware, pick = pick)
         val plan = toTransitionPlan(mix, pos, style)
-        latch = Latch(key, plan, mix.mixOut - mix.rampSongSec - LEAD_SEC, mix.mixOut + mix.outSpan)
+        latch = Latch(key, plan, mix.mixOut - mix.rampSongSec - LEAD_SEC, mix.mixOut + mix.outSpan, mix)
+        ForkMixPicks.notePlanned(pair, mix, pos, currentTrack?.title.orEmpty(), nextTrack?.title.orEmpty())
         return plan
     }
 

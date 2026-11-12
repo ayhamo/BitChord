@@ -115,7 +115,7 @@
     <string name="fork_cover_fade_subtitle">When the song changes, the old cover stays until the new one has loaded, then dissolves into it</string>
     <string name="fork_automix_style">Automix style</string>
     <string name="fork_automix_style_bitchord">BitChord</string>
-    <string name="fork_automix_style_original">Original AutoDJ</string>
+    <string name="fork_automix_style_original">Web AutoDJ</string>
     <string name="fork_automix_style_advanced">Advanced AutoDJ</string>
     <string name="fork_automix_style_bitchord_subtitle">BitChord\'s own Automix</string>
     <string name="fork_automix_style_original_subtitle">The YouTube Music extension\'s Automix: phrase-aligned blends ending with the song, a bass swap and a high-shelf cross, tempo only ever sped up</string>

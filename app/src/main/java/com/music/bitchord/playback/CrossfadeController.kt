@@ -2447,6 +2447,7 @@ class CrossfadeController(
 
     /** Why [current] -> [next] can't be a loop mix right now, or null when it can. */
     private fun loopRefusalFor(player: ExoPlayer, current: MediaItem, next: MediaItem, state: SmartAnalysis): String? = when {
+        com.music.bitchord.playback.smart.ForkMixPicks.loopRefusal(current.mediaId, next.mediaId) != null -> com.music.bitchord.playback.smart.ForkMixPicks.PICKED_REASON // fork: a style or length picked for the pair (ForkMixPicks)
         !LoopMixRenderer.available -> "no renderer"
         AppSettings.playbackSpeed.value != 1f -> "playback speed is not 1x"
         player.skipSilenceEnabled -> "skip silence is on"
@@ -2517,6 +2518,7 @@ class CrossfadeController(
     }
 
     private fun noteLoopVerdict(pair: String, plan: LoopMix.Plan?, refusal: String?) {
+        com.music.bitchord.playback.smart.ForkMixPicks.noteLoop(pair, plan?.out?.loopStart, refusal) // fork: the Automix overview's picks read it
         loopRefusal = refusal
         val verdict = "$pair: " + (plan?.let { "loop mix at ${"%.2f".format(Locale.ROOT, it.out.loopStart)}s · ${describeLoop(it)}" } ?: "no loop mix ($refusal)")
         if (verdict == lastLoopVerdict) return

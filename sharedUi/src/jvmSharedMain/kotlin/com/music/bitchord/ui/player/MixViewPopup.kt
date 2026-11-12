@@ -218,6 +218,7 @@ internal fun MixViewPopup(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 MixViewContent(view ?: PlaceholderView, progress, live)
+                ForkMixPicksPanel(live, view, Modifier.padding(start = 14.dp, top = 14.dp, end = 14.dp)) // fork: picks per pair of songs (ForkMixPicks)
             }
         }
     }

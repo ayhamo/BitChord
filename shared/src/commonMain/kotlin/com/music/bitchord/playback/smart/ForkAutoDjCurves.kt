@@ -14,7 +14,7 @@ import kotlin.math.sin
  * apps' renderers apply: the two faders, each song's low-pass and high-pass corner, and each
  * song's 250 Hz low shelf and 4 kHz high shelf in dB.
  *
- * Original AutoDJ (version 1):
+ * Web AutoDJ (version 1):
  *  - every style: equal-power faders (sin / cos);
  *  - blend: the next song's low shelf at the swap depth (-12 dB from 8 bars, -6 dB shorter) until
  *    the middle, then the bass changes hands over one bar centred on it; the playing song's high

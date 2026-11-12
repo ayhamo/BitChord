@@ -107,6 +107,10 @@ object ForkSettings {
         _automixStyle.value = com.music.bitchord.playback.smart.AutomixStyle.fromKey(prefs.getString(KEY_AUTOMIX_STYLE, null))
         _automixKeyAware.value = prefs.getBoolean(KEY_AUTOMIX_KEY_AWARE, false)
         com.music.bitchord.playback.smart.ForkAutoDj.keyAware = _automixKeyAware.value
+        // The Automix overview's picks per pair of songs (ForkMixPicks), read by the AutoDJ styles.
+        com.music.bitchord.playback.smart.ForkMixPicks.style = _automixStyle.value
+        com.music.bitchord.playback.smart.ForkMixPicks.load(prefs.getString(KEY_AUTOMIX_PAIR_PICKS, null))
+        com.music.bitchord.playback.smart.ForkMixPicks.save = { prefs.edit().putString(KEY_AUTOMIX_PAIR_PICKS, it).apply() }
         com.music.bitchord.ui.theme.ForkSystemBars.mode.value = prefs.getString(KEY_SYSTEM_BARS, null)
             ?.let { saved -> com.music.bitchord.ui.theme.ForkSystemBars.Mode.entries.firstOrNull { it.name == saved } }
             ?: com.music.bitchord.ui.theme.ForkSystemBars.Mode.NONE
@@ -181,6 +185,7 @@ object ForkSettings {
 
     fun setAutomixStyle(value: com.music.bitchord.playback.smart.AutomixStyle) {
         _automixStyle.value = value
+        com.music.bitchord.playback.smart.ForkMixPicks.style = value
         prefs.edit().putString(KEY_AUTOMIX_STYLE, value.key).apply()
     }
 
@@ -278,6 +283,7 @@ object ForkSettings {
     private const val KEY_COVER_FADE = "cover_fade"
     private const val KEY_AUTOMIX_STYLE = "automix_style"
     private const val KEY_AUTOMIX_KEY_AWARE = "automix_key_aware"
+    private const val KEY_AUTOMIX_PAIR_PICKS = "automix_pair_picks"
 
     const val DEFAULT_CLIP_CACHE_MB = 150
 

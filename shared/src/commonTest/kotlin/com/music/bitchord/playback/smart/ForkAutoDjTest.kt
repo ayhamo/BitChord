@@ -215,7 +215,7 @@ class ForkAutoDjTest {
         assertNotNull(moved.rerouted)
         assertTrue(moved.clash <= 0.5 * 1.0 + 1e-9, "clash ${moved.clash}")
         assertTrue(moved.mixOut >= plain.mixOut - ForkAutoDj.MAX_DISCARD_SEC - 1e-6)
-        // Original AutoDJ never moves it.
+        // Web AutoDJ never moves it.
         val v1 = ForkAutoDj.plan(cur, next, 20.0, 24.5, false, 8, sungOut, sungIn)
         assertEquals(plain.mixOut, v1.mixOut, 1e-9)
         assertNull(v1.rerouted)
@@ -249,7 +249,7 @@ class ForkAutoDjTest {
         assertEquals(2, on.bars)
         assertEquals("C major → F♯ major", on.keyClash)
         assertEquals(16, ForkAutoDj.plan(cur, clash, 20.0, 24.5, true, 16, keyAware = false).bars)
-        assertEquals(16, ForkAutoDj.plan(cur, clash, 20.0, 24.5, false, 16, keyAware = true).bars, "Original AutoDJ ignores it")
+        assertEquals(16, ForkAutoDj.plan(cur, clash, 20.0, 24.5, false, 16, keyAware = true).bars, "Web AutoDJ ignores it")
         val fifth = keyed(song(120.0, 200.0, id = "b"), "G major")
         assertNull(ForkAutoDj.plan(cur, fifth, 20.0, 24.5, true, 16, keyAware = true).keyClash, "one step round the wheel is compatible")
         val unsure = keyed(song(120.0, 200.0, id = "b"), "F♯ major", conf = 0.3)

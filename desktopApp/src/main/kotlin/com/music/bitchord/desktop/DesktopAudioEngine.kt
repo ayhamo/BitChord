@@ -90,6 +90,9 @@ class DesktopPlaybackEngine(
         // there; the plain `default` mixer follows the desktop's routing on its own under
         // PipeWire, so it needs no help.
         DesktopLinuxAudioWatcher.ensureStarted()
+        // fork: the Automix overview's picks per pair, and its Preview's jump (ForkMixPicks)
+        ForkDesktopAutomixStyle.loadPairPicks()
+        com.music.bitchord.playback.smart.ForkMixPicks.seek = { seekTo(it) }
         scope.launch {
             DesktopAudioDevices.changes.collect {
                 if (DesktopPlatform.isWindows) return@collect // its native side moves the stream itself

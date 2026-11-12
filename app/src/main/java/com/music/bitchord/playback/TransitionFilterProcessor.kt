@@ -27,7 +27,7 @@ import kotlin.math.tan
 @UnstableApi
 class TransitionFilterProcessor : BaseAudioProcessor() {
 
-    val forkShelf = ForkMixShelf() // fork: Original AutoDJ's low and high shelves (ForkAutoDjCurves)
+    val forkShelf = ForkMixShelf() // fork: Web AutoDJ's low and high shelves (ForkAutoDjCurves)
 
     @Volatile
     private var targetLowPassHz: Float = OPEN_HZ

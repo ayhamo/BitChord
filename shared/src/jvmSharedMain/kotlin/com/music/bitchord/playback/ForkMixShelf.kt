@@ -12,7 +12,7 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * Fork: the two shelves an Original AutoDJ mix rides on each song ([ForkAutoDjCurves]): a 250 Hz
+ * Fork: the two shelves a Web AutoDJ mix rides on each song ([ForkAutoDjCurves]): a 250 Hz
  * low shelf (the bass swap) and a 4 kHz high shelf (the highs crossing), the extension's
  * `BiquadFilterNode`s (Web Audio's shelf: RBJ cookbook, slope 1). The transition filters cut; these
  * only turn a band down, which is what the extension's version-1 blend does.

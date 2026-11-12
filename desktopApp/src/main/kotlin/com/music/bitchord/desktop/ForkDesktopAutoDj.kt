@@ -5,6 +5,7 @@ import com.music.bitchord.playback.TransitionFilter
 import com.music.bitchord.playback.smart.AutomixStyle
 import com.music.bitchord.playback.smart.ForkAutoDj
 import com.music.bitchord.playback.smart.ForkAutoDjCurves
+import com.music.bitchord.playback.smart.ForkMixPicks
 import com.music.bitchord.playback.smart.TransitionPlan
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -19,12 +20,21 @@ import kotlinx.coroutines.flow.asStateFlow
 internal object ForkDesktopAutomixStyle {
     private const val KEY = "automix_style"
     private val persistence by lazy { DesktopPersistence() }
-    private val _style = MutableStateFlow(AutomixStyle.fromKey(persistence.string(KEY, AutomixStyle.BITCHORD.key)))
+    private val _style = MutableStateFlow(AutomixStyle.fromKey(persistence.string(KEY, AutomixStyle.BITCHORD.key)).also { ForkMixPicks.style = it })
     val style: StateFlow<AutomixStyle> = _style.asStateFlow()
 
     fun set(value: AutomixStyle) {
         _style.value = value
+        ForkMixPicks.style = value
         persistence.saveString(KEY, value.key)
+    }
+
+    private const val PAIR_PICKS = "automix_pair_picks"
+
+    /** Loads the Automix overview's picks per pair of songs ([ForkMixPicks]) and saves them as they change. */
+    fun loadPairPicks() {
+        ForkMixPicks.load(persistence.string(PAIR_PICKS, ""))
+        ForkMixPicks.save = { persistence.saveString(PAIR_PICKS, it) }
     }
 
     private const val KEY_AWARE = "automix_key_aware"

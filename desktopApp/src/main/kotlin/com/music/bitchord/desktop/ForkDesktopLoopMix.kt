@@ -3,6 +3,7 @@ package com.music.bitchord.desktop
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.TrackAnalysisState
 import com.music.bitchord.playback.smart.ForkAutomix
+import com.music.bitchord.playback.smart.ForkMixPicks
 import com.music.bitchord.playback.smart.LoopMix
 import com.music.bitchord.playback.smart.TrackAnalysis
 import java.util.Locale
@@ -104,6 +105,8 @@ internal object ForkLoopMixRules {
      */
     fun refusal(p: ForkLoopPair): String? = when {
         !p.automix -> "Automix is off"
+        // A blend, filter mix, fade or length picked for the pair in the Automix overview (ForkMixPicks).
+        ForkMixPicks.loopRefusal(p.outSong.videoId, p.inSong.videoId) != null -> ForkMixPicks.PICKED_REASON
         // From Desktop Revived d150d26f: a fixed 8 or 16-bar overlap asked for is the planner's blend;
         // the loop mix picks its own length.
         p.phraseBars != 0 -> "a fixed ${p.phraseBars}-bar overlap is chosen"
@@ -746,6 +749,7 @@ internal class ForkDesktopLoopMix(private val scope: CoroutineScope) {
     }
 
     private fun note(pair: String, plan: LoopMix.Plan?, why: String?) {
+        ForkMixPicks.noteLoop(pair, plan?.out?.loopStart, why)
         refusal = why
         val verdict = "$pair: " + (
             plan?.let { "loop mix at ${"%.2f".format(Locale.ROOT, it.out.loopStart)}s · ${ForkLoopMixRules.describe(it)}" }

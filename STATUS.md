@@ -72,10 +72,11 @@ Seven items:
 **Artist radio feedback:** it took about 8 s with no sign it had started. Now "Starting X radio…" shows at once: a toast on the phone (`ForkArtistRadio.kt`, `fork_starting_artist_radio`), a notice on the PC with a guard against a second press.
 
 **Automix style** (helper, merged; files `shared/…/smart/ForkAutoDj.kt`, `ForkAutoDjCurves.kt`, `jvmSharedMain/…/ForkMixShelf.kt`, `app/…/ForkAutoDjRide.kt`, `ui/screens/ForkAutomixStyleRow.kt`, `desktopApp/…/ForkDesktopAutoDj.kt`, `ForkAutomixStyleSetting.kt`; upstream hooks listed in FORK.md):
-- Settings › Playback › Automix style offers BitChord (default, unchanged), Original AutoDJ and Advanced AutoDJ: the YT Music extension's planner and curves, on the phone and the PC.
+- Settings › Playback › Automix style offers BitChord (default, unchanged), Web AutoDJ and Advanced AutoDJ: the YT Music extension's planner and curves, on the phone and the PC.
 - On the emulator, the row shows under Automix, switches, and its subtitle follows the choice. It was left on BitChord.
 - **My fix in the audit:** the bass swap and highs shelves were not applied on 16-bit output (float off, which is most Bluetooth routes). Added `ForkMixShelf.process16` and a hook after both `flip()`s in `TransitionFilterProcessor.queueInput`, with a test.
 - **Not judged by ear:** the shelves, the speed-up and the 8 × 3 s glide back, Advanced's vocal re-route, and the level mid-blend (the 1/√ headroom trim stays on).
+- **Automix overview picks** (2026-11-12; `ForkMixPicks.kt`, `ForkMixPicksPanel.kt`, one hook in `MixViewPopup.kt`): under Web/Advanced AutoDJ only, the overview takes a style (Auto, Loop, Blend, Filter, Fade) and a length (Auto, 4–32 bars) per song pair, saved, with Preview. Locked once the mix is armed or the popup still shows a finished pair. 14 unit tests; tested on the PC and the emulator (lock, Loop verdict, 16 → 8 fit, Filter capped at 8, Preview).
 - **The helper's open points:**
   - The setting is not in backup.
   - The phone has no phrase-length setting, so it is always Auto.

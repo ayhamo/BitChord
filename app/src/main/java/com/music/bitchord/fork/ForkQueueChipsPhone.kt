@@ -45,6 +45,8 @@ object ForkQueueChipsPhone {
      * as the service holds back its own queue edits (`QueueShuffle.isCrossfadeTransitioning`).
      */
     fun attach(player: () -> ExoPlayer?, busy: () -> Boolean) {
+        // The Automix overview's Preview moves the playing song on the same active player (ForkMixPicks).
+        com.music.bitchord.playback.smart.ForkMixPicks.seek = { ms -> player()?.seekTo(ms) }
         ForkQueueChips.install { candidates, isCurrent ->
             withContext(Dispatchers.Main) {
                 val active = player() ?: return@withContext false
@@ -55,7 +57,10 @@ object ForkQueueChipsPhone {
     }
 
     /** From `PlaybackService.onDestroy`. */
-    fun detach() = ForkQueueChips.install(null)
+    fun detach() {
+        ForkQueueChips.install(null)
+        com.music.bitchord.playback.smart.ForkMixPicks.seek = null
+    }
 
     private fun replaceTail(player: Player, candidates: List<com.music.bitchord.data.model.Song>): Boolean {
         if (ListenTogether.state.value.inParty) return false
