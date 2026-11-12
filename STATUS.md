@@ -2,7 +2,17 @@
 
 Snapshot for picking the work up again. Plan: `FORK_PLAN.md`. Every touched upstream line: `FORK.md`.
 
-## Where it stands (2026-11-12, evening): four fixes built, tested, audited, committed and pushed
+## Where it stands (2026-11-12, night): Automix analysis fixes, tested on the emulator, not committed
+
+From the owner's 30 minutes of use ("songs not analysed" after a video-to-music swap, Play next, reorders). Phone only; the PC has neither the analyzer queue nor this cache.
+
+- **Analysis focus** (`ForkAnalysisFocus.kt`, hooks in `TrackAnalyzer`, `CrossfadeController`): passes, queued or running, for songs the listener moved past are dropped; the old pair took about 30-60 s first. An abandoned decode is not read as a broken copy (`structure` returns early when `stopped`), and gives back its head claim and tried marks.
+- **Analysis copy** (`ForkAnalysisCopy.kt` in shared, hooks in `AudioCache.requestAnalysisHead`, `AutomixAnalysisSource`): when the player already holds the next song's cache entry, the analysis head downloaded and saved nothing (held=0) and the song was never analysed. It now goes under `<id>#automix`. Costs one extra download of the song's Opus (3-4 MB) in that case only.
+- Tests: shared 346 + app 1407 pass (new: `ForkAnalysisFocusTest` 4, `ForkAnalysisCopyTest` 1). A JVM test of the cache lock itself is not possible: Media3's `SimpleCache` needs Android's `SparseArray` (no Robolectric here).
+- Emulator, 21:41-21:46: Play next of "Espresso" while its entry was held → `#automix` fetched in 0.25 s, analysed in 29 s, marker shown, DJ filter blend played; two quick skips → the new current song analysed at once; skip during a running pass → the next song analysed 32 s later, nothing marked bad. Not tried: the music-only video→audio swap, queue reorder by drag.
+- Audited twice; the first audit's bug (an abandoned decode marked the copy bad or deleted it) and three minor points are fixed.
+
+## Earlier: 2026-11-12, evening: four fixes built, tested, audited, committed and pushed
 
 On top of 3fe06464 (pushed). Tests: phone shared 346 + app 1402, PC 883, all pass. Builds: the phone APK (`assembleDevDebug`) and the PC Portable zip.
 

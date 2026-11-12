@@ -13,7 +13,8 @@ package com.music.bitchord.playback.smart
     const val OPUS_QUERY_PARAMETER = "automix_opus"
 
     fun isCanonicalYouTubeRendition(videoId: String?, cacheKey: String): Boolean =
-        videoId == null || cacheKey == videoId
+        videoId == null || cacheKey == videoId ||
+            ForkAnalysisCopy.isCopy(videoId, cacheKey) // fork: the same Opus under its own key when the player holds the plain one
 
     /**
      * A private playback URI for analysis-only reads.

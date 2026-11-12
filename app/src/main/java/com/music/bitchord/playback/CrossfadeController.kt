@@ -987,6 +987,7 @@ class CrossfadeController(
         // previous pair is stale — the last track of a queue should not still be
         // claiming both songs are measured.
         if (!player.hasNextMediaItem()) {
+            player.currentMediaItem?.let { com.music.bitchord.playback.smart.ForkAnalysisFocus.set(it.mediaId, null) } // fork: the last song alone is wanted now (ForkAnalysisFocus)
             AppSettings.smartTransitionWindow.value = null
             return
         }
@@ -1069,6 +1070,7 @@ class CrossfadeController(
         val player = active()
         val currentItem = player.currentMediaItem ?: return
         val nextIndex = player.nextMediaItemIndex
+        com.music.bitchord.playback.smart.ForkAnalysisFocus.set(currentItem.mediaId, if (nextIndex == C.INDEX_UNSET) null else player.getMediaItemAt(nextIndex).mediaId) // fork: also at the end of the queue and on video rows, which return before requestAnalysisAround
         if (nextIndex == C.INDEX_UNSET) return
         val nextItem = player.getMediaItemAt(nextIndex)
         // Even a manual catalogue match is still video-origin. AutoMix's
@@ -1293,6 +1295,7 @@ class CrossfadeController(
     private fun requestAnalysisAround(player: ExoPlayer, duration: Long) {
         val currentItem = player.currentMediaItem ?: return
         val nextIndex = player.nextMediaItemIndex
+        com.music.bitchord.playback.smart.ForkAnalysisFocus.set(currentItem.mediaId, if (nextIndex == C.INDEX_UNSET) null else player.getMediaItemAt(nextIndex).mediaId) // fork: queued passes for songs moved past are skipped (ForkAnalysisFocus)
         if (nextIndex == C.INDEX_UNSET) return
         val nextItem = player.getMediaItemAt(nextIndex)
         if (currentItem.isVideoOrigin || nextItem.isVideoOrigin) return

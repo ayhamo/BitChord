@@ -117,7 +117,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * flight, rather than latched when the party starts, so joining one stops
      * the work already running instead of only the work not yet queued.
      */
-    private val stopped: Boolean get() = ListenTogether.state.value.inParty
+    private val stopped: Boolean get() = ListenTogether.state.value.inParty || ForkAnalysisFocus.movedPast() // fork: also a pass for a song the listener has moved past, on its own thread only (ForkAnalysisFocus)
 
     /** The last thermal status the system reported; see [overheated]. */
     @Volatile private var thermalStatus = 0
@@ -421,6 +421,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
 
         executor.execute {
             try {
+                ForkAnalysisFocus.enter(trackId, triedRenditions) // fork: so [stopped] can abandon this pass once the song is moved past
                 // Efficient mode yields to decoding and playback rather than
                 // competing for a core. Thread count remains the speed knob.
                 Process.setThreadPriority(
@@ -513,6 +514,13 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     provisional.remove(trackId)
                 }
             } finally {
+                // fork: a head attempt is claimed at queueing; one dropped because the song was moved past gives
+                // the claim back, so the song can try again if it comes back into the pair (ForkAnalysisFocus).
+                if (ForkAnalysisFocus.abandoned()) { // as of the pass, not now: a pass that finished keeps its marks
+                    headRendition?.let { headAttempts.remove(it.key) }
+                    ForkAnalysisFocus.untry(triedRenditions) // and the copies it marked as read: none of them was
+                }
+                ForkAnalysisFocus.leave() // fork
                 running.remove(trackId)
                 // The session holds the model's arena and a parsed ONNX graph in native heap for
                 // as long as it is open, which a backgrounded music player cannot justify between
@@ -802,7 +810,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             // choose wrongly between. With exactly one there is no choice being
             // made, and the worst case degrades from "never analysed" to "a grid
             // measured off the only audio we have".
-            return complete.singleOrNull()?.also {
+            return (complete.singleOrNull() ?: complete.filterNot { ForkAnalysisCopy.isCopy(uri.getQueryParameter("v") ?: "", it.key) }.singleOrNull())?.also { // fork: the #automix copy is the plain entry's own Opus, not a second cut (ForkAnalysisCopy)
                 Log.d(
                     TAG,
                     "Analysing $trackId from its only cached rendition ${it.key}; " +
@@ -981,6 +989,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             AudioDecoder.streamRegion(source, 0.0, effectiveDuration, { stopped }) { chunk, _, rate -> stream.push(chunk, rate) }
         } ?: return Structural(null)
         val pcm = stream.finish().takeIf { it.decoded } ?: return Structural(null) // fork
+        // fork: an abandoned pass's decode stops short by design; read below as a broken copy, it marked the
+        // song's copy bad or deleted it on an ordinary skip (ForkAnalysisFocus)
+        if (stopped) return Structural(null)
 
         // A decode that stops early is indistinguishable, downstream, from a
         // track that simply goes quiet: [TrackFeatures] is handed the

@@ -287,7 +287,7 @@ object ForkAutoDj {
 
         if (pick?.style == ForkMixPicks.Style.FADE && both) return fallback(cur, next, earliest, ForkMixPicks.PICKED_REASON)
         if (fromGrid == null || cur.confidence < MIN_GRID_CONFIDENCE) {
-            return fallback(cur, next, earliest, if (both) "this song has no beat grid at its end" else "songs not analysed in time")
+            return fallback(cur, next, earliest, if (both) "this song has no beat grid at its end" else "songs not analysed yet")
         }
         if (pick?.style == ForkMixPicks.Style.FILTER) {
             val inGrid = toGrid?.takeIf { next.confidence >= MIN_GRID_CONFIDENCE }

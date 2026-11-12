@@ -1933,6 +1933,17 @@ object AudioCache {
                         /* pinKey = */ false,
                     )
                 }
+                if (alignmentPrefixBytes(videoId) < MIN_ALIGNMENT_PREFIX_BYTES) {
+                    // fork: still nothing, because the player holds this song's entry (it reads the next song
+                    // as soon as the playing one is buffered) and a write to a held entry lands nowhere: the
+                    // same Opus under a key of its own (ForkAnalysisCopy).
+                    val copy = com.music.bitchord.playback.smart.ForkAnalysisCopy.keyFor(videoId)
+                    if (clearPartialHead(copy, want)) {
+                        fetch(cacheKey = copy, uri = Uri.parse(AutomixAnalysisSource.opusUri(videoId)), position = 0, length = want, pinKey = true)
+                    }
+                    if (total > 0 && cache.getCachedBytes(copy, 0, 1) > 0) recordContentLength(copy, total) // not on an empty entry
+                    renditionKeys.remove(videoId) // the key list is memoized; it has a new key now
+                }
                 if (total > 0) recordContentLength(videoId, total)
                 val held = alignmentPrefixBytes(videoId)
                 if (held < MIN_ALIGNMENT_PREFIX_BYTES) {
