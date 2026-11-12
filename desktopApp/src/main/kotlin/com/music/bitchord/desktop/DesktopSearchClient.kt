@@ -36,7 +36,7 @@ object DesktopSearchClient {
         return YtMusicRepository.search(query.trim(), filter)
     }
 
-    suspend fun home(): Result<HomeFeed> = YtMusicRepository.home()
+    suspend fun home(): Result<HomeFeed> = YtMusicRepository.home(com.music.bitchord.data.model.ForkHomeChips.params) // fork: + the picked chip
 
     suspend fun moreHome(token: String): Result<HomeFeed> = YtMusicRepository.moreHome(token)
 

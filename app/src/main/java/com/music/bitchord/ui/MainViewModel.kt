@@ -1546,6 +1546,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun refreshHomeRecents() {
         if (!_signedIn.value) return
+        if (!com.music.bitchord.data.model.FORK_HOME_UPSTREAM_EXTRAS) return // fork: no history shelf over YouTube's Home
         val identity = listenerKey()
         val generation = homeLoadGeneration.get()
         viewModelScope.launch {
@@ -1711,19 +1712,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         homeContinuation = null
         homeSeenTitles.clear()
         _homeLoadingMore.value = false
-        _homeRecentlyPlayedLoading.value = _signedIn.value
+        _homeRecentlyPlayedLoading.value = _signedIn.value && com.music.bitchord.data.model.FORK_HOME_UPSTREAM_EXTRAS // fork: && extras
         // The core feed plus one browse per supplement. Recently played is left
         // out: it has its own skeleton at the head of the page rather than the
         // one at the tail.
-        _homePendingShelves.value = 1 + YtMusicRepository.HOME_SUPPLEMENT_BROWSE_IDS.size
-        loadTopPicks(identity, rebuild = false)
+        _homePendingShelves.value = 1 + YtMusicRepository.HOME_SUPPLEMENT_BROWSE_IDS.size.takeIf { com.music.bitchord.data.model.FORK_HOME_UPSTREAM_EXTRAS }.let { it ?: 0 } // fork: no supplements
+        if (com.music.bitchord.data.model.ForkHomeChips.selected.value == null) loadTopPicks(identity, rebuild = false) // fork: not on a chip's Home
         viewModelScope.launch {
             launch { com.music.bitchord.data.navidrome.NavidromeHome.load(getApplication()) } // fork
             launch {
                 try {
-                    YtMusicRepository.home()
+                    YtMusicRepository.home(com.music.bitchord.data.model.ForkHomeChips.params) // fork: + the picked chip
                         .onSuccess { feed ->
                             if (!isCurrentHomeLoad(identity, generation)) return@onSuccess
+                            com.music.bitchord.data.model.ForkHomeChips.publish(feed.chips) // fork
                             homeContinuation = feed.continuation
                             publishHomeShelves(feed.shelves)
                         }
@@ -1736,7 +1738,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     homeShelfRequestSettled(identity, generation)
                 }
             }
-            if (_signedIn.value) {
+            if (_signedIn.value && com.music.bitchord.data.model.FORK_HOME_UPSTREAM_EXTRAS) { // fork: && extras
                 launch {
                     YtMusicRepository.homeRecentlyPlayed()
                         .onSuccess { shelf ->
@@ -1750,7 +1752,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         }
                 }
             }
-            YtMusicRepository.HOME_SUPPLEMENT_BROWSE_IDS.forEach { browseId ->
+            YtMusicRepository.HOME_SUPPLEMENT_BROWSE_IDS.filter { com.music.bitchord.data.model.FORK_HOME_UPSTREAM_EXTRAS }.forEach { browseId -> // fork: filter, no supplements
                 launch {
                     try {
                         YtMusicRepository.homeSupplement(browseId).onSuccess { shelves ->
@@ -1818,6 +1820,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun refreshTopPicksIfStale() {
         if (topPicksJob?.isActive == true) return
+        if (com.music.bitchord.data.model.ForkHomeChips.selected.value != null) return // fork: a chip's Home shows no Top Picks; built after deselect
         if (topPicksSlotShown == null || topPicksSlotShown == topPicksSlot()) return
         loadTopPicks(listenerKey(), rebuild = false)
     }
@@ -1831,6 +1834,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // moment to land so the builder reads them off it instead of asking.
         val shelves = withTimeoutOrNull(8_000L) { _home.first { it !is UiState.Loading } }
             .let { (it as? UiState.Success)?.data.orEmpty() }
+            .takeIf { com.music.bitchord.data.model.ForkHomeChips.selected.value == null }.orEmpty() // fork: never from a chip's Home (Podcasts' shelves are no picks)
         return try {
             TopPicks.build(shelves, localTaste())
         } catch (e: CancellationException) {
@@ -1876,8 +1880,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             })
             return
         }
-        val added = shelves.withoutRepeatsOf(existing)
-            .filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) }
+        val added = (if (com.music.bitchord.data.model.FORK_HOME_UPSTREAM_EXTRAS) shelves.withoutRepeatsOf(existing) else shelves) // fork: YouTube's shelves as sent
+            .filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) || !com.music.bitchord.data.model.FORK_HOME_UPSTREAM_EXTRAS } // fork: || !extras
         if (added.isNotEmpty()) _home.value = UiState.Success(existing + added)
     }
 
@@ -1897,16 +1901,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Refreshes the core feed without blanking the current Play page first. */
     private suspend fun refreshHome(identity: String?) = coroutineScope {
         launch { com.music.bitchord.data.navidrome.NavidromeHome.load(getApplication()) } // fork
-        val recent = if (_signedIn.value) async { YtMusicRepository.homeRecentlyPlayed() } else null
+        val recent = if (_signedIn.value && com.music.bitchord.data.model.FORK_HOME_UPSTREAM_EXTRAS) async { YtMusicRepository.homeRecentlyPlayed() } else null // fork: && extras
         // Top Picks keeps to its hour; a pull refreshes the feed, not the
         // picks, unless the hour has already turned over.
-        if (topPicksJob?.isActive != true) loadTopPicks(identity, rebuild = false)
-        YtMusicRepository.home().onSuccess { feed ->
-            if (identity != listenerKey()) return@onSuccess
+        if (topPicksJob?.isActive != true && com.music.bitchord.data.model.ForkHomeChips.selected.value == null) loadTopPicks(identity, rebuild = false) // fork: && no chip
+        val forkGeneration = homeLoadGeneration.get() // fork: a chip tapped meanwhile wins over this refresh
+        YtMusicRepository.home(com.music.bitchord.data.model.ForkHomeChips.params).onSuccess { feed -> // fork: + the picked chip
+            if (!isCurrentHomeLoad(identity, forkGeneration)) return@onSuccess // fork: was identity != listenerKey()
+            com.music.bitchord.data.model.ForkHomeChips.publish(feed.chips) // fork
             homeContinuation = feed.continuation
             homeSeenTitles.clear()
-            val shelves = feed.shelves.withoutRepeatsOf(emptyList())
-                .filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) }
+            val shelves = (if (com.music.bitchord.data.model.FORK_HOME_UPSTREAM_EXTRAS) feed.shelves.withoutRepeatsOf(emptyList()) else feed.shelves) // fork: YouTube's shelves as sent
+                .filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) || !com.music.bitchord.data.model.FORK_HOME_UPSTREAM_EXTRAS } // fork: || !extras
             if (shelves.isNotEmpty()) _home.value = UiState.Success(shelves)
         }
         recent?.await()?.onSuccess { shelf ->
@@ -1923,13 +1929,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val token = homeContinuation ?: return
         if (_homeLoadingMore.value) return
         val identity = listenerKey()
+        val forkGeneration = homeLoadGeneration.get() // fork: a page of the feed before a chip tap is dropped
         _homeLoadingMore.value = true
         viewModelScope.launch {
             YtMusicRepository.moreHome(token).onSuccess { feed ->
-                if (identity == listenerKey()) {
+                if (isCurrentHomeLoad(identity, forkGeneration)) { // fork: was identity == listenerKey()
                     val existing = (_home.value as? UiState.Success)?.data ?: emptyList()
-                    val added = feed.shelves.withoutRepeatsOf(existing)
-                        .filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) }
+                    val added = (if (com.music.bitchord.data.model.FORK_HOME_UPSTREAM_EXTRAS) feed.shelves.withoutRepeatsOf(existing) else feed.shelves) // fork: YouTube's shelves as sent
+                        .filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) || !com.music.bitchord.data.model.FORK_HOME_UPSTREAM_EXTRAS } // fork: || !extras
                     // A page with nothing new signals the feed has looped back on
                     // itself rather than run dry with a token still attached —
                     // treat it the same as exhausted so scrolling can't spin here.
@@ -1937,7 +1944,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     if (added.isNotEmpty()) _home.value = UiState.Success(existing + added)
                 }
             }
-            if (identity == listenerKey()) _homeLoadingMore.value = false
+            if (isCurrentHomeLoad(identity, forkGeneration)) _homeLoadingMore.value = false // fork: was identity == listenerKey()
         }
     }
 
@@ -2702,8 +2709,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 R.string.smb_empty,
                 com.music.bitchord.data.smb.SmbRepository::getSongs,
             )
-        com.music.bitchord.data.navidrome.NavidromeSettings.BROWSE_ID -> // fork
-            RemoteLibrary(R.string.navidrome_empty, com.music.bitchord.data.navidrome.NavidromeRepository::getSongsExplained)
+        com.music.bitchord.data.navidrome.NavidromeSettings.BROWSE_ID -> RemoteLibrary(R.string.navidrome_empty, com.music.bitchord.data.navidrome.NavidromeRepository::getSongsExplained) // fork
         else -> null
     }
 
@@ -3599,6 +3605,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun reloadForAccount() {
         viewModelScope.launch {
             Innertube.ensureSessionScope()
+            com.music.bitchord.data.model.ForkHomeChips.reset() // fork: the old account's chip pick goes
             loadHome()
             loadLibrary()
             loadAccount()
@@ -3639,6 +3646,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _playlistOwned.value = emptyMap()
         ownershipInFlight.clear()
         _songMenu.value = null
+        com.music.bitchord.data.model.ForkHomeChips.reset() // fork: the old account's chip pick goes
         loadHome()
     }
 

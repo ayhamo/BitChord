@@ -880,6 +880,7 @@ private fun SourceRow(
                     )
                 }
             }
+            ForkAddonUserAgentLine(config) // fork: per-addon User-Agent
             Text(
                 // The ceiling outranks the health line: a source that isn't
                 // going to be asked at all is not usefully described by

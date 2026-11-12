@@ -1113,6 +1113,7 @@ class CrossfadeController(
             fadeSeconds = fallbackSeconds,
             mode = CrossfadeMode.SMART,
             advanced = advanced,
+            forkStyle = com.music.bitchord.fork.ForkSettings.automixStyle.value, // fork: Automix style (ForkAutoDj)
         )
         // One line per distinct verdict rather than one per 250ms tick, so the
         // log says what the planner decided for this pair without burying it.
@@ -2440,6 +2441,7 @@ class CrossfadeController(
                 )
             }
             lyricSpans[id] = LyricSpans(spans)
+            com.music.bitchord.playback.smart.ForkAutoDj.noteSung(id, spans) // fork: Advanced AutoDJ's vocal re-route reads lyrics first
         }
     }
 
@@ -3133,6 +3135,8 @@ class CrossfadeController(
                 filters.incomingEcho(delaySeconds, send, dry)
             }
         }
+
+        override fun forkShelves(incoming: Boolean, lowDb: Float, highDb: Float) { if (if (incoming) aimIncoming else aimOutgoing) filters.forkShelves(incoming == handedOff, lowDb, highDb) } // fork: by track, as incoming()/outgoing()
     }
 
     /**
@@ -3183,6 +3187,7 @@ class CrossfadeController(
      * locked: a pause parks the filter exactly where it parks the fade.
      */
     private fun rideStyle(progress: Float) {
+        planInFlight?.forkAutoDj?.let { ForkAutoDjRide.ride(it, progress, tracks); return } // fork: Original / Advanced AutoDJ (ForkAutoDjRide)
         when (render.style) {
             TransitionStyle.DJ_FILTER -> when (render.filterVariant) {
                 FilterTransitionVariant.BASS_HANDOFF -> rideFallbackBassHandoff(progress)
@@ -3525,6 +3530,7 @@ class CrossfadeController(
      * [headroomFor] keeps two faders at full from summing past full scale.
      */
     private fun mixRise(progress: Float): Float {
+        planInFlight?.forkAutoDj?.let { return ForkAutoDjRide.rise(it, progress) } // fork
         if (!render.advanced) return riseGain(progress)
         val styled = when (render.style) {
             TransitionStyle.DJ_BLEND ->
@@ -3546,6 +3552,7 @@ class CrossfadeController(
      * low-pass is already taking it away.
      */
     private fun mixFall(progress: Float): Float {
+        planInFlight?.forkAutoDj?.let { return ForkAutoDjRide.fall(it, progress) } // fork
         if (!render.advanced) return fallGain(progress)
         // The fader carries the repeats too, so an echo out leaves it up and
         // fades the dry signal in the chain instead — see [rideEchoOut].
@@ -3731,10 +3738,11 @@ class CrossfadeController(
             analysis.bpm > 0.0 -> 60.0 / analysis.bpm
             else -> 0.0
         }
-        val steps = rampStepsFor(rate)
+        val forkGlide = com.music.bitchord.playback.smart.ForkAutoDj.glide(planInFlight) // fork: an AutoDJ blend glides back in 8 steps over 24 s
+        val steps = forkGlide?.first ?: rampStepsFor(rate) // fork: forkGlide?.first ?:
         easeStep = stretch / steps
         easeRate = rate
-        easeStepMs = if (beat > 0.0) (beat * 1000).roundToLong() else EASE_FALLBACK_STEP_MS
+        easeStepMs = forkGlide?.let { (it.second * 1000).roundToLong() } ?: if (beat > 0.0) (beat * 1000).roundToLong() else EASE_FALLBACK_STEP_MS // fork: forkGlide?.let … ?:
         easeItemIndex = player.currentMediaItemIndex
         easeNextAtMs = player.currentPosition + easeStepMs
         easing = player

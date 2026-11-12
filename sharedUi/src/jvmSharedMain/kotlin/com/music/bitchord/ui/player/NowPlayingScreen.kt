@@ -1382,10 +1382,7 @@ fun NowPlayingScreen(
         }
     }
     val fullBleedArt by PlayerSettings.fullBleedArtwork.collectAsStateWithLifecycle()
-    val forkClipPlays = forkPlaysOn(isPlaying, isLoading) // fork: a stall is not a pause
-    ForkLiveClock.Follow(song, position) // fork: a station's time under the seek bar
-    val forkArtAwake = rememberForkArtAwake(forkClipPlays, hasClip = canvas != null) // fork
-    SideEffect { ForkCanvasSwitch.bigArtFits.value = forkBigArtFits(playerFillsWindow(windowWidth), windowWidth, windowHeight) } // fork: for the PC menu's row (after a commit, not mid-composition)
+    val (forkClipPlays, forkArtAwake) = forkPlayerState(isPlaying, isLoading, song, position, canvas != null, playerFillsWindow(windowWidth), windowWidth, windowHeight) // fork: a stall is not a pause, a station's clock, the big art's pause, the PC menu's row (ForkSleeveClip.kt)
     // Full-bleed is a phone idiom. What the width has to rule out is a player
     // running a foot wider than the column of controls under it — edge to edge
     // meaning "a picture, and separately some controls" rather than "the

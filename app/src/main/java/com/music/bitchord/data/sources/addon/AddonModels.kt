@@ -80,6 +80,7 @@ data class AddonManifest(
      * later. Read through [requiresBitChordAuth].
      */
     @SerialName("bitchordAuth") val bitchordAuth: JsonElement? = null,
+    @SerialName("limits") val forkLimits: JsonElement? = null, // fork: an addon's own request limits (ForkAddonLimitsPhone)
 ) {
     val requiresBitChordAuth: Boolean get() = bitchordAuth.asFlag() ?: false
 
@@ -208,6 +209,11 @@ data class AddonTrack(
      * saved on the path that has to finish before audio starts.
      */
     @SerialName("streamURL") val streamURL: String? = null,
+    // fork: what says a row is cached on a debrid-backed addon (NullBeat's infotext), read as JSON (ForkAddonLimitsPhone)
+    @SerialName("infotext") val forkInfotext: JsonElement? = null,
+    @SerialName("infoText") val forkInfoText: JsonElement? = null,
+    @SerialName("cached") val forkCached: JsonElement? = null,
+    @SerialName("isCached") val forkIsCached: JsonElement? = null,
 ) {
     val durationSec: Int? get() = duration?.takeIf { it > 0 }?.toInt()
 

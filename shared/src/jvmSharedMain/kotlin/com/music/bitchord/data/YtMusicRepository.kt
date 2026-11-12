@@ -80,9 +80,9 @@ object YtMusicRepository {
      * shelves the same way the official app does as you scroll; signed out
      * it's empty and there's nothing more to fetch.
      */
-    suspend fun home(): Result<HomeFeed> = call("home") {
-        val home = Innertube.browse("FEmusic_home")
-        HomeFeed(InnertubeParser.parseHome(home), InnertubeParser.continuationToken(home))
+    suspend fun home(params: String? = null): Result<HomeFeed> = call("home") { // fork: + params, a mood chip's Home
+        val home = Innertube.browse("FEmusic_home", params) // fork: + params
+        com.music.bitchord.data.innertube.ForkHomeFeedParser.parse(home) // fork: YouTube Music's Home 1:1; was HomeFeed(InnertubeParser.parseHome(home), InnertubeParser.continuationToken(home))
     }
 
     /** Recently played is rendered independently, at the top of the Play page. */
@@ -106,10 +106,7 @@ object YtMusicRepository {
      */
     suspend fun moreHome(token: String): Result<HomeFeed> = call("home:more") {
         val response = Innertube.browseContinuation(token)
-        HomeFeed(
-            shelves = InnertubeParser.parseHomeContinuation(response),
-            continuation = InnertubeParser.continuationToken(response),
-        )
+        com.music.bitchord.data.innertube.ForkHomeFeedParser.parseContinuation(response) // fork: was HomeFeed(parseHomeContinuation(response), continuationToken(response))
     }
 
     /**

@@ -37,6 +37,13 @@ import kotlinx.coroutines.withContext
  * the block, so padded silent channels don't read as quieter music.
  *
  * Applies from the next song: a playing deck's decoder keeps the layout it opened with.
+ *
+ * Spatial Sound (owner 2026-11-11): while a spatial renderer is on for the output (Dolby Atmos for
+ * Headphones, Windows Sonic, DTS), the endpoint's mix format stays stereo and a plain 7.1 stream's
+ * fate is undocumented. So the line goes through Microsoft's documented route instead, a 7.1 static
+ * bed on ISpatialAudioClient (`fork_spatial_audio.h`, the shape OpenAL Soft's "spatial-api" uses),
+ * at the renderer's object rate (48 kHz) with the engine converting each deck to it. If Windows
+ * refuses it, the plain WASAPI layout above is tried, then the stereo fold.
  */
 internal object ForkMultichannel {
     const val KEY = "fork_multichannel_output"
@@ -55,6 +62,15 @@ internal object ForkMultichannel {
     var lastMix: Pair<Int, Long>? = null
         private set
 
+    /** The Spatial Sound object rate for the chosen output as last read; 0 while spatial sound is off there. */
+    @Volatile
+    var lastSpatialRate: Int = 0
+        private set
+
+    /** The output selection Spatial Sound was refused on, and why; see [spatialRefused]. */
+    @Volatile
+    private var spatialRefusal: Pair<String, String>? = null
+
     /** The output selection a multichannel open was refused on, and why; see [refused]. */
     @Volatile
     private var refusal: Pair<String, String>? = null
@@ -65,6 +81,7 @@ internal object ForkMultichannel {
     fun setEnabled(on: Boolean) {
         runCatching { persistence.saveBoolean(KEY, on) }
         refusal = null // switching it again is the way to try a refused device once more
+        spatialRefusal = null
         enabled.value = on
     }
 
@@ -76,6 +93,13 @@ internal object ForkMultichannel {
     fun refused(device: String, why: String) {
         refusal = device to why
         DesktopTrackLog.log("multichannel output refused, folding to stereo: $why")
+        layout.value = decide(enabled.value, probe = false)
+    }
+
+    /** Spatial Sound could not open on [device]; the sink goes on to the plain WASAPI layout. */
+    fun spatialRefused(device: String, why: String) {
+        spatialRefusal = device to why
+        DesktopTrackLog.log("spatial sound refused, trying plain WASAPI: $why")
         layout.value = decide(enabled.value, probe = false)
     }
 
@@ -102,12 +126,16 @@ internal object ForkMultichannel {
     private fun decide(on: Boolean, probe: Boolean): ForkOutputLayout {
         val device = DesktopAudioDevices.selected.value
         val wasapi = DesktopPlatform.isWindows && ForkWindowsAudioLayout.available
-        if (probe && wasapi) lastMix = ForkWindowsAudioLayout.mixFormat(device)
+        if (probe && wasapi) {
+            lastMix = ForkWindowsAudioLayout.mixFormat(device)
+            lastSpatialRate = ForkWindowsAudioLayout.spatialRate(device)
+        }
         return ForkChannelLayout.decide(
             enabled = on,
             wasapi = wasapi,
             mix = lastMix,
             refusal = refusal?.takeIf { it.first == device }?.second,
+            spatialRate = if (spatialRefusal?.first == device) 0 else lastSpatialRate,
         )
     }
 }
@@ -117,6 +145,8 @@ internal data class ForkOutputLayout(
     val channels: Int,
     val mask: Long,
     val reason: String,
+    /** The Spatial Sound object rate the line opens at, 0 for a plain WASAPI line. */
+    val spatialRate: Int = 0,
 ) {
     val active: Boolean get() = channels > 2
 }
@@ -172,9 +202,11 @@ internal object ForkChannelLayout {
 
     /**
      * The setting's whole decision. [mix] is Windows' mix format for the output (channels, mask);
-     * [refusal] a multichannel open already refused there. Stereo unless every condition holds.
+     * [refusal] a multichannel open already refused there; [spatialRate] the Spatial Sound object
+     * rate while a spatial renderer is on there (0 otherwise, or once Spatial Sound was refused).
+     * Stereo unless every condition holds.
      */
-    fun decide(enabled: Boolean, wasapi: Boolean, mix: Pair<Int, Long>?, refusal: String?): ForkOutputLayout {
+    fun decide(enabled: Boolean, wasapi: Boolean, mix: Pair<Int, Long>?, refusal: String?, spatialRate: Int = 0): ForkOutputLayout {
         fun stereo(reason: String) = ForkOutputLayout(2, 0L, reason)
         val takes = mix?.let { (channels, mask) -> name(channels, mask) }
         if (!enabled) {
@@ -185,6 +217,14 @@ internal object ForkChannelLayout {
         }
         if (!wasapi) return stereo("Folding to stereo: this needs the Windows (WASAPI) output, which isn't available")
         if (refusal != null) return stereo("Folding to stereo: Windows refused the multichannel stream ($refusal). Switch off and on to try again")
+        if (spatialRate > 0) {
+            return ForkOutputLayout(
+                8,
+                SURROUND_7_1,
+                "Sending 7.1 to Windows Spatial Sound (Dolby Atmos for Headphones, Windows Sonic) as its speaker bed. Stereo songs play on the front left and right",
+                spatialRate,
+            )
+        }
         val (channels, rawMask) = mix ?: return stereo("Folding to stereo: Windows didn't say what this output takes")
         if (channels <= 2) {
             return stereo(
@@ -401,6 +441,47 @@ internal object ForkWindowsAudioLayout {
         }
     }
 
+    /**
+     * Opens the best line for a multichannel [format]: the Spatial Sound bed when the decision
+     * chose it, else (or when Windows refuses it) the plain WASAPI layout. The format returned is
+     * [format] at the rate the line runs at.
+     */
+    fun openBest(device: String, format: DesktopPcmFormat): Result<ForkOpenedLine> {
+        if ((ForkMultichannel.layout.value?.spatialRate ?: 0) > 0) {
+            val spatial = openSpatial(device, format)
+            if (spatial.isSuccess) return spatial
+            ForkMultichannel.spatialRefused(device, spatial.exceptionOrNull()?.message ?: "no reason given")
+        }
+        return open(device, format).map { ForkOpenedLine(it, format, spatial = false) }
+    }
+
+    fun openSpatial(device: String, format: DesktopPcmFormat): Result<ForkOpenedLine> = runCatching {
+        check(available) { "native Windows audio is unavailable" }
+        val opened = try {
+            nativeOpenSpatial(device, format.channels, ForkChannelLayout.maskOf(format))
+        } catch (missing: UnsatisfiedLinkError) {
+            error("this build's audio library has no Spatial Sound output")
+        }
+        check(opened.size == 2 && opened[0] > 0 && opened[1] > 0) {
+            DesktopWindowsAudio.forkLastError().ifBlank { "Windows Spatial Sound could not open" }
+        }
+        ForkOpenedLine(opened[0], format.copy(sampleRate = opened[1]), spatial = true)
+    }
+
+    /** The Spatial Sound object rate for [device] while a spatial renderer is on there; 0 otherwise. */
+    fun spatialRate(device: String): Int {
+        if (!available) return 0
+        return try {
+            nativeSpatialRate(device).coerceAtLeast(0)
+        } catch (_: Throwable) {
+            0
+        }
+    }
+
+    @JvmStatic private external fun nativeOpenSpatial(device: String, channels: Int, channelMask: Long): IntArray
+
+    @JvmStatic private external fun nativeSpatialRate(device: String): Int
+
     @JvmStatic private external fun nativeOpenLayout(
         device: String,
         sampleRate: Int,
@@ -412,6 +493,9 @@ internal object ForkWindowsAudioLayout {
 
     @JvmStatic private external fun nativeMixFormat(device: String): LongArray
 }
+
+/** A Windows line the sink opened: its buffer in bytes, the format it runs at, and whether it is the Spatial Sound bed. */
+internal data class ForkOpenedLine(val bytes: Int, val format: DesktopPcmFormat, val spatial: Boolean)
 
 /**
  * Settings > Audio output, under Output device: the switch, with what it does right now as its

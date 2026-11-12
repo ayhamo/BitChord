@@ -4,6 +4,9 @@ import com.music.bitchord.download.DownloadState
 import com.music.bitchord.download.DownloadStore
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.download.SavedCollection
+import com.music.bitchord.download.forkFreeName
+import com.music.bitchord.download.forkTakeUtf8
+import com.music.bitchord.download.inFlightOnlyIn
 import com.music.bitchord.fork.OfflineServiceStep
 import com.music.bitchord.fork.offlineServiceStep
 import org.junit.Assert.assertEquals

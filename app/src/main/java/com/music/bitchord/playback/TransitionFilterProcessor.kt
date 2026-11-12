@@ -27,6 +27,8 @@ import kotlin.math.tan
 @UnstableApi
 class TransitionFilterProcessor : BaseAudioProcessor() {
 
+    val forkShelf = ForkMixShelf() // fork: Original AutoDJ's low and high shelves (ForkAutoDjCurves)
+
     @Volatile
     private var targetLowPassHz: Float = OPEN_HZ
 
@@ -194,6 +196,7 @@ class TransitionFilterProcessor : BaseAudioProcessor() {
         val frameCount = block.frameCount
         if (frameCount == 0 || channelCount < 1 || sampleRate <= 0) return
         filter(block, frameCount)
+        forkShelf.process(block.samples, frameCount * channelCount, channelCount, sampleRate) // fork: passes the block untouched while flat
         if (echoEngaged) echo(block, frameCount)
     }
 
@@ -257,6 +260,7 @@ class TransitionFilterProcessor : BaseAudioProcessor() {
         currentHighPassHz = targetHighPassHz
         // Whatever the ring holds is from before the seek; start it clean.
         echoSeenGeneration = echoGeneration - 1
+        forkShelf.flush() // fork: the shelves' history too (ForkMixShelf)
     }
 
     override fun onReset() {
@@ -268,6 +272,7 @@ class TransitionFilterProcessor : BaseAudioProcessor() {
         highState = FloatArray(0)
         channelCount = 0
         sampleRate = 0
+        forkShelf.reset() // fork: flat, like the cuts above
     }
 
     override fun queueInput(inputBuffer: java.nio.ByteBuffer) {
@@ -285,6 +290,7 @@ class TransitionFilterProcessor : BaseAudioProcessor() {
             clearStateIfNeeded()
             outputBuffer.put(inputBuffer)
             outputBuffer.flip()
+            forkShelf.process16(outputBuffer, channelCount, sampleRate) // fork: the shelves on the 16-bit path too
             return
         }
         filterStateDirty = true
@@ -314,6 +320,7 @@ class TransitionFilterProcessor : BaseAudioProcessor() {
             remaining -= subBlock
         }
         outputBuffer.flip()
+        forkShelf.process16(outputBuffer, channelCount, sampleRate) // fork
     }
 
     /**
@@ -570,10 +577,13 @@ interface TransitionFilters {
     /** Drops any echo on either sink. Called whenever a transition ends, however it ended. */
     fun parkEchoes() = Unit
 
+    fun forkShelves(incoming: Boolean, lowDb: Float, highDb: Float) = Unit // fork: each sink's ForkMixShelf, by session role as incoming()/outgoing()
+
     /** Parks both. Called whenever a transition ends, however it ended. */
     fun open() {
         incoming(TransitionFilterProcessor.OPEN_HZ, TransitionFilterProcessor.OFF_HZ)
         outgoing(TransitionFilterProcessor.OPEN_HZ, TransitionFilterProcessor.OFF_HZ)
+        forkShelves(true, 0f, 0f); forkShelves(false, 0f, 0f) // fork
     }
 
     /** For callers with no audio sink to filter — tests, and the default wiring. */

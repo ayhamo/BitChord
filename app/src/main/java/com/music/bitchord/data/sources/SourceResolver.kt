@@ -1323,7 +1323,10 @@ object SourceResolver {
         checkFileLength: Boolean = false,
     ): SourceStream? {
         val wantsLossless = request is StreamRequest.Lossless
-        val ordered = preferred(matches, target, wantsLossless, sameLengthSec)
+        val ordered = com.music.bitchord.data.sources.addon.ForkAddonLimitsPhone.cachedFirst( // fork: cached rows first within a tier
+            source,
+            preferred(matches, target, wantsLossless, sameLengthSec),
+        )
         var settleFor: SourceStream? = null
         var best: SourceStream? = null
         for (match in ordered.take(STREAM_ATTEMPTS)) {

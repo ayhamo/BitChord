@@ -72,7 +72,7 @@ internal object SpotifyToken {
         cachedClientId = null
         cachedClientToken = null
         clientTokenExpiresAtMs = 0L
-        forkHarvestRetryAfterMs = 0L // fork: a new sign-in is harvested at once
+        forkHarvest.clear() // fork: a new sign-in is harvested at once
         forkClientTokenBackoff.clear() // fork: and its client token minted at once
         ForkCanvasLookup.clearNotes() // fork: songs held back by the old sign-in's backoff are asked again
     }
@@ -105,11 +105,11 @@ internal object SpotifyToken {
                 return@withLock ForkCanvasLookup.failed("Spotify: no context for the token harvest") // fork: was null
             }
 
-            if (forkHarvestBackingOff(cookie, stillNow)) return@withLock forkSignedToken(cookie) // fork: no 20 s harvest again within 5 min of a failed one
+            if (forkHarvest.backingOff(cookie, stillNow)) return@withLock forkSignedToken(cookie) // fork: no 20 s harvest again within 5 min of a failed one
             val harvested = withContext(Dispatchers.Main) { harvestViaWebView(context, cookie) }
             if (harvested == null) {
                 Log.w(TAG, "token harvest failed or timed out")
-                forkHarvestFailed(cookie) // fork
+                forkHarvest.failed(cookie) // fork
                 return@withLock forkSignedToken(cookie) // fork: the signed route when the page gives none; was null
             }
 
@@ -132,7 +132,7 @@ internal object SpotifyToken {
         val signed = withContext(Dispatchers.IO) { ForkSpotifyTotpToken.mint(cookie) }
             ?: return ForkCanvasLookup.coolingDown( // both routes back off; the harvest's ends first
                 "Spotify: no token (page harvest and signed request both failed)",
-                if (forkHarvestBackingOff(cookie, System.currentTimeMillis())) forkHarvestRetryAfterMs else 0L,
+                forkHarvest.retryAt(cookie),
             )
         cachedAccessToken = signed.accessToken
         accessTokenExpiresAtMs = signed.expiresAtMs
@@ -141,27 +141,8 @@ internal object SpotifyToken {
         return signed.accessToken
     }
 
-    /**
-     * Fork: the harvest's backoff. Upstream re-ran the 20 s WebView harvest on every lookup that
-     * found no live token, so a sign-in that can't mint (no network, the page changed) loaded the
-     * whole web player again for every song, and a song the lookup left un-cached as failed
-     * (ForkCanvasLookup) did so on each replay. A failed harvest now waits [FORK_HARVEST_BACKOFF_MS]
-     * (the signed route is still tried, on its own 10 min backoff); keyed to the cookie and cleared
-     * by [invalidate], so a new sign-in is harvested at once. A harvest cut short by the lookup
-     * being cancelled (a skip) is not a failure.
-     */
-    private const val FORK_HARVEST_BACKOFF_MS = 5L * 60 * 1000
-    @Volatile private var forkHarvestFailedFor = 0
-    @Volatile private var forkHarvestRetryAfterMs = 0L
-
-    private fun forkHarvestBackingOff(cookie: String, now: Long): Boolean =
-        forkHarvestFailedFor == cookie.hashCode() && now < forkHarvestRetryAfterMs
-
-    private suspend fun forkHarvestFailed(cookie: String) {
-        if (kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]?.isActive == false) return
-        forkHarvestFailedFor = cookie.hashCode()
-        forkHarvestRetryAfterMs = System.currentTimeMillis() + FORK_HARVEST_BACKOFF_MS
-    }
+    /** Fork: the harvest's 5 min backoff after a failed one, see [ForkSpotifyHarvestBackoff]. */
+    private val forkHarvest = ForkSpotifyHarvestBackoff()
 
     /**
      * Spotify retired the endpoint this used to hit directly with a signed

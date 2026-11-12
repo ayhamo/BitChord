@@ -61,6 +61,32 @@ object NavidromeArtistInfo {
         else -> emptyList()
     }
 
+    private val CREDIT_SEPARATORS = Regex("""\s*(?:,|&|;|\+|\s(?:feat\.?|ft\.?|featuring|with|x|vs\.?)\s)\s*""", RegexOption.IGNORE_CASE)
+
+    /** The names in a credit like "Metro Boomin, The Weeknd & 21 Savage", trimmed; one name for a plain artist. */
+    fun creditParts(credit: String): List<String> =
+        credit.split(CREDIT_SEPARATORS).map { it.trim() }.filter { it.isNotEmpty() }
+
+    /** Whether the credit [credit] names [artist] among several (ignoring case), and isn't [artist] alone. */
+    fun credits(credit: String, artist: String): Boolean {
+        val parts = creditParts(credit)
+        return parts.size > 1 && parts.any { it.equals(artist, ignoreCase = true) }
+    }
+
+    /**
+     * The first credited artist of a collaboration credit, or null for one artist. A credit counts as a
+     * collaboration only when at least two of its names are artists the server's songs credit on their
+     * own ([known]), so a band named with "&" or "," ("Simon & Garfunkel", "Earth, Wind & Fire") stays one.
+     */
+    fun collabLead(credit: String, known: (String) -> Boolean = ::isKnown): String? {
+        val parts = creditParts(credit)
+        if (parts.size < 2) return null
+        return parts.first().takeIf { parts.count(known) >= 2 }
+    }
+
+    /** Whether an artist of exactly that name has been seen in the server's songs or artist lists this session. */
+    fun isKnown(name: String): Boolean = ids.containsKey(name) || ids.keys.any { it.equals(name, ignoreCase = true) }
+
     /** The search hit that is [name] itself: exactly, else ignoring case; never a near match. */
     fun pick(name: String, hits: List<NavidromeClient.ArtistRow>): NavidromeClient.ArtistRow? =
         hits.firstOrNull { it.name == name } ?: hits.firstOrNull { it.name.equals(name, ignoreCase = true) }
@@ -120,9 +146,14 @@ object NavidromeArtistInfo {
         return items.takeIf { it.isNotEmpty() }?.let { HomeShelf(SIMILAR_TITLE, it) }
     }
 
-    /** One card per similar artist (never [name] itself, each once), opening its Navidrome page, with its server picture. */
+    /**
+     * One card per similar artist (never [name] itself, each once), opening its Navidrome page, with its server picture.
+     * A credit that includes [name] ("The Weeknd & Future" on The Weeknd's page) is left out: Navidrome files each
+     * collaboration as an artist of its own and its similarity agent ranks them first, so the row was mostly the
+     * page's own artist again (seen 2026-11-11: five of six cards).
+     */
     fun shelfItems(name: String, rows: List<NavidromeClient.ArtistRow>, cover: (String) -> String): List<ShelfItem> =
-        rows.filter { it.name != name }.distinctBy { it.name }.map { row ->
+        rows.filter { it.name != name && !credits(it.name, name) }.distinctBy { it.name }.map { row ->
             ShelfItem(
                 title = row.name,
                 subtitle = "",

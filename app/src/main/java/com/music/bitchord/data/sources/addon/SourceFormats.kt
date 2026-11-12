@@ -95,7 +95,7 @@ object SourceFormats {
         var firstUnsupported: DetectedFormat.Unsupported? = null
 
         for (attempt in attempts) {
-            val body = fetch(attempt).getOrElse { failure ->
+            val body = com.music.bitchord.data.ForkAddonUserAgents.retryingRefused(attempt, ForkAddonUserAgent) { fetch(attempt) }.getOrElse { failure -> // fork: a 403 tried once as a browser (ForkAddonUserAgent)
                 lastFailure = failure
                 continue
             }
@@ -210,7 +210,7 @@ object SourceFormats {
     private suspend fun fetch(url: String): Result<String> = runCatching {
         val request = Request.Builder().url(url)
             .header("Accept", "application/json")
-            .header("User-Agent", "BitChord/v${com.music.bitchord.BuildConfig.VERSION_NAME}")
+            .header("User-Agent", ForkAddonUserAgent.agent(url, "BitChord/v${com.music.bitchord.BuildConfig.VERSION_NAME}")) // fork: per-addon agent (ForkAddonUserAgent)
             .build()
         Http.client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {

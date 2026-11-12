@@ -2547,8 +2547,8 @@ fun BitChordDesktopApp() {
             homeState = UiState.Success(shelves + existing.filterNot { it.title.lowercase() in replacing })
             return
         }
-        val added = shelves.withoutRepeatsOf(existing)
-            .filter { it.items.isNotEmpty() && homeSeenTitles.add(it.title.lowercase()) }
+        val added = (if (com.music.bitchord.data.model.FORK_HOME_UPSTREAM_EXTRAS) shelves.withoutRepeatsOf(existing) else shelves) // fork: YouTube's shelves as sent
+            .filter { it.items.isNotEmpty() && (homeSeenTitles.add(it.title.lowercase()) || !com.music.bitchord.data.model.FORK_HOME_UPSTREAM_EXTRAS) } // fork: || !extras
         if (added.isNotEmpty()) homeState = UiState.Success(existing + added)
     }
 
@@ -2559,7 +2559,8 @@ fun BitChordDesktopApp() {
      */
     // fork: Home's Top Picks row, built from the first page once it lands; nothing within the hour (ForkTopPicks)
     fun forkLoadTopPicks() {
-        if (youtubeSourceEnabled) ForkTopPicks.load(scope, homeIdentity) { (withTimeoutOrNull(8_000L) { snapshotFlow { homeState }.first { it !is UiState.Loading } } as? UiState.Success)?.data.orEmpty() }
+        if (com.music.bitchord.data.model.ForkHomeChips.selected.value != null) return // a chip's Home shows no Top Picks; built after deselect
+        if (youtubeSourceEnabled) ForkTopPicks.load(scope, homeIdentity) { (withTimeoutOrNull(8_000L) { snapshotFlow { homeState }.first { it !is UiState.Loading } } as? UiState.Success)?.data.orEmpty().takeIf { com.music.bitchord.data.model.ForkHomeChips.selected.value == null }.orEmpty() } // never from a chip's Home
     }
 
     fun loadHome() {
@@ -2577,13 +2578,14 @@ fun BitChordDesktopApp() {
         homeContinuation = null
         homeSeenTitles.clear()
         homeLoadingMore = false
-        homeRecentsLoading = signedIn
-        forkLoadTopPicks() // fork: Home's Top Picks row (ForkTopPicks)
+        homeRecentsLoading = signedIn && com.music.bitchord.data.model.FORK_HOME_UPSTREAM_EXTRAS // fork: && extras
+        if (com.music.bitchord.data.model.ForkHomeChips.selected.value == null) forkLoadTopPicks() // fork: Home's Top Picks row (ForkTopPicks); none on a chip's Home
         scope.launch {
             launch {
                 DesktopSearchClient.home().fold(
                     onSuccess = { feed ->
                         if (generation != homeGeneration) return@fold
+                        com.music.bitchord.data.model.ForkHomeChips.publish(feed.chips) // fork
                         homeContinuation = feed.continuation
                         publishHomeShelves(feed.shelves)
                     },
@@ -2595,7 +2597,7 @@ fun BitChordDesktopApp() {
                     },
                 )
             }
-            if (signedIn) {
+            if (signedIn && com.music.bitchord.data.model.FORK_HOME_UPSTREAM_EXTRAS) { // fork: && extras
                 launch {
                     YtMusicRepository.homeRecentlyPlayed()
                         .onSuccess { shelf ->
@@ -2606,7 +2608,7 @@ fun BitChordDesktopApp() {
                         .onFailure { if (generation == homeGeneration) homeRecentsLoading = false }
                 }
             }
-            DesktopSearchClient.HOME_SUPPLEMENT_BROWSE_IDS.forEach { browseId ->
+            DesktopSearchClient.HOME_SUPPLEMENT_BROWSE_IDS.filter { com.music.bitchord.data.model.FORK_HOME_UPSTREAM_EXTRAS }.forEach { browseId -> // fork: filter, no supplements
                 launch {
                     DesktopSearchClient.homeSupplement(browseId).onSuccess { shelves ->
                         if (generation == homeGeneration) publishHomeShelves(shelves)
@@ -2629,11 +2631,11 @@ fun BitChordDesktopApp() {
                     val before = homeSeenTitles.size
                     publishHomeShelves(feed.shelves)
                     // A page with nothing new is the feed looping back on itself, not running dry.
-                    homeContinuation = feed.continuation.takeIf { homeSeenTitles.size > before }
+                    homeContinuation = feed.continuation.takeIf { if (com.music.bitchord.data.model.FORK_HOME_UPSTREAM_EXTRAS) homeSeenTitles.size > before else feed.shelves.isNotEmpty() } // fork: was homeSeenTitles.size > before
                 },
-                onFailure = { homeContinuation = null },
+                onFailure = { if (generation == homeGeneration) homeContinuation = null }, // fork: was homeContinuation = null (a chip's Home kept paging)
             )
-            homeLoadingMore = false
+            if (generation == homeGeneration) homeLoadingMore = false // fork: was unconditional (a chip's first page then went twice)
         }
     }
 
@@ -2732,7 +2734,10 @@ fun BitChordDesktopApp() {
     LaunchedEffect(Unit) { ForkNavidromeSettings.homeShelves.drop(1).collect { loadHome() } } // fork: "Navidrome on Home"
     LaunchedEffect(youtubeSignedIn, activeAccountId) {
         val identity = "${DesktopYouTubeAuth.isSignedIn}/${DesktopAccounts.activeAccountId()}"
-        if (homeIdentity != null && identity != homeIdentity) loadHome()
+        if (homeIdentity != null && identity != homeIdentity) {
+            com.music.bitchord.data.model.ForkHomeChips.reset() // fork: the old account's chip pick goes
+            loadHome()
+        } // fork: was loadHome() alone
     }
 
     // The mark on a downloaded row, for the shared pages.
@@ -4284,6 +4289,7 @@ fun BitChordDesktopApp() {
                                 if (more != null && shelf.forkMoreOpensPage()) openShelfItem(ShelfItem(shelf.title, "", null, null, more))
                                 else { forkShelfMore = shelf }
                             },
+                            forkFeed = remember { ForkDesktopHomeFeed.actions(reload = { loadHome(); scope.launch { homeListState.scrollToItem(0) } }, explore = { selectDestination(DesktopDestination.EXPLORE) }, openMore = { forkShelfMore = it }, play = { shelf -> shelf.items.filter { it.videoId != null }.map { it.toSong() }.takeIf { it.isNotEmpty() }?.let { playSongs(it, 0, DesktopQueueSource(shelf.title, PlaybackSourceType.HOME)) } ?: shelf.fork?.playAll?.playlistId?.let { openShelfItem(ShelfItem(shelf.title, "", null, null, "VL" + it.removePrefix("VL"))) } }, open = { id, title -> openShelfItem(ShelfItem(title, "", null, null, id)) }) }, // fork: chips, Explore buttons, Play all (ForkDesktopHomeFeed.kt)
                         ) } } // fork
                         destination == DesktopDestination.EXPLORE && selectedMoodGenre != null -> Column(Modifier.fillMaxSize()) {
                             ForkScrollbarBox(moodGenreListState, Modifier.weight(1f), sharedPagePadding) { MoodGenrePlaylistsScreen( // fork: the overlay scrollbar
@@ -6294,6 +6300,7 @@ private fun DesktopSettingsScreen(
                                 )
                             }
                         }
+                        ForkAutomixStyleSetting() // fork: Automix style (ForkDesktopAutoDj)
                     }
                     if (settingsRowVisible(DesktopStrings["automix_performance", "Automix performance"], DesktopStrings["automix_performance_subtitle", "Sets how much CPU background analysis may use"])) {
                         Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
@@ -6842,6 +6849,7 @@ private fun DesktopSettingsScreen(
                             } else null,
                         )
                         ForkAddonQualityRow(config, skippedByQuality = config.enabled && !audioQuality.permits(config.kind)) // fork: v1.9.1's addon quality picker (ForkAddonQuality)
+                        ForkAddonUserAgentRow(config) // fork: per-addon User-Agent (ForkDesktopAddonUserAgent)
                     }
                     // One entry point, and it creates an addon.
                     SettingsRow(

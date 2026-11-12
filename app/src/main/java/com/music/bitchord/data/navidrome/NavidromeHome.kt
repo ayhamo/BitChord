@@ -187,15 +187,18 @@ object NavidromeHome {
         scope: CoroutineScope,
     ): StateFlow<UiState<List<HomeShelf>>> =
         combine(
-            youtube,
+            combine(youtube, com.music.bitchord.data.model.ForkHomeChips.selected, ::Pair),
             combine(shelves, ForkLibraryPlaylists.offline, ::Pair),
             com.music.bitchord.fork.ForkSettings.navidromeHomeShelves,
             com.music.bitchord.fork.ForkNetwork.offline,
             com.music.bitchord.fork.ForkSpotifyMixes.mixes,
-        ) { feed, (server, kept), shown, offline, _ ->
+        ) { (feed, chip), (server, kept), shown, offline, _ ->
             // Offline mode: what is kept on the phone, in place of the server's shelves.
-            val navidrome = if (!shown) emptyList() else if (offline) listOfNotNull(kept?.takeIf { it.items.isNotEmpty() }) else server
-            val spotify = if (offline) emptyList() else listOfNotNull(com.music.bitchord.fork.ForkSpotifyMixes.shelf(spotifyTitle))
+            // A YouTube chip's Home is YouTube's alone, as on YouTube Music (ForkHomeFeed.kt).
+            val navidrome = if (!shown || chip != null) emptyList() else if (offline) listOfNotNull(kept?.takeIf { it.items.isNotEmpty() }) else server
+            // Home is YouTube Music's own plus Top Picks, Find Your Mood and the server's rows (owner,
+            // 2026-11-11): the Spotify mixes stay on Explore, no longer after the feed.
+            val spotify = emptyList<HomeShelf>()
             // The server's shelves lead the feed; the Spotify mixes come after its end (Navidrome, YouTube, Spotify).
             // Home's "Navidrome" section is the first this many shelves and "Spotify" the last (ForkHome); none, no sections.
             com.music.bitchord.ui.screens.ForkHome.navidromeShelves.value = navidrome.size

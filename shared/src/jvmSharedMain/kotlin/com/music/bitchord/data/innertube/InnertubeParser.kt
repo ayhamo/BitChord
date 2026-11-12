@@ -280,6 +280,11 @@ object InnertubeParser {
         return out
     }
 
+    // fork: the item readers ForkHomeFeedParser shares (YouTube Music's Home 1:1)
+    internal fun forkTwoRowItem(renderer: JsonObject?): ShelfItem? = parseTwoRowItem(renderer)
+    internal fun forkListSong(renderer: JsonObject?): Song? = parseResponsiveListItem(renderer)
+    internal fun forkArtistRow(renderer: JsonObject?): ShelfItem? = parseArtistRow(renderer)
+
     private fun carouselShelf(carousel: JsonObject): HomeShelf? {
         val header = carousel.o("header").o("musicCarouselShelfBasicHeaderRenderer")
         val title = header.o("title").runs()

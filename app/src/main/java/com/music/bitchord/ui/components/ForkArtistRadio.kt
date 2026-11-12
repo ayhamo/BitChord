@@ -38,6 +38,8 @@ object ForkArtistRadio {
 
     fun start(name: String) {
         val app = context
+        // The server takes a few seconds to answer (AudioMuse, 100 songs): said at once, so the tap isn't taken as lost.
+        app?.let { Toast.makeText(it, it.getString(R.string.fork_starting_artist_radio, name), Toast.LENGTH_SHORT).show() }
         play?.invoke {
             NavidromeArtistInfo.radio(name).fold(
                 onSuccess = { songs ->

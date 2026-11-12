@@ -189,3 +189,30 @@ internal fun rememberForkArtAwake(isPlaying: Boolean, hasClip: Boolean = false):
     }
     return awake || hasClip
 }
+
+/** Fork: [forkPlayerState]'s answer: whether the clips treat the music as playing, and whether the big art stays. */
+internal data class ForkPlayerState(val clipPlays: Boolean, val artAwake: Boolean)
+
+/**
+ * Fork: NowPlayingScreen's per-pass fork state, in one hook line there (was four, in this order):
+ * [forkPlaysOn] (a stall is not a pause), a station's time under the seek bar
+ * ([ForkLiveClock.Follow]), [rememberForkArtAwake], and [ForkCanvasSwitch.bigArtFits] for the PC
+ * menu's row, set in a `SideEffect` (after a commit, not mid-composition).
+ */
+@Composable
+internal fun forkPlayerState(
+    isPlaying: Boolean,
+    isLoading: Boolean,
+    song: Song,
+    position: com.music.bitchord.playback.PlaybackPosition,
+    hasClip: Boolean,
+    phoneWidth: Boolean,
+    windowWidth: Dp,
+    windowHeight: Dp,
+): ForkPlayerState {
+    val clipPlays = forkPlaysOn(isPlaying, isLoading)
+    ForkLiveClock.Follow(song, position)
+    val artAwake = rememberForkArtAwake(clipPlays, hasClip = hasClip)
+    SideEffect { ForkCanvasSwitch.bigArtFits.value = forkBigArtFits(phoneWidth, windowWidth, windowHeight) }
+    return ForkPlayerState(clipPlays, artAwake)
+}

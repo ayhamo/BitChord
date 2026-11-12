@@ -776,6 +776,7 @@ internal class ForkDesktopLoopMix(private val scope: CoroutineScope) {
                 )
             }
             lyricSpans[id] = Spans(spans)
+            com.music.bitchord.playback.smart.ForkAutoDj.noteSung(id, spans) // Advanced AutoDJ reads the same sung lines (Automix style)
         }
     }
 

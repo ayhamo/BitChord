@@ -65,6 +65,20 @@ object ForkSettings {
     /** Only what is on the phone is shown, as with no network; see `ForkNetwork.offline`. */
     val offlineMode: StateFlow<Boolean> = _offlineMode.asStateFlow()
 
+    private val _automixStyle = MutableStateFlow(com.music.bitchord.playback.smart.AutomixStyle.BITCHORD)
+
+    /**
+     * "Automix style": BitChord's own Automix (default) or the YouTube Music extension's Original /
+     * Advanced AutoDJ; the planner reads it each tick (`CrossfadeController` passes it to
+     * `planTransition`), see `ForkAutoDj`.
+     */
+    val automixStyle: StateFlow<com.music.bitchord.playback.smart.AutomixStyle> = _automixStyle.asStateFlow()
+
+    private val _automixKeyAware = MutableStateFlow(false)
+
+    /** "Shorter blend when keys clash" (Advanced AutoDJ only, off by default); mirrored into `ForkAutoDj.keyAware`. */
+    val automixKeyAware: StateFlow<Boolean> = _automixKeyAware.asStateFlow()
+
     /** The clip cache's saved size, read on its own: the cache opens on another thread before [init] runs. */
     fun applySavedClipLimit(context: Context) {
         ForkClipCache.applyLimit(context.getSharedPreferences("bitchord_fork", Context.MODE_PRIVATE).getInt(KEY_CLIP_CACHE_MB, DEFAULT_CLIP_CACHE_MB))
@@ -90,6 +104,9 @@ object ForkSettings {
         _preloadSongs.value = prefs.getInt(KEY_PRELOAD_SONGS, 0)
         _offlineMode.value = prefs.getBoolean(KEY_OFFLINE_MODE, false)
         _coverFade.value = prefs.getBoolean(KEY_COVER_FADE, false)
+        _automixStyle.value = com.music.bitchord.playback.smart.AutomixStyle.fromKey(prefs.getString(KEY_AUTOMIX_STYLE, null))
+        _automixKeyAware.value = prefs.getBoolean(KEY_AUTOMIX_KEY_AWARE, false)
+        com.music.bitchord.playback.smart.ForkAutoDj.keyAware = _automixKeyAware.value
         com.music.bitchord.ui.theme.ForkSystemBars.mode.value = prefs.getString(KEY_SYSTEM_BARS, null)
             ?.let { saved -> com.music.bitchord.ui.theme.ForkSystemBars.Mode.entries.firstOrNull { it.name == saved } }
             ?: com.music.bitchord.ui.theme.ForkSystemBars.Mode.NONE
@@ -160,6 +177,17 @@ object ForkSettings {
     fun setCoverFade(value: Boolean) {
         _coverFade.value = value
         prefs.edit().putBoolean(KEY_COVER_FADE, value).apply()
+    }
+
+    fun setAutomixStyle(value: com.music.bitchord.playback.smart.AutomixStyle) {
+        _automixStyle.value = value
+        prefs.edit().putString(KEY_AUTOMIX_STYLE, value.key).apply()
+    }
+
+    fun setAutomixKeyAware(value: Boolean) {
+        _automixKeyAware.value = value
+        com.music.bitchord.playback.smart.ForkAutoDj.keyAware = value
+        prefs.edit().putBoolean(KEY_AUTOMIX_KEY_AWARE, value).apply()
     }
 
     fun setCrossfadeOnSkip(value: Boolean) {
@@ -248,6 +276,8 @@ object ForkSettings {
     private const val KEY_OFFLINE_MODE = "offline_mode"
     private const val KEY_SYSTEM_BARS = "system_bars"
     private const val KEY_COVER_FADE = "cover_fade"
+    private const val KEY_AUTOMIX_STYLE = "automix_style"
+    private const val KEY_AUTOMIX_KEY_AWARE = "automix_key_aware"
 
     const val DEFAULT_CLIP_CACHE_MB = 150
 

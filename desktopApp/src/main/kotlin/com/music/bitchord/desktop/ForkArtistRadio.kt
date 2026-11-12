@@ -19,6 +19,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
@@ -42,7 +45,13 @@ internal fun ForkArtistRadioButton(browseId: String, onPlay: (List<Song>) -> Uni
     val offline by ForkOffline.offline.collectAsState()
     if (offline) return // the server's songs wouldn't play
     val scope = rememberCoroutineScope()
+    var loading by remember(browseId) { mutableStateOf(false) }
     DesktopCircleButton(Icons.Rounded.Radio, DesktopStrings["start_radio", "Start radio"], onClick = {
+        // The server takes several seconds (AudioMuse, 100 songs; measured ~8 s, 2026-11-11): said at once,
+        // and a second press meanwhile doesn't ask again.
+        if (loading) return@DesktopCircleButton
+        loading = true
+        ForkNotice.show("Starting $name radio…")
         scope.launch {
             NavidromeArtistInfo.radio(name)
                 .onSuccess { songs ->
@@ -50,6 +59,7 @@ internal fun ForkArtistRadioButton(browseId: String, onPlay: (List<Song>) -> Uni
                     DesktopTrackLog.log("radio: ${songs.size} similar songs for the artist '$name'")
                 }
                 .onFailure { ForkNotice.show("Couldn't load tracks") }
+            loading = false
         }
     })
 }

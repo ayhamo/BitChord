@@ -203,6 +203,7 @@ class AnalysisStore(
         val tailBeats: StoredBeats? = null,
         val vocalWindows: List<StoredCurve> = emptyList(),
         val levelWindows: List<StoredCurve> = emptyList(),
+        val forkKeyText: Boolean = false, // fork: saved since the analyser's ♯/♭ reach Kotlin whole (analysis_jni.cpp AppendString)
     ) {
         fun toAnalysis(trackId: String) = TrackAnalysis(
             status = TrackAnalysis.STATUS_READY,
@@ -214,8 +215,8 @@ class AnalysisStore(
             firstBeat = firstBeat,
             downbeats = downbeats,
             phraseBoundaries = phraseBoundaries,
-            key = key,
-            keyConfidence = keyConfidence,
+            key = if (forkKeyText) key else "", // fork: was key; saved before the ♯/♭ fix, unknown rather than wrong
+            keyConfidence = if (forkKeyText) keyConfidence else 0.0, // fork: was keyConfidence
             audibleStartTime = audibleStartTime,
             pickupTime = pickupTime,
             introEndTime = introEndTime,
@@ -246,6 +247,7 @@ class AnalysisStore(
                 phraseBoundaries = analysis.phraseBoundaries.map(::round),
                 key = analysis.key,
                 keyConfidence = analysis.keyConfidence,
+                forkKeyText = true, // fork
                 audibleStartTime = analysis.audibleStartTime,
                 pickupTime = analysis.pickupTime,
                 introEndTime = analysis.introEndTime,

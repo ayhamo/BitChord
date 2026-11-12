@@ -77,9 +77,12 @@ internal object ForkDesktopHome {
         val kept by ForkLibraryPlaylists.offline.collectAsState()
         val shown by ForkNavidromeSettings.homeShelves.collectAsState()
         val offline by ForkOffline.offline.collectAsState()
-        val spotify by mixes.collectAsState()
-        val navidrome = remember(serverShelves, kept, shown, offline) { navidromeShelves(serverShelves, kept, shown, offline) }
-        val tail = remember(spotify, offline) { if (offline) emptyList() else listOfNotNull(spotify) }
+        val chip by com.music.bitchord.data.model.ForkHomeChips.selected.collectAsState()
+        // A YouTube chip's Home is YouTube's alone, as on YouTube Music (ForkHomeFeed.kt).
+        val navidrome = remember(serverShelves, kept, shown, offline, chip) { if (chip != null) emptyList() else navidromeShelves(serverShelves, kept, shown, offline) }
+        // Home is YouTube Music's own plus Top Picks, Find Your Mood and the server's rows (owner,
+        // 2026-11-11): Spotify's mixes stay on Explore, no longer after the feed.
+        val tail = emptyList<HomeShelf>()
         // The sizes also travel in the list (ForkHomeShelves); these are for a Home with no sections.
         SideEffect {
             ForkHome.navidromeShelves.value = navidrome.size

@@ -39,9 +39,15 @@ internal class DesktopAudioSink {
     /** Fork: the channels the device line takes (the fold's two, else [format]'s), for the pipeline panel. */
     val forkLineChannels: Int get() = forkFoldTo?.channels ?: format.channels
 
+    /** Fork (ForkMultichannel): whether the Windows line is the Spatial Sound bed, which runs at its own rate. */
+    @Volatile
+    var forkSpatial = false
+        private set
+
     /** Fork: which API the samples go out through, for the pipeline panel (it always said "javax.sound"). */
     val forkOutputApi: String?
         get() = when {
+            windowsOutput && forkSpatial -> "Windows Spatial Sound (7.1 bed)" // fork
             windowsOutput -> "WASAPI shared"
             line != null -> if (DesktopPlatform.isWindows) "Java Sound (DirectSound)" else "Java Sound"
             else -> null
@@ -60,26 +66,28 @@ internal class DesktopAudioSink {
     fun open(requested: DesktopPcmFormat): Result<DesktopPcmFormat> = runCatching {
         val selectedDevice = DesktopAudioDevices.selected.value
         if (DesktopPlatform.isWindows) {
-            // fork (ForkMultichannel): more than two channels open with their speaker mask (was DesktopWindowsAudio.open for all)
-            val native = if (requested.channels > 2) ForkWindowsAudioLayout.open(selectedDevice, requested) else DesktopWindowsAudio.open(selectedDevice, requested)
+            // fork (ForkMultichannel): more than two channels open on Spatial Sound or with their speaker mask (was DesktopWindowsAudio.open for all)
+            val native = if (requested.channels > 2) ForkWindowsAudioLayout.openBest(selectedDevice, requested) else DesktopWindowsAudio.open(selectedDevice, requested).map { ForkOpenedLine(it, requested, spatial = false) }
             if (native.isSuccess) {
+                val (forkBytes, forkOpened, forkIsSpatial) = native.getOrThrow() // fork
                 val previous = line
                 line = null
                 forkFoldTo = null // fork
+                forkSpatial = forkIsSpatial // fork
                 windowsOutput = true
-                windowsBufferBytes = native.getOrThrow()
+                windowsBufferBytes = forkBytes // fork: was native.getOrThrow()
                 // Read live from the native side instead: it moves the stream itself when the
                 // Windows default changes or a chosen device is unplugged.
                 openedOn = null
                 openedForSelection = selectedDevice
-                format = requested
+                format = forkOpened // fork: was requested; the Spatial Sound bed runs at its object rate
                 diagnosticBlocks = 0
                 closeLine(previous)
                 DesktopTrackLog.log(
                     "audio output opened: ${deviceName ?: "Windows system default"} · " +
-                        "${requested.sampleRate} Hz · ${requested.channels} ch · WASAPI shared",
+                        "${forkOpened.sampleRate} Hz · ${forkOpened.channels} ch · $forkOutputApi", // fork: forkOpened, forkOutputApi
                 )
-                return@runCatching requested
+                return@runCatching forkOpened // fork: was requested
             }
             DesktopTrackLog.log("WASAPI output unavailable; trying Java Sound: ${native.exceptionOrNull()?.message}")
             if (requested.channels > 2) ForkMultichannel.refused(selectedDevice, native.exceptionOrNull()?.message ?: "no reason given") // fork
@@ -100,6 +108,7 @@ internal class DesktopAudioSink {
             windowsOutput = false
             windowsBufferBytes = 0
         }
+        forkSpatial = false // fork
         val ladder = buildList {
             add(requested)
             if (requested.isFloat) add(requested.copy(bytesPerSample = 2, isFloat = false))
@@ -278,6 +287,7 @@ internal class DesktopAudioSink {
         if (windowsOutput) {
             DesktopWindowsAudio.close()
             windowsOutput = false
+            forkSpatial = false // fork
             windowsBufferBytes = 0
             openedOn = null
             openedForSelection = null

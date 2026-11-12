@@ -12,7 +12,7 @@ import kotlin.io.path.nameWithoutExtension
 
 /** Finds ordinary audio files without requiring an Android MediaStore. */
 object DesktopLocalMusic {
-    private val supportedExtensions = setOf("aac", "flac", "m4a", "mp3", "ogg", "wav", "webm")
+    private val supportedExtensions = setOf("aac", "flac", "m4a", "mp3", "ogg", "wav", "webm") + ForkLocalTags.MORE_EXTENSIONS // fork: opus, aiff
 
     fun scan(): List<Song> {
         val filterNonMusic = DesktopPersistence().boolean(KEY_FILTER_NON_MUSIC_AUDIO, false)
@@ -114,6 +114,7 @@ object DesktopLocalMusic {
         val added = attributes?.creationTime()?.toInstant() ?: modified ?: Instant.now()
         val identity = absolutePath.toString()
         val parsed = parseFileName(nameWithoutExtension)
+        val forkTags = ForkLocalTags.read(absolutePath) // fork: the file's own tags first (ForkLocalTags)
         val codec = extension.lowercase(Locale.ROOT).let { value ->
             when (value) {
                 "flac" -> "FLAC"
@@ -121,13 +122,16 @@ object DesktopLocalMusic {
                 "aac", "m4a" -> "AAC"
                 "ogg" -> "OGG"
                 "webm" -> "OPUS"
+                "aiff", "aif" -> "AIFF" // fork
                 else -> value.uppercase(Locale.ROOT)
             }
         }
         return Song(
             videoId = "local:$identity",
-            title = parsed.title,
-            artist = parsed.artist,
+            title = forkTags?.title ?: parsed.title, // fork: was parsed.title
+            artist = forkTags?.artist ?: parsed.artist, // fork: was parsed.artist
+            durationText = ForkLocalTags.durationText(forkTags?.durationMs), // fork
+            albumName = forkTags?.album, // fork
             thumbnailUrl = ForkLocalArtwork.artworkUri(absolutePath), // fork: was null; embedded or folder cover (Desktop Revived 9a8d8445)
             localUri = absolutePath.toUri().toString(),
             localPath = absolutePath.toString(),

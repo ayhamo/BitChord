@@ -313,7 +313,7 @@ class AddonSource(
         withContext(Dispatchers.IO) {
             if (!admitted("a stream")) return@withContext null
             val tier = request.tier
-            val result = client.stream(trackId, tier, stereoOnly)
+            val result = client.stream(trackId, tier, stereoOnly, forkCached = forkCached(trackId)) // fork: forkCached
             val answer = result.getOrNull()
 
             if (answer == null) {
@@ -322,6 +322,8 @@ class AddonSource(
                 // fault worth a line, and both end the same way: whatever the
                 // search row had, else null so [SourceResolver] moves on.
                 val failure = result.exceptionOrNull()
+                // fork: held back by the uncached allowance: no row-URL fallback, which would be that same uncached fetch
+                if (failure is com.music.bitchord.data.sources.addon.ForkAddonLimitsPhone.Skipped) return@withContext null
                 if (failure !is AddonNotFound) {
                     TrackLog.w(TAG, "${config.displayName}: stream failed for $trackId — ${failure?.message}")
                 }
@@ -364,6 +366,10 @@ class AddonSource(
      * addon that serves permanent direct links and treats `/stream` as optional
      * is otherwise unplayable here for no good reason.
      */
+    /** Fork: whether this addon said the row [trackId] is cached; null when it said nothing or wasn't searched. */
+    internal fun forkCached(trackId: String): Boolean? =
+        com.music.bitchord.data.sources.addon.ForkAddonLimitsPhone.cachedOf(config.baseUrl, rows[trackId])
+
     private fun fromRow(trackId: String, tier: String): SourceStream? {
         val row = rows[trackId] ?: return null
         val url = row.streamURL?.ifBlank { null } ?: return null

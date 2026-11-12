@@ -10,6 +10,7 @@
 #include <functiondiscoverykeys_devpkey.h>
 #include <mmdeviceapi.h>
 #include <propvarutil.h>
+#include <spatialaudioclient.h> // fork: Windows Spatial Sound (fork_spatial_audio.h)
 #include <windowsx.h>
 
 #include <algorithm>
@@ -878,10 +879,14 @@ void reroute_locked() {
     device->Release();
 }
 
+void fork_spatial_close(); // fork: fork_spatial_audio.h
+
 int open_audio(const std::wstring& wanted, int sample_rate, int channels, int bytes_per_sample, bool floating, DWORD channel_mask = 0) { // fork: channel_mask
     std::lock_guard<std::mutex> guard(g_audio_mutex);
     release_audio_locked();
     g_audio_error.clear();
+
+    fork_spatial_close(); // fork: a WASAPI open replaces the Spatial Sound line, whatever happens next
 
     ComScope com;
     if (!com.ready()) {
@@ -1091,6 +1096,8 @@ jobjectArray list_devices(JNIEnv* env) {
     return result;
 }
 
+#include "fork_spatial_audio.h" // fork: Windows Spatial Sound output (ForkMultichannel)
+
 }  // namespace
 
 extern "C" {
@@ -1169,13 +1176,14 @@ Java_com_music_bitchord_desktop_DesktopWindowsAudio_nativeWrite(
     jboolean copied = JNI_FALSE;
     auto* values = env->GetFloatArrayElements(samples, &copied);
     if (values == nullptr) return 0;
-    const int written = write_audio(values, static_cast<int>(safe_count), static_cast<float>(gain));
+    const int written = fork_spatial_write_then_wasapi(values, static_cast<int>(safe_count), static_cast<float>(gain)); // fork: was write_audio(…) alone
     env->ReleaseFloatArrayElements(samples, values, JNI_ABORT);
     return static_cast<jint>(written);
 }
 
 JNIEXPORT jlong JNICALL
 Java_com_music_bitchord_desktop_DesktopWindowsAudio_nativeFramesPlayed(JNIEnv*, jclass) {
+    if (g_fork_spatial_on) return static_cast<jlong>(fork_spatial_played()); // fork: Spatial Sound line
     std::lock_guard<std::mutex> guard(g_audio_mutex);
     ComScope com;
     return static_cast<jlong>(played_frames_locked());
@@ -1183,6 +1191,7 @@ Java_com_music_bitchord_desktop_DesktopWindowsAudio_nativeFramesPlayed(JNIEnv*, 
 
 JNIEXPORT void JNICALL
 Java_com_music_bitchord_desktop_DesktopWindowsAudio_nativePause(JNIEnv*, jclass) {
+    if (g_fork_spatial_on) return fork_spatial_pause(true); // fork: Spatial Sound line
     std::lock_guard<std::mutex> guard(g_audio_mutex);
     ComScope com;
     if (!g_audio_started) return;
@@ -1192,6 +1201,7 @@ Java_com_music_bitchord_desktop_DesktopWindowsAudio_nativePause(JNIEnv*, jclass)
 
 JNIEXPORT void JNICALL
 Java_com_music_bitchord_desktop_DesktopWindowsAudio_nativeResume(JNIEnv*, jclass) {
+    if (g_fork_spatial_on) return fork_spatial_pause(false); // fork: Spatial Sound line
     std::lock_guard<std::mutex> guard(g_audio_mutex);
     if (g_audio_started && !g_audio_reroute) return;
     ComScope com;
@@ -1205,6 +1215,7 @@ Java_com_music_bitchord_desktop_DesktopWindowsAudio_nativeResume(JNIEnv*, jclass
 
 JNIEXPORT void JNICALL
 Java_com_music_bitchord_desktop_DesktopWindowsAudio_nativeFlush(JNIEnv*, jclass) {
+    if (g_fork_spatial_on) return fork_spatial_flush(); // fork: Spatial Sound line
     std::lock_guard<std::mutex> guard(g_audio_mutex);
     ComScope com;
     if (g_audio_client == nullptr) return;
@@ -1216,6 +1227,7 @@ Java_com_music_bitchord_desktop_DesktopWindowsAudio_nativeFlush(JNIEnv*, jclass)
 
 JNIEXPORT void JNICALL
 Java_com_music_bitchord_desktop_DesktopWindowsAudio_nativeDrain(JNIEnv*, jclass) {
+    if (g_fork_spatial_on) return fork_spatial_drain(); // fork: Spatial Sound line
     while (true) {
         {
             std::lock_guard<std::mutex> guard(g_audio_mutex);
@@ -1233,10 +1245,15 @@ Java_com_music_bitchord_desktop_DesktopWindowsAudio_nativeClose(JNIEnv*, jclass)
     std::lock_guard<std::mutex> guard(g_audio_mutex);
     ComScope com;
     release_audio_locked();
+    fork_spatial_close(); // fork: Spatial Sound line
 }
 
 JNIEXPORT jstring JNICALL
 Java_com_music_bitchord_desktop_DesktopWindowsAudio_nativeDeviceName(JNIEnv* env, jclass) {
+    if (g_fork_spatial_on) { // fork: Spatial Sound line
+        const std::wstring name = fork_spatial_name();
+        return env->NewString(reinterpret_cast<const jchar*>(name.c_str()), static_cast<jsize>(name.size()));
+    }
     std::lock_guard<std::mutex> guard(g_audio_mutex);
     return env->NewString(
         reinterpret_cast<const jchar*>(g_audio_device_name.c_str()),
@@ -1293,6 +1310,37 @@ Java_com_music_bitchord_desktop_ForkWindowsAudioLayout_nativeMixFormat(JNIEnv* e
         env->SetLongArrayRegion(result, 0, 2, values);
     }
     return result;
+}
+
+// fork (ForkMultichannel): the Windows Spatial Sound line (fork_spatial_audio.h). Open returns the
+// buffer in bytes and the object rate as {bytes, rate}; the rate probe returns 0 while spatial sound
+// is off for the output.
+JNIEXPORT jintArray JNICALL
+Java_com_music_bitchord_desktop_ForkWindowsAudioLayout_nativeOpenSpatial(
+    JNIEnv* env, jclass, jstring device, jint channels, jlong channel_mask) {
+    if (g_vm == nullptr) env->GetJavaVM(&g_vm);
+    const jchar* chars = env->GetStringChars(device, nullptr);
+    const jsize length = env->GetStringLength(device);
+    std::wstring wanted(reinterpret_cast<const wchar_t*>(chars), static_cast<size_t>(length));
+    env->ReleaseStringChars(device, chars);
+    int rate = 0;
+    const int bytes = fork_spatial_open(wanted, static_cast<int>(channels), static_cast<DWORD>(channel_mask), &rate);
+    jintArray result = env->NewIntArray(2);
+    if (result != nullptr) {
+        const jint values[2] = {static_cast<jint>(bytes), static_cast<jint>(rate)};
+        env->SetIntArrayRegion(result, 0, 2, values);
+    }
+    return result;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_music_bitchord_desktop_ForkWindowsAudioLayout_nativeSpatialRate(JNIEnv* env, jclass, jstring device) {
+    if (g_vm == nullptr) env->GetJavaVM(&g_vm);
+    const jchar* chars = env->GetStringChars(device, nullptr);
+    const jsize length = env->GetStringLength(device);
+    std::wstring wanted(reinterpret_cast<const wchar_t*>(chars), static_cast<size_t>(length));
+    env->ReleaseStringChars(device, chars);
+    return static_cast<jint>(fork_spatial_rate(wanted));
 }
 
 }  // extern "C"

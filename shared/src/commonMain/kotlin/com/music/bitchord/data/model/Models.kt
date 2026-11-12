@@ -469,6 +469,7 @@ data class HomeShelf(
     val moreBrowseId: String? = null,
     val moreParams: String? = null,
     val layout: ShelfLayout = ShelfLayout.CARDS,
+    val fork: ForkShelfStyle? = null, // fork: how YouTube lays the shelf out (ForkHomeFeed.kt)
 )
 
 /** These shelves without their music videos, and without any shelf that leaves empty. */
@@ -523,6 +524,7 @@ private fun HomeShelf.browseKeys(): Set<String> = items.mapNotNullTo(HashSet()) 
 data class HomeFeed(
     val shelves: List<HomeShelf>,
     val continuation: String?,
+    val chips: List<HomeChip> = emptyList(), // fork: the mood chips over the first page (ForkHomeFeed.kt)
 )
 
 /** One server-defined group of the buttons shown on Explore. */

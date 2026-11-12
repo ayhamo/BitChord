@@ -106,6 +106,7 @@ class AddonClient(rawBaseUrl: String, private val pickedQuality: String? = null)
                 throw AddonException("This addon declares $declared — BitChord needs search")
             }
             if (manifest.requiresBitChordAuth) authRequired = true
+            ForkAddonLimitsPhone.declare(baseUrl, manifest.forkLimits) // fork: the addon's own limits
             manifest
         }.recoverCatching { failure ->
             // A manifest 404 is not "no such track", it is "no addon here" —
@@ -176,13 +177,18 @@ class AddonClient(rawBaseUrl: String, private val pickedQuality: String? = null)
      * `auto` is not an offer but an override, and the addon answers with the
      * Atmos sibling of the very row that was chosen over it.
      */
-    suspend fun stream(trackId: String, tier: String, stereoOnly: Boolean = false): Result<AddonStream> {
+    suspend fun stream(trackId: String, tier: String, stereoOnly: Boolean = false, forkCached: Boolean? = null): Result<AddonStream> { // fork: forkCached
         val params = settingsFor(tier, stereoOnly)
+        // fork: per-addon limits (ForkAddonLimitsPhone): waited for here, where the caller can cancel it, and
+        // counted inside the shared call, so only requests that go out count
+        if (ForkAddonLimitsPhone.wait(baseUrl, forkCached) == com.music.bitchord.data.ForkAddonLimits.Gate.SKIP) {
+            return Result.failure(ForkAddonLimitsPhone.Skipped())
+        }
         return streams.get(
             key = keyOf(trackId, params.toString()),
             describe = { "▶ addon stream(${redact(baseUrl)}) id=$trackId tier=$tier quality=${params[QUALITY_KEY]}" },
         ) {
-            fetch<AddonStream>(endpoint(listOf("stream", trackId), params))
+            ForkAddonLimitsPhone.send(baseUrl, forkCached) { fetch<AddonStream>(endpoint(listOf("stream", trackId), params)) } // fork: was fetch(…) alone
         }
     }
 
@@ -369,11 +375,12 @@ class AddonClient(rawBaseUrl: String, private val pickedQuality: String? = null)
         var rejectedToken: String? = null
         while (true) {
             (quietUntilMs - System.currentTimeMillis()).takeIf { it > 0 }?.let { delay(it) }
+            if (attempt > 0 || authRetries > 0) ForkAddonLimitsPhone.resending(baseUrl, url) // fork: a resent stream request counts
 
             val auth = if (authRequired) authHeaders(url, rejectedToken) else emptyMap()
             val request = Request.Builder().url(url)
                 .header("Accept", "application/json")
-                .header("User-Agent", USER_AGENT)
+                .header("User-Agent", ForkAddonUserAgent.agent(url, USER_AGENT)) // fork: per-addon agent (ForkAddonUserAgent)
                 .apply { auth.forEach { (name, value) -> header(name, value) } }
                 .build()
 
@@ -407,7 +414,10 @@ class AddonClient(rawBaseUrl: String, private val pickedQuality: String? = null)
                     response.code >= 500 -> throw AddonUnavailable("HTTP ${response.code}")
                     response.code != 429 -> throw AddonException("HTTP ${response.code}")
                     attempt >= MAX_RETRIES -> throw AddonUnavailable("This addon is rate limiting BitChord")
-                    else -> retryAfterMs(response.header("Retry-After"), attempt)
+                    else -> {
+                        ForkAddonLimitsPhone.rateLimited(baseUrl, url) // fork: a 429 teaches a limit (ForkAddonLimitsPhone)
+                        retryAfterMs(response.header("Retry-After"), attempt)
+                    }
                 }
             }
             if (wait == RETRY_NOW) continue

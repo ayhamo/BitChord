@@ -77,6 +77,18 @@ class ForkMultichannelAudioTest {
     }
 
     @Test
+    fun `on, a spatial renderer gets a 7_1 bed at its object rate, but never when off or refused`() {
+        val spatial = ForkChannelLayout.decide(true, true, 2 to STEREO, null, spatialRate = 48_000)
+        assertEquals(8, spatial.channels)
+        assertEquals(SURROUND_7_1, spatial.mask)
+        assertEquals(48_000, spatial.spatialRate)
+        assertTrue("Spatial Sound" in spatial.reason, spatial.reason)
+        assertEquals(2, ForkChannelLayout.decide(false, true, 2 to STEREO, null, spatialRate = 48_000).channels)
+        assertEquals(2, ForkChannelLayout.decide(true, true, 2 to STEREO, "refused", spatialRate = 48_000).channels)
+        assertEquals(0, ForkChannelLayout.decide(true, true, 8 to SURROUND_7_1, null).spatialRate)
+    }
+
+    @Test
     fun `a device mask is used only when it is sane`() {
         assertEquals(SURROUND_7_1, ForkChannelLayout.deviceMask(8, SURROUND_7_1))
         assertEquals(SURROUND_7_1, ForkChannelLayout.deviceMask(8, 0x3FL)) // 6 bits for 8 channels

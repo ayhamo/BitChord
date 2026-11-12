@@ -63,6 +63,7 @@ internal object ForkAutomixFx {
      */
     fun fallbackTexture(plan: TransitionPlan, automaticAutomix: Boolean): TransitionTexture = when {
         !automaticAutomix -> TransitionTexture.NONE
+        plan.forkAutoDj != null -> TransitionTexture.NONE // an AutoDJ mix (Automix style) has no texture, as the extension
         plan.transitionStyle != TransitionStyle.EQUAL_POWER -> TransitionTexture.NONE
         plan.echoSeconds > 0.0 -> TransitionTexture.NONE
         plan.fadeSeconds < FALLBACK_TEXTURE_MIN_SECONDS -> TransitionTexture.NONE

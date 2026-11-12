@@ -573,7 +573,7 @@ internal object DesktopSourceRegistry {
         }
         val wantsLossless = ceiling(quality) == DesktopAudioQuality.LOSSLESS
         var settleFor: DesktopStream? = null
-        for (match in preferred(matches, song, wantsLossless).take(STREAM_ATTEMPTS)) {
+        for (match in ForkDesktopAddonLimits.cachedFirst(source.config, preferred(matches, song, wantsLossless)).take(STREAM_ATTEMPTS)) { // fork: cached rows first within a tier
             val stream = source.resolve(match, quality).getOrNull() ?: continue
             if (!playableHere(source, stream)) continue
             if (forkDirect && ForkDirectSourceCheck.cutShort(source.descriptor.name, match, stream, song)) continue // fork: a preview or cut-off file is not the recording

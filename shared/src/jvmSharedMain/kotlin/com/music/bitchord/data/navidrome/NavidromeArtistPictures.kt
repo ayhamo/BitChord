@@ -177,6 +177,8 @@ object NavidromeArtistPictures {
         }
     }
 
+    private const val LEAD_SOURCE = "lead"
+
     private val ready: Boolean get() = this::store.isInitialized
 
     // ── Reading, never asking ───────────────────────────────────────────────
@@ -194,8 +196,16 @@ object NavidromeArtistPictures {
     private fun entryFor(name: String, now: Long = System.currentTimeMillis()): Entry? {
         if (!ready) return null
         val key = storeKey(name) ?: return null
-        return entries[key]?.takeIf { stands(it, now) }
+        return entries[key]?.takeIf { stands(it, now) }?.takeIf { collabAnswer(name, it) }
     }
+
+    /**
+     * A collaboration credit ([NavidromeArtistInfo.collabLead]) takes its lead artist's picture. An answer
+     * kept for it before that rule (the server's agent or a search matched the whole credit, and showed a
+     * stranger: a woman's portrait for "Metro Boomin, The Weeknd & 21 Savage", 2026-11-11) doesn't stand.
+     */
+    private fun collabAnswer(name: String, entry: Entry): Boolean =
+        NavidromeArtistInfo.collabLead(name) == null || entry is Entry.None || (entry is Entry.Picture && entry.source == LEAD_SOURCE)
 
     // ── Asking ──────────────────────────────────────────────────────────────
 
@@ -244,6 +254,17 @@ object NavidromeArtistPictures {
 
     private suspend fun lookup(name: String, id: String?, coverArt: String?, titles: (suspend () -> Collection<String>)?): Outcome {
         val wanted = nameKey(name)
+        NavidromeArtistInfo.collabLead(name)?.let { lead ->
+            // The lead artist's own lookup, kept under the credit: one person's photo, never a match for the whole string.
+            val inner = lookup(lead, null, null, null).entry ?: return Outcome(null)
+            return Outcome(
+                when (inner) {
+                    is Entry.Server -> Entry.Picture(inner.url, LEAD_SOURCE, now())
+                    is Entry.Picture -> Entry.Picture(inner.url, LEAD_SOURCE, now())
+                    is Entry.None -> inner
+                },
+            )
+        }
         return try {
             val client = NavidromeRepository.client()
             serverPicture(client, name, wanted, id, coverArt)?.let { return Outcome(it) }

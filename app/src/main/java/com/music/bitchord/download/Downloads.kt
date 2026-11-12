@@ -535,22 +535,6 @@ object Downloads {
     }
 
     /**
-     * fork: release [id]'s tracks (its record and what its own tap asked for, [requested]) that are
-     * queued or running and that no other release names, so [deleteCollection] can call them off.
-     */
-    internal fun inFlightOnlyIn(
-        id: String,
-        collections: Map<String, SavedCollection>,
-        requested: Set<String>,
-        active: Map<String, DownloadState>,
-    ): List<String> {
-        val others = collections.values.filter { it.id != id }.flatMapTo(HashSet()) { it.videoIds }
-        return (collections[id]?.videoIds.orEmpty() + requested).distinct().filter { videoId ->
-            videoId !in others && active[videoId].let { it is DownloadState.Queued || it is DownloadState.Running }
-        }
-    }
-
-    /**
      * The tracks of release [id] whose file no other release lists.
      *
      * Compared by file as well as by id, because one file answers to two ids

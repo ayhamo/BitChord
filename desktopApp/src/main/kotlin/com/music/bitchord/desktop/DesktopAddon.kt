@@ -49,6 +49,7 @@ internal data class DesktopAddonManifest(
      */
     @SerialName("allowDownloads") val allowDownloads: JsonElement? = null,
     @SerialName("bitchordAuth") val bitchordAuth: JsonElement? = null, // fork: v1.9.1 addon verification (ForkAddonAuthGate)
+    @SerialName("limits") val forkLimits: JsonElement? = null, // fork: an addon's own request limits (ForkDesktopAddonLimits)
 ) {
     val requiresBitChordAuth: Boolean get() = bitchordAuth.asFlag() ?: false // fork
 
@@ -103,6 +104,11 @@ internal data class DesktopAddonTrack(
     @SerialName("atmos") val atmos: Boolean? = null,
     /** A stream URL for the row itself; used only as a fallback — see [DesktopAddonSource]. */
     @SerialName("streamURL") val streamURL: String? = null,
+    // fork: what says a row is cached on a debrid-backed addon (NullBeat's infotext), read as JSON (ForkDesktopAddonLimits)
+    @SerialName("infotext") val forkInfotext: JsonElement? = null,
+    @SerialName("infoText") val forkInfoText: JsonElement? = null,
+    @SerialName("cached") val forkCached: JsonElement? = null,
+    @SerialName("isCached") val forkIsCached: JsonElement? = null,
 ) {
     val durationSec: Int? get() = duration?.takeIf { it > 0 }?.toInt()
 
@@ -288,6 +294,7 @@ internal class DesktopAddonClient(rawBaseUrl: String, private val forkSourceId: 
                 throw DesktopAddonException("This addon declares $declared — BitChord needs search")
             }
             if (manifest.requiresBitChordAuth) ForkAddonAuthGate.refuse(baseUrl) // fork
+            ForkDesktopAddonLimits.declare(baseUrl, manifest.forkLimits) // fork: the addon's own limits
             manifest
         }.recoverCatching { failure ->
             // A manifest 404 is not "no such track", it is "no addon here".
@@ -315,10 +322,15 @@ internal class DesktopAddonClient(rawBaseUrl: String, private val forkSourceId: 
 
     /** A playable URL for one of this addon's own track ids. */
     /** [stereoOnly] withholds the `?atmos=` hint; see [DesktopAddonSource.stream]. */
-    suspend fun stream(trackId: String, tier: String, stereoOnly: Boolean = false): Result<DesktopAddonStream> {
+    suspend fun stream(trackId: String, tier: String, stereoOnly: Boolean = false, forkCached: Boolean? = null): Result<DesktopAddonStream> { // fork: forkCached
         val params = settingsFor(tier, stereoOnly)
+        // fork: per-addon limits (ForkDesktopAddonLimits): waited for here, where the caller can cancel it, and
+        // counted inside the shared call, so only requests that go out count
+        if (ForkDesktopAddonLimits.wait(baseUrl, forkCached) == com.music.bitchord.data.ForkAddonLimits.Gate.SKIP) {
+            return Result.failure(ForkDesktopAddonLimits.Skipped())
+        }
         return streams.get(keyOf(trackId, params.toString())) {
-            fetch<DesktopAddonStream>(endpoint(listOf("stream", trackId), params))
+            ForkDesktopAddonLimits.send(baseUrl, forkCached) { fetch<DesktopAddonStream>(endpoint(listOf("stream", trackId), params)) } // fork: was fetch(…) alone
         }
     }
 
@@ -407,10 +419,11 @@ internal class DesktopAddonClient(rawBaseUrl: String, private val forkSourceId: 
         while (true) {
             if (url != manifestUrl(baseUrl) && ForkAddonAuthGate.refused(baseUrl)) throw ForkAddonAuthRefused() // fork: no request it would refuse
             (quietUntilMs - System.currentTimeMillis()).takeIf { it > 0 }?.let { delay(it) }
+            if (attempt > 0) ForkDesktopAddonLimits.resending(baseUrl, url) // fork: a resent stream request counts
 
             val response = http.get(url) {
                 header("Accept", "application/json")
-                header("User-Agent", USER_AGENT)
+                header("User-Agent", ForkDesktopAddonUserAgent.agent(url, USER_AGENT)) // fork: per-addon agent (ForkDesktopAddonUserAgent)
             }
             val code = response.status.value
             val wait = when {
@@ -421,7 +434,10 @@ internal class DesktopAddonClient(rawBaseUrl: String, private val forkSourceId: 
                 code >= 500 -> throw DesktopAddonUnavailable("HTTP $code")
                 code != 429 -> throw DesktopAddonException("HTTP $code")
                 attempt >= MAX_RETRIES -> throw DesktopAddonUnavailable("This addon is rate limiting BitChord")
-                else -> retryAfterMs(response.headers["Retry-After"], attempt)
+                else -> {
+                    ForkDesktopAddonLimits.rateLimited(baseUrl, url) // fork: a 429 teaches a limit (ForkDesktopAddonLimits)
+                    retryAfterMs(response.headers["Retry-After"], attempt)
+                }
             }
             quietUntilMs = System.currentTimeMillis() + wait
             attempt++
@@ -716,11 +732,13 @@ internal object DesktopAddonSource {
         refreshPolicy(config)
         val tier = tierFor(quality)
         val stereoOnly = picked && song.sourceQuality != null && song.sourceQuality != DesktopModuleSource.DOLBY
-        val outcome = client(config).stream(reference.trackId, tier, stereoOnly)
+        val outcome = client(config).stream(reference.trackId, tier, stereoOnly, forkCached = forkCached(config, reference.trackId)) // fork: forkCached
         val answer = outcome.getOrNull()
         if (answer == null) {
             // A 404 is the addon saying it does not hold this one, which is a miss, not a fault.
             val failure = outcome.exceptionOrNull()
+            // fork: held back by the uncached allowance: no row-URL fallback, which would be that same uncached fetch
+            if (failure is ForkDesktopAddonLimits.Skipped) return@runCatching null
             if (failure !is DesktopAddonNotFound) {
                 DesktopTrackLog.log(
                     "${config.displayName}: stream failed for ${reference.trackId} — " +
@@ -740,6 +758,10 @@ internal object DesktopAddonSource {
         }
         openable(config, url, answer, reference.trackId, tier)
     }
+
+    /** Fork: whether [config]'s addon said the row [trackId] is cached; null when it said nothing or wasn't searched. */
+    internal fun forkCached(config: DesktopSourceConfig, trackId: String): Boolean? =
+        ForkDesktopAddonLimits.cachedOf(config.baseUrl, rows[rowKey(config.id, trackId)])
 
     /** The stream the search row carried, when the `/stream` call had nothing. */
     private fun fromRow(config: DesktopSourceConfig, trackId: String, tier: String): DesktopStream? {
@@ -881,7 +903,7 @@ internal object DesktopSourceFormats {
         var lastFailure: Throwable? = null
         var firstUnsupported: DesktopDetectedFormat.Unsupported? = null
         for (attempt in attempts) {
-            val body = fetch(attempt).getOrElse { failure ->
+            val body = com.music.bitchord.data.ForkAddonUserAgents.retryingRefused(attempt, ForkDesktopAddonUserAgent) { fetch(attempt) }.getOrElse { failure -> // fork: a 403 tried once as a browser (ForkDesktopAddonUserAgent)
                 lastFailure = failure
                 continue
             }
@@ -958,7 +980,7 @@ internal object DesktopSourceFormats {
     private suspend fun fetch(url: String): Result<String> = runCatching {
         val response = http.get(url) {
             header("Accept", "application/json")
-            header("User-Agent", DesktopAddonClient.USER_AGENT)
+            header("User-Agent", ForkDesktopAddonUserAgent.agent(url, DesktopAddonClient.USER_AGENT)) // fork: per-addon agent (ForkDesktopAddonUserAgent)
         }
         val code = response.status.value
         when {

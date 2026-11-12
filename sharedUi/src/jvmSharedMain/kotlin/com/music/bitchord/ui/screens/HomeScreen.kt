@@ -160,14 +160,17 @@ fun HomeScreen(
     artworkMotion: Boolean = true,
     /** Fork: a shelf heading with a See all link was tapped (ForkShelfMore.kt). Null leaves headings plain. */
     onShelfOpen: ((HomeShelf) -> Unit)? = null,
+    forkFeed: ForkHomeFeedActions? = null, // fork: chips, Explore buttons, Play all (ForkHomeFeedUi.kt)
 ) {
     val forkHome = rememberForkHome() // fork
+    val forkChipPicked = forkHomeChipPicked() // fork: a chip's Home is YouTube's alone
     // Top Picks' pictures and motion wait for the feed — see LocalArtworkImages.
     val feedReady = state !is UiState.Loading
     CompositionLocalProvider(
         LocalArtworkMotion provides (artworkMotion && feedReady),
         LocalArtworkImages provides feedReady,
         LocalForkShelfOpen provides onShelfOpen, // fork
+        LocalForkHomeFeed provides forkFeed, // fork
     ) {
     // The loops also hold still while the feed is being scrolled — see
     // LocalArtworkScrolling for why that is asked rather than provided.
@@ -196,6 +199,7 @@ fun HomeScreen(
             if (title != null) {
                 item { HomeTitle(title, festiveLogo = festiveLogo, onFestiveLogoClick = onFestiveLogoClick) }
             }
+            forkHomeChips(forkFeed) // fork: YouTube Music's mood chips
             if (!signedIn && onSignIn != null) {
                 item {
                     // Read in this item, so a scroll starting or ending
@@ -207,7 +211,7 @@ fun HomeScreen(
                     )
                 }
             }
-            if (onTopPickClick != null) {
+            if (onTopPickClick != null && !forkChipPicked) { // fork: && !forkChipPicked
                 when {
                     !topPicks.isNullOrEmpty() -> item(key = "top-picks") {
                         TopPicksShelf(
@@ -236,7 +240,7 @@ fun HomeScreen(
                     }
                     forkHomeFeed(forkHome, state.data, onRetry) { list, keyPrefix -> itemsIndexedShelves( // fork: per ForkHome section
                         shelves = list,
-                        onMoodClick = onMoodClick.takeIf { keyPrefix.isEmpty() || keyPrefix.startsWith("youtube") }, // fork: one Find Your Mood, however many sections
+                        onMoodClick = onMoodClick.takeIf { !forkChipPicked && (keyPrefix.isEmpty() || keyPrefix.startsWith("youtube")) }, // fork: one Find Your Mood, however many sections; none on a chip's Home
                         onMoodsShowAll = onMoodsShowAll,
                         onItemClick = onItemClick,
                         onItemLongPress = onItemLongPress,
@@ -293,6 +297,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
             val openItem: (ShelfItem) -> Unit = { item -> onItemClick(item, shelf.title) }
             // Listen again and Quick picks are lists on the web player, as
             // Recents is here: one pager for all three.
+            if (shelf.fork != null) ForkHomeShelf(shelf, openItem, onItemLongPress, currentSong, isPlaying) else // fork: drawn as YouTube does (ForkHomeFeedUi.kt)
             if (shelf.layout == ShelfLayout.LIST ||
                 (index == 0 && shelf.title.equals(RECENTS_TITLE, ignoreCase = true))
             ) {

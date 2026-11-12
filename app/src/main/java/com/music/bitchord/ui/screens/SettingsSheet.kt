@@ -824,6 +824,7 @@ fun SettingsScreen(
                     )
                 }
             }
+            forkAutomixStyleRow(smartFade && !bitPerfectReady) // fork
             val automixPerformanceTitle = stringResource(R.string.automix_performance)
             row(automixPerformanceTitle, "cpu", "battery") {
                 BypassedByBitPerfect(bitPerfectReady) {

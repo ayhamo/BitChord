@@ -52,7 +52,7 @@ namespace {
 void AppendString(std::string& out, const std::string& value) {
   out += '"';
   for (const char character : value) {
-    if (character >= 32 && character < 127 && character != '"' && character != '\\') {
+    if ((static_cast<unsigned char>(character) >= 0x80 || (character >= 32 && character < 127)) && character != '"' && character != '\\') { // fork: + UTF-8 bytes, so "F♯ major" stays F♯, not F (key names are UTF-8 ♯/♭ in audio_analysis.cpp)
       out += character;
     }
   }

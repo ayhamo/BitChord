@@ -2,6 +2,205 @@
 
 Snapshot for picking the work up again. Plan: `FORK_PLAN.md`. Every touched upstream line: `FORK.md`.
 
+## Where it stands (2026-11-12): all built and tested, nothing committed, nothing pushed
+
+Builds: Android `assembleDevDebug` + all unit tests (app, shared, sharedUi) pass; PC tests and the Portable zip pass (`out/BitChord Portable.zip`).
+
+**Fixed today**
+- **Home chips hidden on the PC:** the shelves arrived first and kept the top, so the chip row came in above the view (seen only by scrolling up). The empty chip item is now 1 dp (`ForkHomeFeedUi.kt`), and the row shows at the top.
+- **Audit, 7 fixes (fresh reviewer):**
+  - **Key-aware AutoDJ got wrong keys for 10 of 24:** the JNI writer dropped the analyser's ♯/♭, so "F♯ major" arrived as "F major" (both apps). `analysis_jni.cpp` now passes UTF-8. Analyses saved before this read their key as unknown, with no re-analysis (`AnalysisStore` `forkKeyText`, `ForkAnalysisKeyTest`).
+  - **Phone Home:** a plain-feed page or pull-refresh landing after a chip tap mixed both feeds. Both now check the load generation.
+  - **PC Home:** a stale page could reset paging, so a page was appended twice or paging stopped. Same generation check.
+  - **The picked chip outlived sign-out and account switches:** `ForkHomeChips.reset()` now runs on both.
+  - **Top Picks could be built from a chip's feed:** both apps now skip it.
+  - **PC Play all did nothing on album or playlist shelves:** it now opens the shelf's playlist, as on the phone.
+  - **The mix shelves kept filter history across a seek:** they now flush on seek and go flat on reset.
+- **Key-clash subtitle:** now starts "Automix, Advanced AutoDJ style:", so a settings search for "automix" finds it.
+
+**Tested in the apps**
+- **PC (bridge 8775):**
+  - **Home:** chips, select/deselect (a chip hides Top Picks and Navidrome, deselect brings them back), and "Listen again" as a 2-row grid.
+  - **Settings:** the Automix style row and the key-clash toggle (greyed unless Advanced).
+  - **Artist pages:** the Navidrome artist's "Starting The Weeknd radio…" notice shows at once and the radio plays; Similar artists = Lady Gaga, Ariana Grande, YOUHA (no collabs).
+- **Phone (emulator):**
+  - **Home:** chips, select (Relax) and deselect, and the Speed dial grid.
+  - **Settings:** the Automix style row, and the key-clash row greyed under BitChord (style put back to BitChord after the check).
+
+**Not tested**
+- **Tidotido:** not installed on the portable PC profile or on the emulator (only Qobuz [Heisenbergg], JioSaavn, YouTube). Adding it needs the owner's token URL.
+- **PC Local Music tags:** the portable profile has no music files (none copied without approval). Unit tests only.
+- **Audio:** the shelves, key-clash blends and the 16-bit path are untested by ear.
+- **Doubled songs:** some songs show twice in the PC Navidrome Songs tab (e.g. Daredevil by Zaptroxix; Wicked Games shows once). They look like two files on the server, not a client bug; not checked on the server.
+
+Cleaned up: helper worktrees and branches, `bitchord-base`, the APKs in `out/`.
+
+## Earlier: 2026-11-11, end of day
+
+### Asked for today (owner)
+Seven items:
+1. PC Local Music: a basic fix (tags and formats).
+2. Apple-style AutoMix presets: on hold.
+3. The YT extension's automixer as a setting.
+4. Shrink the fork lines inside upstream files.
+5. Fix Similar artists, and any bug found.
+6. Then build, audit, fix, unit test, build and test.
+7. Later in the day: Home 1:1 with YouTube Music, with the chips, keeping only Top Picks, Find Your Mood and Navidrome as our own.
+
+**Answered:** the phone's Local Music is not basic. It already reads MediaStore tags and has LocalGroups. Only the PC's was basic.
+
+### Done and tested
+**PC Local Music tags** (`desktopApp/…/ForkLocalTags.kt`, `ForkLocalTagsTest`, hooks in `DesktopLocalMusic.kt`):
+- Title, artist, album and length are read from the file.
+
+  | Format | Tags from | Length from |
+  |---|---|---|
+  | FLAC | Vorbis comments | STREAMINFO |
+  | Ogg / Opus | comment packet | last page's position |
+  | MP3 | ID3v2 | TLEN, Xing frame count or bitrate |
+  | M4A | ilst | mvhd |
+  | WAV | LIST/INFO | data size |
+  | AIFF | NAME and `ID3 ` chunks | COMM |
+- `.opus`, `.aiff` and `.aif` are now listed.
+- Unit-tested. Not yet seen in the PC app.
+
+**Similar artists** (`shared/…/navidrome/NavidromeArtistInfo.kt`, `NavidromeArtistPictures.kt`, `NavidromeSimilarArtistsTest`):
+- AudioMuse's "similar" list was mostly the page artist's own collaborations ("Metro Boomin, The Weeknd & 21 Savage"). Credits that include the page artist are now left out.
+- A collaboration's picture comes from its lead artist, only when at least two of its parts are known artists. That keeps bands such as "Earth, Wind & Fire" whole, and fixes the wrong photo on the Metro Boomin collab.
+- Unit-tested. Not yet seen in the app.
+
+**Artist radio feedback:** it took about 8 s with no sign it had started. Now "Starting X radio…" shows at once: a toast on the phone (`ForkArtistRadio.kt`, `fork_starting_artist_radio`), a notice on the PC with a guard against a second press.
+
+**Automix style** (helper, merged; files `shared/…/smart/ForkAutoDj.kt`, `ForkAutoDjCurves.kt`, `jvmSharedMain/…/ForkMixShelf.kt`, `app/…/ForkAutoDjRide.kt`, `ui/screens/ForkAutomixStyleRow.kt`, `desktopApp/…/ForkDesktopAutoDj.kt`, `ForkAutomixStyleSetting.kt`; upstream hooks listed in FORK.md):
+- Settings › Playback › Automix style offers BitChord (default, unchanged), Original AutoDJ and Advanced AutoDJ: the YT Music extension's planner and curves, on the phone and the PC.
+- On the emulator, the row shows under Automix, switches, and its subtitle follows the choice. It was left on BitChord.
+- **My fix in the audit:** the bass swap and highs shelves were not applied on 16-bit output (float off, which is most Bluetooth routes). Added `ForkMixShelf.process16` and a hook after both `flip()`s in `TransitionFilterProcessor.queueInput`, with a test.
+- **Not judged by ear:** the shelves, the speed-up and the 8 × 3 s glide back, Advanced's vocal re-route, and the level mid-blend (the 1/√ headroom trim stays on).
+- **The helper's open points:**
+  - The setting is not in backup.
+  - The phone has no phrase-length setting, so it is always Auto.
+  - The cut filters are 24 dB/oct; the extension's are 12.
+  - On the PC, a loop mix that takes over after the speed-up leaves the outgoing deck fast until it ends.
+
+**Fork lines moved out of upstream files** (helper, merged):
+- New files: `ui/screens/ForkHomeRoutes.kt`, `data/canvas/ForkSpotifyHarvestBackoff.kt`, `download/ForkDownloadHelpers.kt`, `shared/…/canvas/ForkCanvasTitles.kt`.
+- Upstream files trimmed: `MainActivity.kt`, `MainViewModel.kt`, `DownloadStore.kt`, `Downloads.kt`, `SpotifyToken.kt`, `CanvasArtwork.kt`, and `NowPlayingScreen.kt` (into `ForkSleeveClip.kt`).
+- FORK.md was merged by hand with no conflicts.
+
+**Builds:**
+
+| Build | Result |
+|---|---|
+| Android `assembleDevDebug` | passed |
+| App unit tests | 1398, 0 failures |
+| shared | 308, 0 failures |
+| sharedUi | 63, 0 failures |
+| PC tests | 881, 0 failures |
+| PC portable build | passed |
+
+These runs started before the key-clash toggle (below) and may have missed the 16-bit fix. **Rebuild first thing.**
+
+### Done, not built yet
+**"Shorter blend when keys clash"** (the extension's `automixKeyAware`):
+- Advanced AutoDJ only, off by default.
+- Camelot rule: same number, or one step on the same letter. Keys under 0.5 confidence don't count.
+- A clash gets 2 bars, or 4 when 2 are under 4 s (under 6 s from 140 BPM).
+- Where it lives:
+  - Shared: `ForkAutoDj.keyAware`, `keysClash`, `camelot`, and 3 new tests in `ForkAutoDjTest`.
+  - Phone: `ForkSettings.automixKeyAware` (key `automix_key_aware`) and a switch under Automix style, greyed unless Advanced.
+  - PC: `ForkDesktopAutomixStyle.keyAware` and a `SettingsToggle` under the style chips.
+- PC settings search now also finds the toggle on its own.
+
+### In progress: Home 1:1 with YouTube Music (helper stopped mid-way tonight; its edits are left in the tree)
+**Why shelves are missing today:**
+- `InnertubeParser.parseHome` keeps only `musicCarouselShelfRenderer` and `musicShelfRenderer`. Immersive carousels, grids, navigation buttons, card shelves and multi-row (podcast) items are dropped silently.
+- The chip cloud in `sectionListRenderer.header.chipCloudRenderer` is never read.
+- `MainViewModel` adds its own Recents (history), New releases and Explore browses, and drops repeated titles. The PC's `DesktopApp.kt` Home has its own loader.
+
+**YT Music Home on the emulator today (same account), top to bottom:**
+- Chips: Podcasts, Relax, Sleep, Energize, Sad, Romance, Feel good, Workout.
+- Shelves:
+  1. Speed dial (2-row paged grid)
+  2. Quick picks (list, Play all)
+  3. Music videos for you
+  4. New releases
+  5. Your daily discover (large cards)
+  6. Trending songs for you (list)
+  7. Fresh finds, old favorites
+  8. From your library
+  9. Mixed for you
+  10. Long listens (list)
+  11. "KPop Demon Hunters Cast" (artist header)
+  12. From the community
+  13. Explore (New releases / Charts / Moods & genres buttons)
+- It changes every hour or so, so this must be parsed live, never hard-coded.
+
+**The owner's rules:**
+- Everything YT's Home sends, 1:1, Speed dial included, each drawn the way YT draws it, in YT's order and titles.
+- Selecting a chip reloads Home with that chip's browse params and shows only YT's feed, as YT does.
+- Keep only Top Picks for You, Find Your Mood and Navidrome as our own. Drop Recents, the extra New releases / Explore browses, and the title de-duplication.
+- Phone and PC.
+
+**Where the helper stopped (edits left in the tree, not built from the real checkout yet):**
+
+New files:
+- `shared/…/data/model/ForkHomeFeed.kt`: shelf kinds (CAROUSEL, VIDEO_CAROUSEL, LIST, GRID, LARGE_CARDS, EPISODES, BUTTONS, CARD), each shelf's styling, `ForkHomeChips`, and `FORK_HOME_UPSTREAM_EXTRAS = false`, which turns off Recents, the supplements and the title de-dup.
+- `shared/…/innertube/ForkHomeFeedParser.kt`: first page, continuations and chips. Unknown shelves are logged once under "ForkHomeFeed".
+- `sharedUi/…/ui/screens/ForkHomeFeedUi.kt`: the chip row, and one drawing per kind.
+- `app/…/ui/screens/ForkHomeFeedPhone.kt`, `desktopApp/…/ForkDesktopHomeFeed.kt`: the actions. A chip toggles and reloads; Explore buttons, Play all and the header picture open their pages.
+- `ForkHomeFeedParserTest`: 12 tests, with fixtures in `shared/src/jvmTest/resources/forkhome/`.
+
+Hooks, listed in FORK.md: `Models.kt`, `InnertubeParser.kt` (4 wrappers), `YtMusicRepository.kt` (`home(params)`), `HomeScreen.kt`, `MainViewModel.kt`, `MainActivity.kt` (1 line), `DesktopApp.kt`, `DesktopSearchClient.kt`, `NavidromeHome.kt` and `ForkDesktopHome.kt`. On the PC, the Spotify mixes moved off Home; they stay on Explore.
+
+Tested so far:
+- A build from a patched copy passed.
+- On the emulator, Home showed:
+  - the chips
+  - Top Picks
+  - Navidrome
+  - "Listen again" with the avatar
+  - Find Your Mood
+  - Music videos with Play all
+  - Quick picks as a list
+  - continuation shelves while scrolling.
+
+Fixed tonight: my key-clash string's unescaped apostrophe (strings_fork.xml line 123) broke every Android build of the real checkout. It's escaped now. The helper removed its temporary `// TEMPDUMP` lines and dump files. The dev app on the emulator still has them until the next install.
+
+Half-done:
+- **Speed dial is one row, not the 2-row paged grid.** The web feed calls it "Listen again" and sends no rows hint. Fix: give a carousel whose header points to `FEmusic_listen_again` a 2-row grid, and add a test.
+- **"Your daily discover" doesn't get large cards.** It comes as MEDIUM square items with Play all, and no other signal says it should look bigger. Ask the owner whether it should be large cards.
+- **Not checked yet:**
+  - On the emulator: chip select and deselect, with Top Picks, Find Your Mood and Navidrome hidden while a chip is picked.
+  - A side-by-side comparison with the official app.
+  - The PC tests and the PC build.
+  - Explore buttons, card shelves and podcast episodes: they're not in this account's feed today, so only the tests cover them.
+- **Order and titles differ from the YT Music Android app.** BitChord signs in with the browser cookie, so it gets the web client's Home (WEB_REMIX), and the web Home is ordered and titled differently: "Listen again" instead of "Speed dial", for example.
+
+What YT's Home JSON looks like:
+- **Chips:** `sectionListRenderer.header.chipCloudRenderer.chips[].chipCloudChipRenderer`, with `text`, `isSelected`, `navigationEndpoint.browseEndpoint {FEmusic_home, params}` and `onDeselectedCommand`.
+- **Paging:** `continuations[].nextContinuationData`, and the next page in `continuationContents.sectionListContinuation`.
+- **Shelf types:**
+  - `musicCarouselShelfRenderer` and `musicImmersiveCarouselShelfRenderer`. Header: `musicCarouselShelfBasicHeaderRenderer`, with title, strapline, thumbnail, and a `moreContentButton` that is either a browse (More) or a watch (Play all).
+  - `musicShelfRenderer`
+  - `gridRenderer`
+  - `musicCardShelfRenderer`
+  - Shelves also carry `numItemsPerColumn` and `itemSize`.
+- **Item types:** `musicTwoRowItemRenderer` (`aspectRatio`), `musicResponsiveListItemRenderer`, `musicMultiRowListItemRenderer` and `musicNavigationButtonRenderer`.
+
+### Left, in order
+1. Finish Home 1:1 (above), with parser tests from InnerTube-shaped fixtures.
+2. Full rebuild under the lock: Android `assembleDevDebug testDevDebugUnitTest :shared:jvmTest :sharedUi:jvmTest`, PC tests, then the PC portable build.
+3. Audit the combined round, mainly Home and the key-clash toggle.
+4. **Test on the emulator:** Home vs YT Music shelf by shelf, the chips, the Automix style and key-clash rows, the artist radio toast, Similar artists without collabs, the Home See all, the player clip and paused cover, downloads.
+5. **Test the PC app** (PORTABLE=1, bridge 8775, quit by POST `/quit`): Local Music tags, Similar artists, the radio notice, the Automix style and key-clash settings, Home and chips.
+6. **Clean up:**
+   - Helper worktrees `.claude/worktrees/agent-acea69d9028b760db` and `agent-a6a526af004a7ac75` (both merged into the main checkout).
+   - `/d/Programs/Projects/bitchord-base`.
+   - The APKs in `out/`.
+   - The scratch screenshots.
+7. Noticed, not fixed: the Navidrome Songs tab shows some songs twice. These may be real duplicate files on the server.
+8. On hold: Apple-style AutoMix presets.
+
 ## Later: one list (owner, 2026-11-04)
 
 The single list of what is left, ticked when done. Everything not here is either done or dropped.
@@ -22,7 +221,7 @@ The single list of what is left, ticked when done. Everything not here is either
 - [x] (built and tested 2026-11-07 in the portable app: build 1 offered build 2 from a local release list, Later, About's Check for updates, Download Now with progress, SHA-256 checked, Install Now; the updater swapped the files in about a second and the app came back as build 2, signed in, data folder intact, old and staged removed after its first frame, About said up to date; a build 3 with a wrong checksum was refused and its files removed. Not tried: Cancel mid-download (the local download took about a second), the two-minute wait, a failed move and its roll-back, a folder name outside the ANSI code page, a real GitHub release; `ForkUpdater`, `BitChordUpdate.c`; a stalled download gives up after 30 s and Cancel ends it at once, 2026-11-07, unit tests only) PC updater (owner, 2026-11-05): a second small exe beside BitChord.exe, started by BitChord: downloads the release zip, extracts it over the app without touching `data/`, then opens BitChord; with a nice update window. Revived 441cdf9f's updater is the reference, not the code. Widened to both apps 2026-11-07: see "Updater plan" below
 - [x] Cover fade (cover-to-cover transition, from the Octave video), phone and PC, a switch in Appearance on both, off by default (owner, 2026-11-07). Dissolve only, 750 ms, no Y-flip. Seen 2026-11-07 on the emulator (old cover held, then dissolving into the new one in place); on the PC the switch and a skip were checked, but a skip between two different covers was not looked at there.
 - [ ] (later, owner 2026-11-07) Two or three Apple AutoMix presets on our own analysis
-- [ ] "My devices" and remote control (via Listen Together, ~1 day)
+- [ ] "My devices" and remote control (via Listen Together, ~1 day). Plan only (owner, 2026-11-11), from Lokal Music's take: the phone drives the PC's playback (play/pause/skip/seek/volume, the queue), also from the phone's media notification while the PC plays; pairing on the same Wi-Fi or Tailscale. Lokal also merges likes, playlists and history both ways and copies missing files, with a preview: not part of this item, decide separately
 - [ ] Suggested songs under playlists: not shown on the PC. Fixed 2026-11-06 (untested): the PC's load-more stopped when a page brought only suggestions; it now also waits on their count. Check with a signed-in PC and an owned playlist
 - [x] PC behind the phone (audit 2026-11-10, owner: fix from the phone's code, not the forks; old upstream-desktop `Desktop*.kt` copies nobody updated):
   1. Matcher: use the shared `TrackMatcher` (`targetOf(song)`) instead of `DesktopTrackMatcher`, which misses 8e9e70fe (non-Latin titles give no search at all), b46d6d9c, 6180e649, fe87ddcb, 3a29c3b2, d3314587, 38535595, ec04ec26. Feeds addons, JioSaavn, modules, upgrades, AutoPlay seed

@@ -348,7 +348,6 @@ import com.music.bitchord.ui.screens.HomeScreen
 import com.music.bitchord.ui.screens.LibraryGridPage
 import com.music.bitchord.ui.screens.LibraryScreen
 import com.music.bitchord.ui.screens.MoodGenrePlaylistsScreen
-import com.music.bitchord.ui.screens.forkMoreOpensPage // fork
 import com.music.bitchord.ui.screens.SearchScreen
 import com.music.bitchord.data.settings.SongSort
 import com.music.bitchord.ui.onboarding.OnboardingScreen
@@ -2969,20 +2968,8 @@ private fun BitChordApp(
                                 onRetry = viewModel::loadHistory,
                                 contentPadding = listPadding,
                             )
-                        } else if (pageRoute is AppRoute.HomeShelfMore) { // fork: a Home shelf's See all (ForkShelfMore.kt); taps as on Home
-                            com.music.bitchord.ui.screens.ForkShelfMorePage(
-                                shelf = pageRoute.shelf,
-                                onItemClick = { item, shelfTitle ->
-                                    val song = shelfSong(item)
-                                    val browseId = item.browseId
-                                    when {
-                                        song != null -> playRadio(song, QueueSource(shelfTitle, PlaybackSourceType.HOME))
-                                        browseId != null -> viewModel.openDetail(browseId = browseId, title = item.title, subtitle = item.subtitle, thumbnailUrl = item.thumbnailUrl)
-                                    }
-                                },
-                                onItemLongPress = onShelfLongPress,
-                                contentPadding = listPadding,
-                            )
+                        } else if (pageRoute is AppRoute.HomeShelfMore) { // fork: a Home shelf's See all (ForkHomeRoutes.kt); taps as on Home
+                            com.music.bitchord.ui.screens.ForkHomeShelfMoreRoute(pageRoute, viewModel, shelfSong, playRadio, onShelfLongPress, listPadding) // fork
                         } else if (pageRoute is AppRoute.LibraryShowAll) {
                             pageRoute.shelf.let { shelf ->
                                 LibraryGridPage(
@@ -3443,11 +3430,8 @@ private fun BitChordApp(
                                 onTopPickClick = openTopPick.takeUnless { hideTopPicks },
                                 onMoodClick = playMood.takeUnless { hideHomeMoods },
                                 onMoodsShowAll = { navigator.push(AppRoute.Moods) },
-                                onShelfOpen = { shelf -> // fork: a heading's See all — the album / playlist / artist page itself, else the grid
-                                    val more = shelf.moreBrowseId
-                                    if (more != null && shelf.forkMoreOpensPage()) viewModel.openDetail(browseId = more, title = shelf.title)
-                                    else navigator.push(AppRoute.HomeShelfMore(shelf))
-                                },
+                                onShelfOpen = com.music.bitchord.ui.screens.forkHomeShelfOpener(viewModel), // fork: a heading's See all — the album / playlist / artist page itself, else the grid (ForkHomeRoutes.kt)
+                                forkFeed = com.music.bitchord.ui.screens.rememberForkHomeFeedActions(viewModel, shelfSong, { songs, index, source -> playFrom(songs, index, source) }, { viewModel.closeMoodGenre(); selectedTab = TAB_EXPLORE }, { scope.launch { homeListState.scrollToItem(0) } }), // fork: chips, Explore buttons, Play all (ForkHomeFeedPhone.kt)
                                 // Nothing on Home is seen while the greeting covers it.
                                 artworkMotion = artworkMotion && !showDiwali,
                                 onTopPickLongPress = { pick ->
@@ -5911,6 +5895,7 @@ private fun BitChordApp(
                 onDismiss = { choosingSourceQuality = null },
             )
         }
+        com.music.bitchord.ui.screens.ForkAddonUserAgentAlert(hazeState) // fork: per-addon User-Agent list
 
         explainingOutdatedAddon?.let { config ->
             InfoAlert(
