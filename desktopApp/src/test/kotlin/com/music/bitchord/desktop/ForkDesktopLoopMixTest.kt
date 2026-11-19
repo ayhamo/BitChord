@@ -241,14 +241,20 @@ class ForkDesktopLoopMixTest {
         assertEquals("a fixed 16-bar overlap is chosen", ForkLoopMixRules.refusal(pair(phraseBars = 16)))
     }
 
-    /** A fixed length wins over a pick: a Loop pick couldn't undo it, so the overview keeps Loop greyed with this reason. */
+    /**
+     * Under Automix v2 a fixed length sizes the blend only, as the extension's "Blend length" does
+     * (ForkV2LoopGate): the pair isn't refused for it, and a non-loop pick is then the reason. Under
+     * BitChord's style (the test above) the fixed length still refuses.
+     */
     @Test
-    fun `a fixed length is the reason even when the pair has a pick`() {
+    fun `under Automix v2 a fixed length leaves the loop mix to the picks`() {
         try {
             ForkMixPicks.style = AutomixStyle.V2
+            assertNull(ForkLoopMixRules.refusal(pair(phraseBars = 8)))
+            assertNull(ForkLoopMixRules.refusal(pair(phraseBars = 16)))
             ForkMixPicks.set("a->b", ForkMixPicks.Pick(style = ForkMixPicks.Style.FILTER))
             assertEquals(ForkMixPicks.PICKED_REASON, ForkLoopMixRules.refusal(pair()))
-            assertEquals("a fixed 8-bar overlap is chosen", ForkLoopMixRules.refusal(pair(phraseBars = 8)))
+            assertEquals(ForkMixPicks.PICKED_REASON, ForkLoopMixRules.refusal(pair(phraseBars = 8)))
         } finally {
             ForkMixPicks.set("a->b", ForkMixPicks.Pick()) // Auto clears the pick
             ForkMixPicks.style = AutomixStyle.BITCHORD

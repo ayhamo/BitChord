@@ -113,6 +113,8 @@ class DesktopPlaybackEngine(
 
     private var resolveJob: Job? = null
     private var upgradeJob: Job? = null
+    /** fork: the copy `take` last handed to swapStream, by song id; a follow-up search compares against it. */
+    @Volatile private var forkTaken: Pair<String, DesktopStream>? = null
     private var nextResolveJob: Job? = null
 
     @Volatile private var playbackSpeed = 1f
@@ -463,7 +465,7 @@ class DesktopPlaybackEngine(
         if (better == null) return false
         val current = _state.value
         if (current.song?.videoId != song.videoId) return true
-        if (!DesktopMusicSources.worthSwapping(better.format, current.streamFormat)) {
+        if (!DesktopMusicSources.worthSwapping(better.format, forkTaken?.takeIf { it.first == song.videoId }?.second?.format ?: current.streamFormat)) { // fork: measured against a copy already handed to swapStream, so a follow-up doesn't swap it twice
             DesktopTrackLog.log(
                 "keeping '${song.title}' on what is playing — " +
                     "${DesktopMusicSources.sourceNameFor(better)} offered nothing better",
@@ -480,6 +482,7 @@ class DesktopPlaybackEngine(
                 " from ${DesktopMusicSources.sourceNameFor(better)}",
         )
         ForkUpgradeLength.expect(better) // fork: swapStream checks this copy's decoded length
+        forkTaken = song.videoId to better // fork: see worthSwapping above
         swapStream(song, better, current.positionMs)
         return true
     }
@@ -1563,11 +1566,13 @@ class DesktopPlaybackEngine(
         // An upgrade that arrives after the handoff has begun is no longer worth interrupting the
         // audible transition. Keep the running pair intact and retire the unused decoder.
         if (fadeRemaining > 0 || displaySwitched) {
+            DesktopTrackLog.log("better copy of '${track.song.title}' arrived during a transition; staying on what plays") // fork: was silent
             track.decoder.close()
             return
         }
         if (forkLoopRefusesUpgrade(track)) return // fork: ForkDesktopLoopMix
         if (forkQueueSwap(track)) return // fork: crossfade onto the better copy instead of cutting over
+        DesktopTrackLog.log("cutting '${track.song.title}' over to ${track.stream.format.summary.ifBlank { "the better copy" }}") // fork: the cut-over said nothing
         sink.flush()
         framesWritten = sink.framesPlayed()
         activePlan = null
@@ -2626,7 +2631,7 @@ class DesktopPlaybackEngine(
             // keeps the next deck, and a party joined mid-song doesn't touch it, so neither ended the mix.
             val why = when {
                 !automixEnabled -> "Automix is off"
-                automixPhraseBars != 0 -> "a fixed $automixPhraseBars-bar overlap is chosen" // fork (Desktop Revived d150d26f)
+                com.music.bitchord.playback.smart.automixv2.ForkV2LoopGate.fixedLengthRefuses(automixPhraseBars) -> com.music.bitchord.playback.smart.automixv2.ForkV2LoopGate.fixedLengthReason(automixPhraseBars) // fork (Desktop Revived d150d26f): BitChord's style only; Automix v2 keeps the loop (ForkV2LoopGate)
                 DesktopListenTogether.state.value.inParty -> "in a Listen Together party"
                 playbackSpeed != 1f -> "playback speed is not 1x"
                 skipSilenceEnabled -> "skip silence is on"
@@ -2869,6 +2874,7 @@ class DesktopPlaybackEngine(
     private fun forkLoopRefusesUpgrade(track: Track): Boolean {
         val run = forkLoopRun ?: return false
         if (run.engaged) {
+            DesktopTrackLog.log("better copy of '${track.song.title}' arrived during a loop mix; staying on what plays") // fork: was silent
             track.decoder.close()
             return true
         }

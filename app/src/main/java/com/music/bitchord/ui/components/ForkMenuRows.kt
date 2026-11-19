@@ -241,7 +241,7 @@ internal fun ForkFullscreenArtMenuRow(accent: Color) {
     ) { com.music.bitchord.data.settings.AppSettings.setFullBleedArtwork(!on) }
 }
 
-/** The fork's rows in the player's menu: the big art, the two video switches and saved queues. */
+/** The fork's rows in the player's menu: the big art, the two video switches, the most replayed jump and saved queues. */
 @Composable
 internal fun ForkPlayerMenuRows(song: com.music.bitchord.data.model.Song, accent: Color, onQueuePlayed: () -> Unit = {}) {
     if (!com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(song.videoId)) {
@@ -249,6 +249,7 @@ internal fun ForkPlayerMenuRows(song: com.music.bitchord.data.model.Song, accent
         ForkBackdropMenuRow(accent)
         ForkAnimatedCoversMenuRow(accent)
     }
+    com.music.bitchord.fork.ForkMostReplayedMenuRow(song, accent, onQueuePlayed)
     ForkSavedQueuesRow(accent, onQueuePlayed)
     ForkHandoffMenuRow(accent, onQueuePlayed)
 }

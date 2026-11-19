@@ -69,11 +69,11 @@ object ForkSettings {
     /** Only what is on the phone is shown, as with no network; see `ForkNetwork.offline`. */
     val offlineMode: StateFlow<Boolean> = _offlineMode.asStateFlow()
 
-    private val _automixStyle = MutableStateFlow(com.music.bitchord.playback.smart.AutomixStyle.BITCHORD)
+    private val _automixStyle = MutableStateFlow(com.music.bitchord.playback.smart.AutomixStyle.DEFAULT)
 
     /**
-     * "Automix style": BitChord's own Automix (default) or Automix v2 (the YouTube Music extension's
-     * engine, ported); the planner reads it each tick (`CrossfadeController` passes it to
+     * "Automix style": Automix v2 (the YouTube Music extension's engine, ported; the default on a fresh
+     * install, `AutomixStyle.DEFAULT`) or BitChord's own Automix; the planner reads it each tick (`CrossfadeController` passes it to
      * `planTransition`), see `ForkAutomixStyle` and `ForkV2Automix`. A saved "Web AutoDJ" or
      * "Advanced AutoDJ" (both removed) reads as Automix v2 and is stored as it ([readAutomix]).
      */
@@ -116,7 +116,6 @@ object ForkSettings {
         _offlineMode.value = prefs.getBoolean(KEY_OFFLINE_MODE, false)
         _coverFade.value = prefs.getBoolean(KEY_COVER_FADE, false)
         readAutomix()
-        com.music.bitchord.playback.smart.ForkMixPicks.save = { prefs.edit().putString(KEY_AUTOMIX_PAIR_PICKS, it).apply() }
         // Automix v2's whole-song evidence, measured by TrackAnalyzer beside its analyses (ForkV2EvidenceStore).
         com.music.bitchord.playback.smart.automixv2.ForkV2EvidenceStore.install(context.filesDir)
         com.music.bitchord.ui.theme.ForkSystemBars.mode.value = prefs.getString(KEY_SYSTEM_BARS, null)
@@ -208,17 +207,31 @@ object ForkSettings {
     /** Automix style, phrase length and the overview's picks, from the prefs (start-up and a restored backup). */
     private fun readAutomix() {
         val saved = prefs.getString(KEY_AUTOMIX_STYLE, null)
-        _automixStyle.value = com.music.bitchord.playback.smart.AutomixStyle.fromKey(saved)
         // A removed style's key (Web / Advanced AutoDJ) is stored as Automix v2's from now on, and the
         // removed "Shorter blend when keys clash" switch goes: Automix v2 always weighs the keys.
         val migrated = com.music.bitchord.playback.smart.AutomixStyle.migratedKey(saved)
+        // No saved style (a fresh install, or one that never chose): Automix v2, as the extension and the
+        // phone patches start. A saved choice, BitChord's included, stays. Read from the key as it is
+        // stored from now on: an unknown key is removed just below, so it reads as the default now
+        // rather than as BitChord on this start and Automix v2 on the next.
+        _automixStyle.value = com.music.bitchord.playback.smart.AutomixStyle.fromSaved(migrated)
         if (saved != null && migrated != saved || prefs.contains(KEY_AUTOMIX_KEY_AWARE)) {
             prefs.edit().apply { if (migrated == null) remove(KEY_AUTOMIX_STYLE) else putString(KEY_AUTOMIX_STYLE, migrated) }.remove(KEY_AUTOMIX_KEY_AWARE).apply()
         }
         _automixPhraseBars.value = prefs.getInt(KEY_AUTOMIX_PHRASE_BARS, 0).takeIf { it in PHRASE_BAR_CHOICES } ?: 0
-        // The Automix overview's picks per pair of songs (ForkMixPicks), read by Automix v2.
         com.music.bitchord.playback.smart.ForkMixPicks.style = _automixStyle.value
-        com.music.bitchord.playback.smart.ForkMixPicks.load(prefs.getString(KEY_AUTOMIX_PAIR_PICKS, null))
+        // The transition editor's overrides per pair of songs (ForkV2OverrideStore, editor.md §1), read
+        // by Automix v2: one JSON string, re-read here after a restored backup.
+        com.music.bitchord.playback.smart.automixv2.ForkV2OverrideStore.install(
+            load = { prefs.getString(KEY_AUTOMIX_OVERRIDES, null) },
+            save = { prefs.edit().putString(KEY_AUTOMIX_OVERRIDES, it).apply() },
+        )
+        // The overview's older picks ("a->b\tstyle\tbars" lines) move into it once, and their pref goes:
+        // also what a backup from before the editor brings back (KEY_AUTOMIX_PAIR_PICKS stays backed up).
+        if (prefs.contains(KEY_AUTOMIX_PAIR_PICKS)) {
+            com.music.bitchord.playback.smart.automixv2.ForkV2OverrideStore.migrateLegacyPicks(prefs.getString(KEY_AUTOMIX_PAIR_PICKS, null))
+            prefs.edit().remove(KEY_AUTOMIX_PAIR_PICKS).apply()
+        }
     }
 
     fun setAutomixPhraseBars(value: Int) {
@@ -242,7 +255,7 @@ object ForkSettings {
         KEY_PRELOAD_SONGS, KEY_COVER_FADE,
         // Automix style and what goes with it (the PC maps the same keys, ForkBackup.FORK there).
         // A backup's "automix_key_aware" (a removed switch) is not read: Automix v2 always weighs the keys.
-        KEY_AUTOMIX_STYLE, KEY_AUTOMIX_PHRASE_BARS, KEY_AUTOMIX_PAIR_PICKS,
+        KEY_AUTOMIX_STYLE, KEY_AUTOMIX_PHRASE_BARS, KEY_AUTOMIX_PAIR_PICKS, KEY_AUTOMIX_OVERRIDES,
     )
 
     /**
@@ -306,8 +319,9 @@ object ForkSettings {
         // A style this build doesn't know is the default, as a missing one is; a removed one
         // (Web / Advanced AutoDJ) comes in as Automix v2 (AutomixStyle.migratedKey).
         KEY_AUTOMIX_STYLE -> com.music.bitchord.playback.smart.AutomixStyle.migratedKey(value as? String)
-        // Read leniently by ForkMixPicks.load: a line it can't read is dropped, the rest kept.
+        // Both read leniently (ForkV2OverrideStore): a line or a pair it can't read is dropped, the rest kept.
         KEY_AUTOMIX_PAIR_PICKS -> value as? String
+        KEY_AUTOMIX_OVERRIDES -> value as? String
         in BACKED_UP -> value as? Boolean
         else -> null
     }
@@ -329,10 +343,21 @@ object ForkSettings {
     private const val KEY_AUTOMIX_STYLE = "automix_style"
     /** The removed "Shorter blend when keys clash" switch's key, only to clear it ([readAutomix]). */
     private const val KEY_AUTOMIX_KEY_AWARE = "automix_key_aware"
+    /** The overview's picks before the editor: only read once, to move them into [KEY_AUTOMIX_OVERRIDES]. */
     private const val KEY_AUTOMIX_PAIR_PICKS = "automix_pair_picks"
+
+    /** The transition editor's overrides, `{"a>b": override}` JSON (ForkV2OverrideStore); the PC's key too. */
+    private const val KEY_AUTOMIX_OVERRIDES = "automix_pair_overrides"
     private const val KEY_AUTOMIX_PHRASE_BARS = "automix_phrase_bars"
 
     const val DEFAULT_CLIP_CACHE_MB = 150
+
+    /**
+     * Automix (upstream's `smart_fade_enabled`) on a fresh install: on, as the extension and the phone
+     * patches start. Read by AppSettings' one-line hook only as `getBoolean`'s default, so a saved
+     * choice (off included) stays.
+     */
+    const val DEFAULT_AUTOMIX_ON = true
 
     /** The sizes offered for the clip cache. */
     val CLIP_CACHE_CHOICES_MB = listOf(150, 300, 500, 1024)

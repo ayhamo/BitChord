@@ -7,6 +7,7 @@ import com.music.bitchord.playback.smart.ForkMixPicks
 import com.music.bitchord.playback.smart.TransitionPlan
 import com.music.bitchord.playback.smart.automixv2.ForkV2Automix
 import com.music.bitchord.playback.smart.automixv2.ForkV2EvidenceStore
+import com.music.bitchord.playback.smart.automixv2.ForkV2OverrideStore
 import com.music.bitchord.playback.smart.automixv2.ForkV2Transition
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -21,7 +22,8 @@ import kotlin.math.roundToInt
  * A saved "Web AutoDJ" / "Advanced AutoDJ" (both removed on 2026-11-19) reads as Automix v2 and is
  * stored as it, and the removed "Shorter blend when keys clash" switch's pref is deleted (Automix
  * v2 always weighs the keys); left stored it would also have gone out in a backup as a PC-only
- * setting.
+ * setting. With no style saved (a fresh install) it is Automix v2, the phone's default too
+ * ([AutomixStyle.fromSaved]); a saved choice stays.
  */
 internal object ForkDesktopAutomixStyle {
     private const val KEY = "automix_style"
@@ -31,12 +33,19 @@ internal object ForkDesktopAutomixStyle {
     val style: StateFlow<AutomixStyle> = _style.asStateFlow()
 
     private fun read(): AutomixStyle {
-        val saved = persistence.string(KEY, AutomixStyle.BITCHORD.key)
+        // "" is no key saved: DesktopPersistence.string gives the default for an absent key.
+        val saved = persistence.string(KEY, "")
         val migrated = AutomixStyle.migratedKey(saved)
         if (migrated != null && migrated != saved) persistence.saveString(KEY, migrated)
         runCatching { persistence.preferences.remove(OLD_KEY_AWARE) }
-        return AutomixStyle.fromKey(saved)
+        return AutomixStyle.fromSaved(saved.ifEmpty { null })
     }
+
+    /**
+     * DesktopApp's "automix" switch on a fresh install: on, as on the phone (`ForkSettings.DEFAULT_AUTOMIX_ON`),
+     * the extension and the phone patches. Only `Preferences.getBoolean`'s default, so a saved choice stays.
+     */
+    const val DEFAULT_AUTOMIX_ON = true
 
     fun set(value: AutomixStyle) {
         _style.value = value
@@ -44,17 +53,29 @@ internal object ForkDesktopAutomixStyle {
         persistence.saveString(KEY, value.key)
     }
 
+    /** The overview's picks before the editor: only read once, to move them into [PAIR_OVERRIDES]. */
     private const val PAIR_PICKS = "automix_pair_picks"
 
+    /** The transition editor's overrides, `{"a>b": override}` JSON ([ForkV2OverrideStore]); the phone's key too. */
+    internal const val PAIR_OVERRIDES = "automix_pair_overrides"
+
     /**
-     * Loads the Automix overview's picks per pair of songs ([ForkMixPicks]) and saves them as they
-     * change; also opens Automix v2's evidence beside the analyses ([ForkV2EvidenceStore], measured by
+     * Loads the transition editor's overrides per pair of songs ([ForkV2OverrideStore], which
+     * [ForkMixPicks] now shows as picks) and saves them as they change, after moving the older picks'
+     * lines into them once (the old key is then removed); also opens Automix v2's evidence beside the analyses ([ForkV2EvidenceStore], measured by
      * `DesktopTrackAnalyzer`, or by [ForkDesktopV2Evidence] for a song analysed before it) and wires
      * the kick lock ([ForkDesktopKickLock]). Called once from the engine's `init`.
      */
     fun loadPairPicks() {
-        ForkMixPicks.load(persistence.string(PAIR_PICKS, ""))
-        ForkMixPicks.save = { persistence.saveString(PAIR_PICKS, it) }
+        ForkV2OverrideStore.install(
+            load = { persistence.string(PAIR_OVERRIDES, "") },
+            save = { persistence.saveString(PAIR_OVERRIDES, it) },
+        )
+        val old = persistence.string(PAIR_PICKS, "")
+        if (old.isNotEmpty()) {
+            ForkV2OverrideStore.migrateLegacyPicks(old)
+            runCatching { DesktopPreferenceChunks.remove(persistence.preferences, PAIR_PICKS) }
+        }
         ForkMixPicks.style = _style.value
         runCatching { ForkV2EvidenceStore.install(DesktopAnalysisRuntime.analysisHome()) }
         ForkDesktopKickLock.install()

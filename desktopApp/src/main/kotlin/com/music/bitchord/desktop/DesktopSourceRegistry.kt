@@ -627,6 +627,7 @@ internal object DesktopSourceRegistry {
         // fork (PC-Continued 18b6b3ae): Atmos before lossless; an Atmos copy only gets here with the setting on
         if (a.isDolbyAtmos != b.isDolbyAtmos) return if (a.isDolbyAtmos) candidate else held
         if (a.isLossless != b.isLossless) return if (a.isLossless) candidate else held
+        if (a.isLossless) return if (ForkLosslessRank.prefersCandidate(a, b)) candidate else held // fork: depth, then rate (FLAC states no bitrate)
         return if ((a.kbps ?: 0) > (b.kbps ?: 0)) candidate else held
     }
 

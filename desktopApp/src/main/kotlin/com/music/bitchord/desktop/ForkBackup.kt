@@ -278,6 +278,9 @@ internal object ForkBackup {
         automixStyle("automix_style"),
         int("automix_phrase_bars", allowed = listOf(0, 8, 16)),
         text("automix_pair_picks"),
+        // The transition editor's overrides ({"a>b": override} JSON, ForkV2OverrideStore): the same key and text on both.
+        // The picks above stay mapped so a backup from before the editor still restores them (each app moves them in once).
+        text(ForkDesktopAutomixStyle.PAIR_OVERRIDES),
     )
 
     /** The phone's `AppSettings.SECRETS` and `DEVICE_LOCAL`: never carried either way. */

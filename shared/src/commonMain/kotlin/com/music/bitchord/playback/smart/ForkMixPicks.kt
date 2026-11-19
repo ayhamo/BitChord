@@ -1,5 +1,7 @@
 package com.music.bitchord.playback.smart
 
+import com.music.bitchord.playback.smart.automixv2.ForkV2MixOverride
+import com.music.bitchord.playback.smart.automixv2.ForkV2OverrideStore
 import kotlin.concurrent.Volatile
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -28,12 +30,20 @@ import kotlinx.coroutines.flow.update
  *   gives way to a weak grid's cap.
  *
  * Pairs are "outgoing id->incoming id", the loop mix's own pair key on both apps.
+ *
+ * Since the transition editor's storage (2026-11-19) the picks are no longer stored here: they are
+ * the pair's override in [ForkV2OverrideStore] (keyed "a>b", editor.md §1), and this object is a
+ * thin adapter that shows an override as a {style, bars} pick ([pickOf]) and saves a pick as the
+ * override editor.md §1's migration table makes of it. The old saved lines are moved into the store
+ * once by each app ([ForkV2OverrideStore.migrateLegacyPicks]).
  */
 object ForkMixPicks {
 
     enum class Style(val key: String, val label: String) {
         LOOP("loop", "Loop"),
-        BLEND("blend", "Blend"),
+        // "Beat blend", not "Blend": the editor's Blend preset (editor.md §2) is another thing, and this
+        // pick is the planner's own blend forced (override family "blend"). The key stays "blend".
+        BLEND("blend", "Beat blend"),
         FILTER("filter", "Filter"),
         FADE("crossfade", "Fade"),
         ;
@@ -81,7 +91,6 @@ object ForkMixPicks {
     /** Where the loop mix stands for a pair: planned at [loopStartSec], or [why] not. */
     data class Loop(val pair: String, val loopStartSec: Double?, val why: String?)
 
-    const val MAX_PICKS = 300
     val BARS = listOf(4, 8, 16, 32)
 
     /** Preview starts this long before a loop mix's first loop (the extension's 8 s). */
@@ -105,8 +114,14 @@ object ForkMixPicks {
     /** Whether picks apply under [style]. */
     val active: Boolean get() = style != AutomixStyle.BITCHORD
 
-    private val _picks = MutableStateFlow<Map<String, Pick>>(emptyMap())
+    private val _picks = MutableStateFlow(picksFromStore())
+
+    /** Every pair's override as a pick, keyed "a->b" ([pair]); follows [ForkV2OverrideStore]. */
     val picks: StateFlow<Map<String, Pick>> = _picks.asStateFlow()
+
+    init {
+        ForkV2OverrideStore.onChange = { _picks.value = picksFromStore() }
+    }
 
     private val _planned = MutableStateFlow<Planned?>(null)
     val planned: StateFlow<Planned?> = _planned.asStateFlow()
@@ -117,10 +132,6 @@ object ForkMixPicks {
     /** The loop mix's last verdict that wasn't a pick turning it away, for [set]. */
     private val lastDecided = MutableStateFlow<Loop?>(null)
 
-    /** Writes the picks out ([encode]); set by each app. */
-    @Volatile
-    var save: ((String) -> Unit)? = null
-
     /** Moves the playing song to a position in ms (Preview); set by each app's player. */
     @Volatile
     var seek: ((Long) -> Unit)? = null
@@ -128,12 +139,45 @@ object ForkMixPicks {
     fun pair(fromId: String, toId: String) = "$fromId->$toId"
 
     /** The pick for [fromId] -> [toId] under the style in force; null for none or under BitChord's style. */
-    fun pickFor(fromId: String, toId: String): Pick? = if (active) _picks.value[pair(fromId, toId)] else null
+    fun pickFor(fromId: String, toId: String): Pick? = if (active) pickOf(ForkV2OverrideStore.get(fromId, toId)) else null
 
-    /** Why the pair gets no loop mix because of its pick, or null. */
+    /**
+     * Why the pair gets no loop mix because of its override, or null: anything the user set that is
+     * not Loop (a preset, custom lanes, a family, a beat match, a length or a window) is a non-loop
+     * mix picked. An override is never all Auto ([ForkV2MixOverride.normalize] drops those).
+     */
     fun loopRefusal(fromId: String, toId: String): String? {
-        val pick = pickFor(fromId, toId) ?: return null
-        return if (turnsLoopAway(pick)) PICKED_REASON else null
+        if (!active) return null
+        val ov = ForkV2OverrideStore.get(fromId, toId) ?: return null
+        return if (ov.loop()) null else PICKED_REASON
+    }
+
+    /**
+     * An override as the old chips can name it: Loop, the planner's blend or filter mix (a migrated
+     * family), Fade (beat match off alone), a length alone, and for anything only the editor makes
+     * (a preset, lanes, Sync/Glide, a window) a blend with its length.
+     */
+    internal fun pickOf(o: ForkV2MixOverride?): Pick? {
+        if (o == null) return null
+        val bars = o.bars.takeIf { it > 0 }
+        val plain = o.preset == null && o.out == null && o.`in` == null
+        return when {
+            o.loop() -> Pick(Style.LOOP)
+            o.family == "filter" -> Pick(Style.FILTER, bars)
+            o.family == "blend" -> Pick(Style.BLEND, bars)
+            plain && o.beatMatch == "off" -> Pick(Style.FADE)
+            plain && o.beatMatch == null -> Pick(null, bars)
+            else -> Pick(Style.BLEND, bars)
+        }
+    }
+
+    private fun picksFromStore(): Map<String, Pick> {
+        val out = LinkedHashMap<String, Pick>()
+        for ((key, o) in ForkV2OverrideStore.overrides.value) {
+            val (from, to) = ForkV2OverrideStore.idsOf(key) ?: continue
+            pickOf(o)?.let { out[pair(from, to)] = it }
+        }
+        return out
     }
 
     private fun turnsLoopAway(pick: Pick) = pick.style == Style.BLEND || pick.style == Style.FILTER ||
@@ -141,20 +185,22 @@ object ForkMixPicks {
 
     /**
      * Sets [pair]'s pick, the extension's `pick()`: a loop or a fade has no length of its own to pick,
-     * a filter mix is at most [FILTER_MAX_BARS] bars, and an all-Auto pick is removed.
-     * The newest pick goes last, and the oldest beyond [MAX_PICKS] are dropped.
+     * a filter mix is at most [FILTER_MAX_BARS] bars, and an all-Auto pick is removed. Saved as the
+     * pair's override (editor.md §1's table), keeping a lock the pair has; the store's cap applies.
      */
     fun set(pair: String, pick: Pick) {
         val p = normalised(pick)
-        var next: Map<String, Pick> = emptyMap()
-        _picks.update { old ->
-            LinkedHashMap(old).apply {
-                remove(pair)
-                if (!p.isEmpty) put(pair, p)
-                while (size > MAX_PICKS) remove(keys.first())
-            }.also { next = it }
+        val (from, to) = ForkV2OverrideStore.idsOf(pair) ?: return
+        val m = LinkedHashMap<String, Any?>()
+        m["style"] = p.style?.key
+        if (p.bars != null) m["bars"] = p.bars
+        val ov = ForkV2MixOverride.fromJson(m)
+        if (ov == null) {
+            ForkV2OverrideStore.reset(from, to)
+        } else {
+            ov.lock = ForkV2OverrideStore.get(from, to)?.lock == true
+            ForkV2OverrideStore.put(from, to, ov)
         }
-        save?.invoke(encode(next))
         // The phone keeps its loop plan per pair and, when nothing about the pair changed, hands it back
         // without deciding again, so a pick that lets the loop back in would leave the overview on "picked
         // in the overview" for good: put back what the loop mix last decided for this pair.
@@ -175,23 +221,6 @@ object ForkMixPicks {
         pick.style == Style.FILTER && (pick.bars ?: 0) > FILTER_MAX_BARS -> pick.copy(bars = FILTER_MAX_BARS)
         else -> pick
     }
-
-    /** Reads saved picks back ([encode]'s lines); a bad line is skipped. */
-    fun load(saved: String?) {
-        val map = LinkedHashMap<String, Pick>()
-        saved?.lineSequence()?.forEach { line ->
-            val parts = line.split('\t')
-            if (parts.size != 3 || parts[0].isBlank()) return@forEach
-            val pick = normalised(Pick(Style.fromKey(parts[1]), parts[2].toIntOrNull()?.takeIf { it in BARS }))
-            if (!pick.isEmpty) map[parts[0]] = pick
-        }
-        while (map.size > MAX_PICKS) map.remove(map.keys.first())
-        _picks.value = map
-    }
-
-    /** One pair a line: "a->b", style key or empty, bars or empty, tab-separated. */
-    fun encode(picks: Map<String, Pick>): String =
-        picks.entries.joinToString("\n") { (pair, p) -> "$pair\t${p.style?.key.orEmpty()}\t${p.bars?.toString().orEmpty()}" }
 
     /**
      * From ForkV2Automix.planTransition, each time it plans a pair: what the mix is ([style], [bars],
@@ -223,6 +252,7 @@ object ForkMixPicks {
 
     /** Back to nothing picked, planned or noted (tests). */
     internal fun reset() {
+        ForkV2OverrideStore.clear()
         _picks.value = emptyMap()
         _planned.value = null
         _loop.value = null

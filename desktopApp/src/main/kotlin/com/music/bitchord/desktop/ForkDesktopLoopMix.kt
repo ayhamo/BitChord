@@ -6,6 +6,7 @@ import com.music.bitchord.playback.smart.ForkAutomix
 import com.music.bitchord.playback.smart.ForkMixPicks
 import com.music.bitchord.playback.smart.LoopMix
 import com.music.bitchord.playback.smart.TrackAnalysis
+import com.music.bitchord.playback.smart.automixv2.ForkV2LoopGate
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
@@ -105,10 +106,12 @@ internal object ForkLoopMixRules {
      */
     fun refusal(p: ForkLoopPair): String? = when {
         !p.automix -> "Automix is off"
-        // From Desktop Revived d150d26f: a fixed 8 or 16-bar overlap asked for is the planner's blend;
-        // the loop mix picks its own length. Checked before the picks: a Loop pick couldn't undo it, so the
-        // overview keeps Loop greyed with this reason rather than offering it after a Blend/Filter pick.
-        p.phraseBars != 0 -> "a fixed ${p.phraseBars}-bar overlap is chosen"
+        // From Desktop Revived d150d26f: under BitChord's style a fixed 8 or 16-bar overlap asked for is the
+        // planner's blend; the loop mix picks its own length. Checked before the picks: a Loop pick couldn't
+        // undo it, so the overview keeps Loop greyed with this reason rather than offering it after a
+        // Blend/Filter pick. Under Automix v2 the length sizes the blend only and the loop may still win, as
+        // in the extension (ForkV2LoopGate).
+        ForkV2LoopGate.fixedLengthRefuses(p.phraseBars) -> ForkV2LoopGate.fixedLengthReason(p.phraseBars)
         // A blend, filter mix, fade or length picked for the pair in the Automix overview (ForkMixPicks).
         ForkMixPicks.loopRefusal(p.outSong.videoId, p.inSong.videoId) != null -> ForkMixPicks.PICKED_REASON
         p.inParty -> "in a Listen Together party"

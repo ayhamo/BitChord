@@ -125,14 +125,12 @@ object ForkV2Automix {
         return s
     }
 
-    /** The overview's pick for the pair as the port's override ({style, bars}, migrated as read); null for none. */
-    fun overrideFor(fromId: String, toId: String): ForkV2MixOverride? {
-        val pick = ForkMixPicks.pickFor(fromId, toId) ?: return null
-        val m = LinkedHashMap<String, Any?>()
-        m["style"] = pick.style?.key
-        if (pick.bars != null) m["bars"] = pick.bars
-        return ForkV2MixOverride.fromJson(m)
-    }
+    /**
+     * The pair's override from the editor's store ([ForkV2OverrideStore], editor.md §1); null for none,
+     * or while BitChord's own style is in force (its overview shows the edits greyed, they don't apply).
+     */
+    fun overrideFor(fromId: String, toId: String): ForkV2MixOverride? =
+        if (ForkMixPicks.active) ForkV2OverrideStore.get(fromId, toId) else null
 
     /**
      * The blend as Automix v2 plans it, and its deck schedule. [from] / [to] null: not analysed yet
@@ -241,7 +239,10 @@ object ForkV2Automix {
         val from = if (ready(analysis, currentTrack)) analysisOf(analysis, curId, length) else null
         val to = if (ready(nextAnalysis, nextTrack)) analysisOf(nextAnalysis, nextId, nextLength) else null
         val ov = overrideFor(curId, nextId)
-        val ovKey = ov?.let { ForkV2Json.write(it.toJson()) + it.migrated }.orEmpty()
+        // The store's change counter too, so no memo outlives a write to the store (a restored backup
+        // re-installs it without any one pair's JSON telling): an edit is planned at once, unless the
+        // latch above already holds the armed plan (editor.md §8, "for the next time").
+        val ovKey = ov?.let { ForkV2Json.write(it.toJson()) + it.migrated }.orEmpty() + "#" + ForkV2OverrideStore.changes.value
         val memoKey = "$key|${from?.let { mapKey(analysis) }}|${to?.let { mapKey(nextAnalysis) }}|$ovKey"
         val second = floor(pos).toLong()
         memo?.takeIf { it.key == memoKey && it.second == second }?.let { m ->
@@ -251,6 +252,7 @@ object ForkV2Automix {
         val plan = toTransitionPlan(transition, pos)
         memo = Memo(memoKey, second, plan)
         lastBlend = pair to transition
+        ForkV2EditorFeed.note(curId, nextId, transition.plan, from, to, length, pos + LATCH_LEAD_SEC) // the transition editor's plan
         val p = transition.plan
         val outSpan = transition.mix.out.unwrappedAt(transition.mix.t0 + transition.mix.D) - p.mixOutTrackTime
         latch = Latch(key, plan, p.mixOutTrackTime - p.rampSongSec - LATCH_LEAD_SEC, p.mixOutTrackTime + max(outSpan, plan.fadeSeconds))

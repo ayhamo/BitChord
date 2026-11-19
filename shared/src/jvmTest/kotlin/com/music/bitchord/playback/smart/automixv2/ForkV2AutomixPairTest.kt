@@ -36,14 +36,14 @@ class ForkV2AutomixPairTest {
 
     private class Planned(val decision: ForkV2Loop.Decision, val blend: ForkV2Transition, val pos: Double)
 
-    private fun plan(pair: Map<String, Any?>): Planned {
+    private fun plan(pair: Map<String, Any?>, phraseBars: Int = 0): Planned {
         val songs = pair["songs"] as List<Any?>
         val a = songs[0] as Map<String, Any?>
         val b = songs[1] as Map<String, Any?>
         val from = ForkV2Analysis.fromJson(a["analysis"] as Map<String, Any?>)
         val to = ForkV2Analysis.fromJson(b["analysis"] as Map<String, Any?>)
         val pos = max(30.0, from.durationSec - 95)
-        val blend = ForkV2Automix.planBlend(0, a["id"] as String, b["id"] as String, from, to, from.durationSec, pos, null)
+        val blend = ForkV2Automix.planBlend(phraseBars, a["id"] as String, b["id"] as String, from, to, from.durationSec, pos, null)
         val sung = ForkV2Planner.Sung()
         sung.out = spans(a["sung"])
         sung.`in` = spans(b["sung"])
@@ -84,6 +84,24 @@ class ForkV2AutomixPairTest {
         assertTrue(!p.blend.glides, "no glide at 12% apart")
         // The phone's wall span (fade x incoming / outgoing rate) is the incoming song's span.
         assertTrue(abs(tp.fadeSeconds * tp.incomingPlaybackRate / tp.outgoingPlaybackRate - p.blend.incomingSongSeconds) < 0.01)
+    }
+
+    /**
+     * A fixed 8 or 16-bar length chosen in Settings sizes Automix v2's blend only, as the extension's
+     * "Blend length" does (ForkV2LoopGate): the gate lets the pair through and the two hard rules still
+     * hold with the blend planned at that length.
+     */
+    @Test
+    fun aFixedLengthKeepsBothHardRulesUnderAutomixV2() {
+        for (bars in listOf(8, 16)) {
+            assertTrue(!ForkV2LoopGate.fixedLengthRefuses(bars, com.music.bitchord.playback.smart.AutomixStyle.V2))
+            val one = plan(pairFile("1-"), bars)
+            assertNotNull(one.decision.plan, "pair 1 must still loop with a fixed $bars-bar length: ${one.decision.why}")
+            ForkV2Automix.forget()
+            val two = plan(pairFile("2-"), bars)
+            assertNull(two.decision.plan, "pair 2 must never loop, fixed $bars-bar length or not")
+            ForkV2Automix.forget()
+        }
     }
 
     /** As the fixtures test: the decoded song as the extension's loop search reads it. */

@@ -1103,6 +1103,7 @@ private fun BitChordApp(
         MusicVideoEngine.attach(controller)
         onDispose { MusicVideoEngine.attach(null) }
     }
+    com.music.bitchord.fork.ForkMostReplayedPhone.Attach(controller) // fork: the player menu's "Jump to the most replayed part" seeks through this controller
     // A resume in a party is performed on the instant the server schedules, not
     // when it was pressed, and nothing about the player moves in between — so
     // the transport spends that round trip drawn as though the tap never landed.

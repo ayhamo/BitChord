@@ -456,6 +456,7 @@ internal fun DesktopSongMenu(
                 ) { pickingLyricsProvider = true }
             }
             if (onSetLyricsOffset != null) ForkAutomixOverviewRow(onDismiss) // fork: v1.9.1's "Automix overview", the player's menu only (ForkAutomixPreview.kt)
+            if (onSetLyricsOffset != null) ForkMostReplayedRow(song, onDismiss) // fork: "Jump to the most replayed part", the player's menu only (ForkMostReplayedDesktop.kt)
             if (onSetLyricsOffset != null) {
                 DesktopMenuRow(
                     icon = Icons.Rounded.Tune,

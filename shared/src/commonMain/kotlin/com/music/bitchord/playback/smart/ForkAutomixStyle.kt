@@ -26,6 +26,18 @@ enum class AutomixStyle(val key: String, val label: String) {
         const val OLD_WEB_KEY = "original_autodj"
         const val OLD_ADVANCED_KEY = "advanced_autodj"
 
+        /**
+         * The style of a fresh install, one with no style saved: Automix v2, as the extension and the
+         * phone patches start (owner, 2026-11-19). Only [fromSaved] gives it; [fromKey] is unchanged.
+         */
+        val DEFAULT = V2
+
+        /**
+         * The style a saved key means: none saved (the key absent) is [DEFAULT], a saved one is
+         * [fromKey]'s, so an existing choice (BitChord's included) stays as it was.
+         */
+        fun fromSaved(key: String?): AutomixStyle = if (key == null) DEFAULT else fromKey(key)
+
         /** A stored key as a style: the two removed keys are [V2], anything unknown (or none) is [BITCHORD]. */
         fun fromKey(key: String?): AutomixStyle = when (key) {
             V2.key, OLD_WEB_KEY, OLD_ADVANCED_KEY -> V2

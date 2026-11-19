@@ -2452,7 +2452,7 @@ class CrossfadeController(
 
     /** Why [current] -> [next] can't be a loop mix right now, or null when it can. */
     private fun loopRefusalFor(player: ExoPlayer, current: MediaItem, next: MediaItem, state: SmartAnalysis): String? = when {
-        com.music.bitchord.fork.ForkSettings.automixPhraseBars.value != 0 -> "a fixed ${com.music.bitchord.fork.ForkSettings.automixPhraseBars.value}-bar overlap is chosen" // fork: the planner's blend, as on the PC (ForkDesktopLoopMix); before the pick check so the overview keeps Loop greyed with a true reason
+        com.music.bitchord.playback.smart.automixv2.ForkV2LoopGate.fixedLengthRefuses(com.music.bitchord.fork.ForkSettings.automixPhraseBars.value) -> com.music.bitchord.playback.smart.automixv2.ForkV2LoopGate.fixedLengthReason(com.music.bitchord.fork.ForkSettings.automixPhraseBars.value) // fork: the planner's blend under BitChord's style, as on the PC (ForkDesktopLoopMix); Automix v2 lets the loop win as the extension does (ForkV2LoopGate); before the pick check so the overview keeps Loop greyed with a true reason
         com.music.bitchord.playback.smart.ForkMixPicks.loopRefusal(current.mediaId, next.mediaId) != null -> com.music.bitchord.playback.smart.ForkMixPicks.PICKED_REASON // fork: a style or length picked for the pair (ForkMixPicks)
         !LoopMixRenderer.available -> "no renderer"
         AppSettings.playbackSpeed.value != 1f -> "playback speed is not 1x"

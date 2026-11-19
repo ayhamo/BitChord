@@ -153,3 +153,22 @@ internal fun ForkSourceMatchingGroup() {
         }
     }
 }
+
+/**
+ * Which of two lossless copies of one recording is the better one, by what the files say.
+ *
+ * The registry's betterOf ranked lossless copies by bitrate alone, and an addon's FLAC usually
+ * states no bitrate, so whichever copy answered first won the tie. Measured on the owner's PC
+ * (2026-11-19, 'Talking Body'): NullBeat's 16-bit/44.1 kHz copy answered first and was kept over
+ * Nebula's 24-bit/44.1 kHz and Tidotido's 24-bit/96 kHz, so the "upgrade" landed on the worst of
+ * the three. Bit depth goes first, then sample rate, then the stated bitrate; an unknown is 0.
+ */
+internal object ForkLosslessRank {
+    fun prefersCandidate(candidate: DesktopStreamFormat, held: DesktopStreamFormat): Boolean {
+        val depth = (candidate.bitDepth ?: 0).compareTo(held.bitDepth ?: 0)
+        if (depth != 0) return depth > 0
+        val rate = (candidate.sampleRateHz ?: 0).compareTo(held.sampleRateHz ?: 0)
+        if (rate != 0) return rate > 0
+        return (candidate.kbps ?: 0) > (held.kbps ?: 0)
+    }
+}

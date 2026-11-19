@@ -48,4 +48,17 @@ class ForkAutomixBackupTest {
         assertEquals(saved, ForkSettings.backupValue("automix_pair_picks", saved))
         assertNull(ForkSettings.backupValue("automix_pair_picks", 3))
     }
+
+    @Test
+    fun `the editor's overrides travel as their saved JSON`() {
+        val saved = """{"a>b":{"v":1,"preset":"melt","lock":true,"engine":3,"savedAt":7}}"""
+        assertEquals(saved, ForkSettings.backupValue("automix_pair_overrides", saved))
+        assertNull(ForkSettings.backupValue("automix_pair_overrides", true))
+    }
+
+    @Test
+    fun `Automix is on for a fresh install`() {
+        assertEquals(true, ForkSettings.DEFAULT_AUTOMIX_ON)
+        assertEquals(AutomixStyle.V2, AutomixStyle.fromSaved(null))
+    }
 }

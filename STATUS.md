@@ -2,6 +2,16 @@
 
 Snapshot for picking the work up again. Plan: `FORK_PLAN.md`. Every touched upstream line: `FORK.md`.
 
+## Done 2026-11-19, evening (committed): Automix transition editor, loop gate, most replayed, PC upgrade picks
+
+- **Transition editor (phone and PC):** the mix popup's pick panel is now the editor of spec/automix/editor.md (`ForkTransitionEditor`, `ForkV2EditorGeometry`, `ForkV2EditorFeed`): header with the Custom badge, decks drawn from Automix v2's plan curves, the window dragged per song and held at the planner's limits, presets, Customize lanes, beat match, length 2-32, ±10 ms nudges, Preview, Lock, Reset to Auto, the §6 warnings.
+- **Override storage:** `ForkV2OverrideStore` (key `"a>b"`, `automix_pair_overrides` on both apps, backed up), 300 unlocked with locks exempt, the old picks migrated once; the planner reads it and re-plans on every edit. `ForkV2EditorCasesTest` runs all of editor-cases.json and passes.
+- **Defaults:** with nothing saved, Automix is on and the style is Automix v2 on both apps.
+- **Loop vs blend:** under Automix v2 a fixed 8/16-bar length no longer refuses the loop mix (the extension's Blend length never does); BitChord's style unchanged; golden pairs 1/2 hold at 8 and 16 bars. Kept refusals are real player limits (speed, skip silence, party, sleep timer, non-stereo PC output, easing deck, quality swap, another recording's copy, analysis pending, build leads).
+- **Known platform differences:** the phone keeps BitChord's two ExoPlayers (no kick lock, decks ~50 ms apart, 30 ms gain/glide ticks, no 250 ms soft hand-over; the 40 ms lead is a YouTube-player fix with no counterpart). playback.md lets each platform reach the targets its own way but keeps the targets, so these are recorded phone misses, not exemptions. The PC meets them.
+- **Most replayed:** "Jump to the most replayed part" in the player menu on both apps (YouTube songs only).
+- **PC upgrades (owner's log, 'Talking Body'):** lossless copies are ranked by bit depth, then rate (FLAC states no bitrate, so the first answer used to win: 16/44.1 over 24/96); an Atmos follow-up no longer swaps the same copy twice; dropped upgrades are logged.
+
 ## Done 2026-11-19 (not committed): the week's list, items 1-5
 
 **Automix v2 follow-ups** (2026-11-19; not heard yet):

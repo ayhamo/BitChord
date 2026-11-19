@@ -651,7 +651,7 @@ fun BitChordDesktopApp() {
     // than once per recomposition.
     var autoplaySeed by remember { mutableStateOf<String?>(null) }
     var autoplayJob by remember { mutableStateOf<Job?>(null) }
-    var automix by remember { mutableStateOf(persistence.boolean("automix", false)) }
+    var automix by remember { mutableStateOf(persistence.boolean("automix", ForkDesktopAutomixStyle.DEFAULT_AUTOMIX_ON)) } // fork: on for a fresh install (ForkDesktopAutomixStyle)
     // A manual skip blends into the already-prepared next track over ~15s instead of cutting.
     var automixOnSkip by remember { mutableStateOf(persistence.boolean("automix_on_skip", false)) }
     // Apple-style Automix phrase length in bars: 0 = adaptive (default), 8 or 16 = fixed.
@@ -3268,6 +3268,7 @@ fun BitChordDesktopApp() {
         )
         partySyncHolder[0]?.onLocalIntent()
     }
+    SideEffect { ForkMostReplayedDesktop.install(seek = ::seekPlayer, playingId = { selectedSong?.videoId }) } // fork: the player menu's "Jump to the most replayed part" seeks as the scrubber does
 
     ForkAccentSource(selectedSong?.thumbnailUrl) // fork: the accent can follow the song (ForkAccent)
     MaterialTheme(

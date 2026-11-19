@@ -335,6 +335,13 @@ object ForkV2Planner {
         val warnings = ArrayList<String>()
         val p = planFor(s, fromId, toId, from, to, durationSec, pos, earliest, sung, ov, warnings)
         p.curves = ForkV2Curves.blend(p)
+        // A length the planner didn't use (a hand-over, a drop-in's two bars): why, not "fit here"
+        // (editor.md §6; automix.js plan, editor-cases.json's last plans case).
+        if (ov != null && ov.bars > 0 && !ov.loop() && warnings.isEmpty() &&
+            (p.handoff || p.bridge || p.fallback || (p.shape == "dropin" && p.bars != ov.bars))
+        ) {
+            warnings.add("${ov.bars} bars not used: ${p.reason ?: "a plain fade here"}")
+        }
         if (ov != null && !ov.loop()) {
             if (warnings.isNotEmpty()) p.warnings = warnings
             if (ov.`in` != null) p.windowIn = true // placed by the user: the kick lock leaves it
@@ -465,6 +472,8 @@ object ForkV2Planner {
             }
         }
         if ("filter" == family) {
+            // the filter mix places itself (editor.md §6; automix.js planFor)
+            if (pick!!.out != null || pick.`in` != null) warnings.add("a Filter mix places itself: the saved window isn't used (pick a preset to use it)")
             val g = if (!toWeak) toGrid else null
             return filterMix(
                 s, cur, next, fromGrid, g, requestedBars(s, cur, next, fromGrid, toGrid?.downbeatSec ?: 0.0, true), pos, earliest,

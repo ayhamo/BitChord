@@ -192,9 +192,9 @@ internal fun MixViewPopup(
         ) {
             Column(
                 modifier = Modifier
-                    .widthIn(max = PopupMaxWidth)
+                    .widthIn(max = ForkMixPopup.maxWidth) // fork: wider for the transition editor (was PopupMaxWidth)
                     .fillMaxWidth()
-                    .padding(horizontal = 26.dp)
+                    .padding(horizontal = ForkMixPopup.sidePadding) // fork: was 26.dp
                     .clip(PopupShape)
                     .then(
                         if (reduceDynamicBlur) {
@@ -217,8 +217,9 @@ internal fun MixViewPopup(
                     .padding(vertical = 14.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
+                ForkTransitionHeader(view, live) // fork: the transition editor's header (ForkTransitionEditor)
                 MixViewContent(view ?: PlaceholderView, progress, live)
-                ForkMixPicksPanel(live, view, Modifier.padding(start = 14.dp, top = 14.dp, end = 14.dp)) // fork: picks per pair of songs (ForkMixPicks)
+                ForkTransitionEditor(live, view, Modifier.padding(start = 14.dp, top = 14.dp, end = 14.dp)) // fork: the transition editor (ForkTransitionEditor)
             }
         }
     }
@@ -390,7 +391,7 @@ private fun DeckNumbers(deck: MixDeck) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             camelotOf(deck.key)?.let { camelot ->
                 Text(
-                    text = camelot.code,
+                    text = forkKeyLabel(camelot.code, deck.key), // fork: the key's name beside its code
                     color = Color(0xFF151515),
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
@@ -415,6 +416,7 @@ private fun DeckNumbers(deck: MixDeck) {
 private fun MixDecks(view: MixTransitionView, progress: State<Float>, live: Boolean, sweep: State<Float>) {
     val outColors = rememberWaveColors(view.outgoing.artworkUrl)
     val inColors = rememberWaveColors(view.incoming.artworkUrl)
+    if (forkEditorDecks(view, progress, live, listOf(outColors.low, outColors.mid, outColors.high), listOf(inColors.low, inColors.mid, inColors.high))) return // fork: Automix v2's plan drawn and edited (ForkTransitionEditor)
     val pending = view.outgoing.analysing || view.incoming.analysing
     BoxWithConstraints(
         modifier = Modifier

@@ -195,11 +195,13 @@ class ForkBackupTest {
             })
         }
         val picks = "a->b\tloop\t\nc->d\tfilter\t8"
+        // The transition editor's overrides (ForkV2OverrideStore): the same key and JSON on both.
+        val overrides = """{"a>b":{"v":1,"preset":"melt","lock":true,"engine":3,"savedAt":7}}"""
         ForkBackup.apply(
             ForkBackupFormat.BackupFile(
                 fork = section(
                     "automix_style" to "advanced_autodj", "automix_key_aware" to true,
-                    "automix_phrase_bars" to 16, "automix_pair_picks" to picks,
+                    "automix_phrase_bars" to 16, "automix_pair_picks" to picks, "automix_pair_overrides" to overrides,
                 ),
             ),
         )
@@ -208,15 +210,18 @@ class ForkBackupTest {
         assertNull(main.get("automix_key_aware", null))
         assertEquals("16", main.get("automix_phrase_bars", null))
         assertEquals(picks, main.get("automix_pair_picks", null))
+        assertEquals(overrides, main.get("automix_pair_overrides", null))
         val settings = exported()["fork"]!!.jsonObject["settings"]!!.jsonObject
         fun pref(value: Any) = ForkBackupFormat.json.encodeToJsonElement(ForkBackupFormat.PrefValue.serializer(), of(value)!!)
         assertEquals(pref("automix_v2"), settings["automix_style"])
         assertNull(settings["automix_key_aware"])
         assertEquals(pref(16), settings["automix_phrase_bars"])
         assertEquals(pref(picks), settings["automix_pair_picks"])
+        assertEquals(pref(overrides), settings["automix_pair_overrides"])
         // Not PC-only: they leave in the phone's part, never a second time in the PC's own.
         assertFalse(ForkBackup.pcOnly("automix_style"))
         assertFalse(ForkBackup.pcOnly("automix_pair_picks"))
+        assertFalse(ForkBackup.pcOnly("automix_pair_overrides"))
 
         // A style or length neither app has: the PC's default, as an unread key.
         ForkBackup.apply(ForkBackupFormat.BackupFile(fork = section("automix_style" to "turntable", "automix_phrase_bars" to 32)))
