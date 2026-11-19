@@ -219,23 +219,36 @@ object ForkV2EditorGeometry {
     }
 
     /**
-     * The header line: the preset's name, then the length, the tempo and the seconds, as the
-     * extension's sub line ("Auto · Blend · 8 bars · 124 BPM · 15.5 s"; a fade has no bars or tempo;
-     * a loop mix plans its own and shows its name alone).
+     * The header: what the plan is, not which preset asked for it (editor.md §7's table, spec
+     * 4d14863; automix-overview.js describe, word for word). A crossfade names its way and gives the
+     * planner's reason; anything else its kind, bars, tempo and seconds.
      */
-    fun headline(name: String, m: ForkV2Planner.Plan?, loop: Boolean): String {
-        if (m == null || loop) return name
-        val d = forkV2Format("%.1f s", max(0.0, m.durationSec))
-        if (m.style == "crossfade" || m.bars <= 0) return "$name · $d"
-        val bpm = if (m.inBpm > 0 && jround(m.inBpm) != jround(if (m.outBpm > 0) m.outBpm else m.bpm)) {
-            "${jround(if (m.outBpm > 0) m.outBpm else m.bpm)}→${jround(m.inBpm)} BPM"
-        } else if (m.bpm > 0) {
-            "${jround(m.bpm)} BPM"
-        } else {
-            null
+    fun headline(m: ForkV2Planner.Plan): String {
+        val d = forkV2Format("%.1f s", m.durationSec)
+        if (m.style == "crossfade") {
+            val kind = if (m.bridge) "Beatless bridge" else if (m.handoff) "Hand-over" else "Fade"
+            return "$kind · $d" + (m.reason?.takeIf { it.isNotEmpty() }?.let { " · $it" } ?: "")
         }
-        return listOfNotNull(name, "${m.bars} bars", bpm, d).joinToString(" · ")
+        // as the extension: "out→in" when the incoming tempo rounds apart from the plan's own
+        val bpm = if (m.inBpm > 0 && jround(m.inBpm) != jround(m.bpm)) {
+            "${jround(if (m.outBpm > 0) m.outBpm else m.bpm)}→${jround(m.inBpm)} BPM"
+        } else {
+            "${jround(m.bpm)} BPM"
+        }
+        val kind = when {
+            m.style == "filter" -> "Filter mix"
+            m.shape == "dropin" -> "Drop-in"
+            m.shape == "muffle" -> "Muffle"
+            m.glide != null -> "Glide blend"
+            else -> "Blend"
+        }
+        return "$kind · ${m.bars} bars · $bpm · $d"
     }
+
+    /** The header of a loop mix (editor.md §7): "Loop mix · {totalBars} bars · {A BPM}→{B BPM} BPM · {D} s". */
+    fun loopHeadline(p: com.music.bitchord.playback.smart.LoopMix.Plan): String =
+        "Loop mix · ${p.totalBars} bars · ${jround(p.out.bpm)}→${jround(p.inn.bpm)} BPM · " +
+            forkV2Format("%.1f s", com.music.bitchord.playback.smart.LoopMix.Clock(p).releaseAt)
 
     /** "3:12.4" (automix-overview.js fmtSec). */
     fun fmtSec(t0: Double): String {

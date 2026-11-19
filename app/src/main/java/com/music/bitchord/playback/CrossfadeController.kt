@@ -2526,7 +2526,7 @@ class CrossfadeController(
     }
 
     private fun noteLoopVerdict(pair: String, plan: LoopMix.Plan?, refusal: String?) {
-        com.music.bitchord.playback.smart.ForkMixPicks.noteLoop(pair, plan?.out?.loopStart, refusal) // fork: the Automix overview's picks read it
+        com.music.bitchord.playback.smart.ForkMixPicks.noteLoop(pair, plan?.out?.loopStart, refusal, plan) // fork: the Automix overview's picks read it
         loopRefusal = refusal
         val verdict = "$pair: " + (plan?.let { "loop mix at ${"%.2f".format(Locale.ROOT, it.out.loopStart)}s · ${describeLoop(it)}" } ?: "no loop mix ($refusal)")
         if (verdict == lastLoopVerdict) return

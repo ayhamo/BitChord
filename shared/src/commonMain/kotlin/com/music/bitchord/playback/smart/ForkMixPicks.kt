@@ -89,7 +89,7 @@ object ForkMixPicks {
     }
 
     /** Where the loop mix stands for a pair: planned at [loopStartSec], or [why] not. */
-    data class Loop(val pair: String, val loopStartSec: Double?, val why: String?)
+    data class Loop(val pair: String, val loopStartSec: Double?, val why: String?, val header: String? = null) // header: the editor's §7 line for a planned loop mix
 
     val BARS = listOf(4, 8, 16, 32)
 
@@ -263,8 +263,8 @@ object ForkMixPicks {
      * From each app's loop mix, whenever it decides a pair (the phone's `noteLoopVerdict`, the PC's
      * `ForkDesktopLoopMix.note`): planned with its first loop at [loopStartSec], or [why] not.
      */
-    fun noteLoop(pair: String, loopStartSec: Double?, why: String?) {
-        val value = Loop(pair, loopStartSec, why)
+    fun noteLoop(pair: String, loopStartSec: Double?, why: String?, plan: LoopMix.Plan? = null) {
+        val value = Loop(pair, loopStartSec, why, plan?.let { com.music.bitchord.playback.smart.automixv2.ForkV2EditorGeometry.loopHeadline(it) })
         if (why != PICKED_REASON) lastDecided.value = value
         _loop.value = value
     }

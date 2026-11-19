@@ -763,7 +763,7 @@ internal class ForkDesktopLoopMix(private val scope: CoroutineScope) {
     }
 
     private fun note(pair: String, plan: LoopMix.Plan?, why: String?) {
-        ForkMixPicks.noteLoop(pair, plan?.out?.loopStart, why)
+        ForkMixPicks.noteLoop(pair, plan?.out?.loopStart, why, plan)
         refusal = why
         val verdict = "$pair: " + (
             plan?.let { "loop mix at ${"%.2f".format(Locale.ROOT, it.out.loopStart)}s · ${ForkLoopMixRules.describe(it)}" }

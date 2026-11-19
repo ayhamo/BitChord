@@ -257,7 +257,11 @@ internal fun ForkTransitionHeader(view: MixTransitionView?, live: Boolean) {
         else -> null
     }
     val plan = m.feed?.plan
-    val title = if (plan == null) "Automix" else G.headline(G.presetName(m.ov, plan, m.playsLoop), plan, m.playsLoop)
+    val title = when { // editor.md §7: the header names the plan
+        m.playsLoop -> m.loop?.header ?: "Loop mix"
+        plan == null -> "Automix"
+        else -> G.headline(plan)
+    }
     Row(
         Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,

@@ -212,20 +212,48 @@ class ForkV2EditorGeometryTest {
         assertEquals("Melt", G.presetName(ov, p, false))
     }
 
+    /** editor.md §7's table (spec 4d14863), word for word as automix-overview.js describe. */
     @Test
-    fun theHeaderNamesLengthTempoAndSeconds() {
+    fun theHeaderNamesThePlan() {
         val p = blend(8, 0.5)
         p.bpm = 120.0
         p.outBpm = 120.0
         p.inBpm = 120.0
-        assertEquals("Auto · Blend · 8 bars · 120 BPM · 16.0 s", G.headline("Auto · Blend", p, false))
+        assertEquals("Blend · 8 bars · 120 BPM · 16.0 s", G.headline(p))
         p.inBpm = 124.0
-        assertEquals("Auto · Blend · 8 bars · 120→124 BPM · 16.0 s", G.headline("Auto · Blend", p, false))
+        assertEquals("Blend · 8 bars · 120→124 BPM · 16.0 s", G.headline(p))
+        p.shape = "dropin"
+        assertEquals("Drop-in · 8 bars · 120→124 BPM · 16.0 s", G.headline(p))
+        p.shape = "muffle"
+        assertEquals("Muffle · 8 bars · 120→124 BPM · 16.0 s", G.headline(p))
+        p.shape = null
+        p.glide = ForkV2Planner.Glide(0.95, 16, 0.5)
+        assertEquals("Glide blend · 8 bars · 120→124 BPM · 16.0 s", G.headline(p))
+        p.style = "filter"
+        assertEquals("Filter mix · 8 bars · 120→124 BPM · 16.0 s", G.headline(p))
         val f = ForkV2Planner.Plan()
         f.style = "crossfade"
         f.durationSec = 12.04
-        assertEquals("Auto · Fade · 12.0 s", G.headline("Auto · Fade", f, false))
-        assertEquals("Auto · Loop", G.headline("Auto · Loop", p, true))
+        assertEquals("Fade · 12.0 s", G.headline(f))
+        f.handoff = true
+        f.durationSec = 1.5
+        f.reason = "tempos 34% apart"
+        assertEquals("Hand-over · 1.5 s · tempos 34% apart", G.headline(f))
+        f.bridge = true
+        assertEquals("Beatless bridge · 1.5 s · tempos 34% apart", G.headline(f))
+    }
+
+    /** editor.md §1 (spec 4d14863): a Loop stores no bars, window or beat match. */
+    @Test
+    fun aLoopStoresNoBeatMatch() {
+        val o = ForkV2MixOverride()
+        o.preset = "loop"
+        o.bars = 8
+        o.beatMatch = "glide"
+        val n = ForkV2MixOverride.normalize(o)!!
+        assertEquals("loop", n.preset)
+        assertEquals(0, n.bars)
+        assertEquals(null, n.beatMatch)
     }
 
     @Test

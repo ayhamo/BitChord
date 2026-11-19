@@ -222,7 +222,8 @@ class ForkV2MixOverride {
                 n.out = clean(o.out)
                 n.`in` = clean(o.`in`)
             }
-            if ("sync" == o.beatMatch || "glide" == o.beatMatch || "off" == o.beatMatch) n.beatMatch = o.beatMatch
+            // a Loop stores no beat match either (editor.md §1, spec 4d14863: "preset: loop stores no bars, window or beatMatch")
+            if (!n.loop() && ("sync" == o.beatMatch || "glide" == o.beatMatch || "off" == o.beatMatch)) n.beatMatch = o.beatMatch
             if (n.preset == null && n.family == null && n.bars == 0 && n.out == null && n.`in` == null && n.beatMatch == null) return null
             n.lock = o.lock
             n.engine = o.engine

@@ -43,7 +43,17 @@ object ForkV2Automix {
     /** Shorter songs are left to upstream (its own rule for jingles and skits). */
     const val MIN_DURATION_SEC = 45.0
 
-    /** The plan is held from this long before its ramp (the extension's hand lead and the 0.5 s it plans ahead by). */
+    /**
+     * BitChord's lead (editor.md §6, spec 610a643: each platform states its own): `earliest` = the
+     * playhead + 4.5 s, on the phone and the PC alike, since both run this shared planner. It is the
+     * extension's value (HAND_LEAD 4 + 0.5), not the phone patches' 6.5 s: that one waits on YouTube's
+     * own player, while BitChord's players open the next copy themselves. The phone arms its standby
+     * ExoPlayer 4 s before the transition (CrossfadeController ARM_LEAD_MS, the next track normally
+     * already read ahead onto disk) and the PC arms its seam earlier still (up to 15 s for an addon
+     * copy), so a plan held from 4.5 s is fixed before either deck is armed. The window limits the
+     * editor shows use the same value (ForkV2EditorFeed's `earliest`). The plan is also held from this
+     * long before its ramp.
+     */
     const val LATCH_LEAD_SEC = ForkV2Mix.HAND_LEAD + 0.5
 
     /**
