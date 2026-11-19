@@ -247,7 +247,7 @@ data class TransitionPlan(
     val echoSeconds: Double = 0.0,
     /** Why the policy landed where it did, when it declined to be more ambitious. */
     val policyReasons: List<String> = emptyList(),
-    val forkAutoDj: ForkAutoDj.Shape? = null, // fork: an Original / Advanced AutoDJ mix's curves (ForkAutoDjCurves)
+    val forkV2: com.music.bitchord.playback.smart.automixv2.ForkV2Transition? = null, // fork: an Automix v2 blend's deck schedule (ForkV2Automix)
 ) {
     /** Convenience for the engine, which schedules in milliseconds. */
     val fadeMs: Long get() = (fadeSeconds * 1000).roundToLong()
@@ -1420,9 +1420,9 @@ fun planTransition(
     advanced: Boolean = false,
     phraseBars: Int = 0,
     mixWindow: Boolean = false,
-    forkStyle: AutomixStyle = AutomixStyle.BITCHORD, // fork: the Automix style setting (ForkAutoDj)
+    forkStyle: AutomixStyle = AutomixStyle.BITCHORD, // fork: the Automix style setting (ForkAutomixStyle)
 ): TransitionPlan {
-    if (mode == CrossfadeMode.SMART) ForkAutoDj.planTransition(forkStyle, analysis, nextAnalysis, currentTrack, nextTrack, currentTime, duration, albumSequential, phraseBars)?.let { return it } // fork
+    if (mode == CrossfadeMode.SMART) com.music.bitchord.playback.smart.automixv2.ForkV2Automix.planTransition(forkStyle, analysis, nextAnalysis, currentTrack, nextTrack, currentTime, duration, albumSequential, phraseBars)?.let { return it } // fork: Automix v2
     val plan = planTransitionInner(
         analysis = ForkAutomix.outgoing(analysis), // fork: the ending's grid for the song going out
         nextAnalysis = ForkAutomix.incoming(nextAnalysis), // fork: the opening's grid for the song coming in

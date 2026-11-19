@@ -1,6 +1,5 @@
 package com.music.bitchord.playback
 
-import com.music.bitchord.playback.smart.ForkAutoDjCurves
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.PI
@@ -15,9 +14,10 @@ import kotlin.math.sqrt
 import kotlin.math.tan
 
 /**
- * Fork: the filters a Web / Advanced AutoDJ mix rides on each song ([ForkAutoDjCurves]): a 250 Hz
- * low shelf (the bass swap), a 4 kHz high shelf (the highs crossing), and the low- and high-pass
- * cuts, as the extension's `BiquadFilterNode`s (Web Audio's shelf: RBJ cookbook, slope 1; its
+ * Fork: the filters an Automix v2 mix rides on each song (the lanes of
+ * [com.music.bitchord.playback.smart.automixv2.ForkV2Transition.frameAt]): a 250 Hz low shelf (the
+ * bass swap of a preset or a loop), a 4 kHz high shelf (a preset's highs crossing), and the low- and
+ * high-pass cuts, as the extension's `BiquadFilterNode`s (Web Audio's shelf: RBJ cookbook, slope 1; its
  * lowpass / highpass: one second-order section, Q 1/sqrt 2, so 12 dB per octave). The cuts used to
  * be the apps' transition filters: two sections, 24 dB/oct (BitChord's DJ slope), twice as steep as
  * the extension's. Those stay open during these mixes now; BitChord's own style still uses them.
@@ -142,8 +142,8 @@ class ForkMixShelf {
             highDb = step(highDb, targetHighDb)
             lowPassHz = settle(glide(lowPassHz, targetLowPassHz), targetLowPassHz)
             highPassHz = settle(glide(highPassHz, targetHighPassHz), targetHighPassHz)
-            shelf(lowCoef, ForkAutoDjCurves.LOW_SHELF_HZ, lowDb.toDouble(), low = true)
-            shelf(highCoef, ForkAutoDjCurves.HIGH_SHELF_HZ, highDb.toDouble(), low = false)
+            shelf(lowCoef, LOW_SHELF_HZ, lowDb.toDouble(), low = true)
+            shelf(highCoef, HIGH_SHELF_HZ, highDb.toDouble(), low = false)
             val lowOn = !flat(lowDb)
             val highOn = !flat(highDb)
             val lowPassOn = lowPassHz < OPEN_HZ
@@ -288,8 +288,14 @@ class ForkMixShelf {
         /** A high-pass here is no cut, as the transition filters' `OFF_HZ`. */
         const val OFF_HZ = 20f
 
+        /** The extension's shelf corners (crossfade.js blendShape). */
+        const val LOW_SHELF_HZ = 250.0
+        const val HIGH_SHELF_HZ = 4_000.0
+
         private const val MIN_HZ = 10f
-        private const val MAX_HIGH_PASS_HZ = 2_000f
+
+        /** Automix v2's filter mix opens the next song from up to 2.4 kHz (ForkV2Mix.djShape), so this is above it. */
+        private const val MAX_HIGH_PASS_HZ = 2_500f
         private const val MAX_CUTOFF_FRACTION = 0.45f
         private const val BLOCK = 64
         private const val MAX_STEP_DB = 0.5f

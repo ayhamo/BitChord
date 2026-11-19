@@ -12,16 +12,20 @@ import kotlinx.coroutines.flow.update
  * length (Auto, 4 to 32 bars), kept for the next time the same two songs meet, for the last
  * [MAX_PICKS] pairs.
  *
- * Only the Web and Advanced AutoDJ styles read them ([AutomixStyle.ORIGINAL], [AutomixStyle.ADVANCED]):
- * those plan in [ForkAutoDj], fork code, so upstream's planner stays untouched. Under BitChord's own
- * style the overview shows the picks greyed out.
+ * Only Automix v2 reads them ([AutomixStyle.V2]): it plans in fork code
+ * ([com.music.bitchord.playback.smart.automixv2.ForkV2Automix]), so upstream's planner stays
+ * untouched. Under BitChord's own style the overview shows the picks greyed out.
  *
- * How a pick is used (the extension's rules):
- * - Fade: the 12 s equal-power crossfade. Filter: the filter mix (at most [ForkAutoDj.FILTER_MAX_BARS]).
- *   Blend: the planner's blend (still a filter mix when the tempos are too far apart).
+ * How a pick is used: it is handed to the ported planner as the extension saved picks before its
+ * editor, {style, bars}, and migrated as it is read
+ * ([com.music.bitchord.playback.smart.automixv2.ForkV2MixOverride.fromJson], editor.md §1):
+ * - Fade: beat match off, the two songs overlapped at their own speeds. Filter: the planner's filter
+ *   mix (at most [FILTER_MAX_BARS]). Blend: the planner's blend (its own fallbacks still apply).
  * - Blend, Filter, Fade, or a length with no style: no loop mix for the pair ([loopRefusal]).
- * - Loop: the loop mix when it can be done, which keeps its own length; else the planner's mix.
- * - A picked length beats the key-clash short blend, and still gives way to a weak grid's cap.
+ * - Loop: the loop mix whenever one is found (the extension's loopPicked), which keeps its own
+ *   length; else the planner's mix.
+ * - A picked length is the override's pinned bars: it beats the key-clash short blend, and still
+ *   gives way to a weak grid's cap.
  *
  * Pairs are "outgoing id->incoming id", the loop mix's own pair key on both apps.
  */
@@ -60,7 +64,7 @@ object ForkMixPicks {
         val outTitle: String = "",
         val inTitle: String = "",
         /**
-         * The mix is armed: the planner holds this plan for the blend ([ForkAutoDj]'s latch, from a few
+         * The mix is armed: the planner holds this plan for the blend (ForkV2Automix's latch, from a few
          * seconds before the tempo ramp), so a pick now is for the next time the pair plays.
          */
         val armed: Boolean = false,
@@ -90,6 +94,9 @@ object ForkMixPicks {
     const val PREVIEW_MIN_LEFT_SEC = 25.0
 
     const val PICKED_REASON = "picked in the overview"
+
+    /** The longest filter mix (the ported planner's FILTER_MAX_BARS). */
+    const val FILTER_MAX_BARS = 8
 
     /** The Automix style in force, mirrored by each app's setting (`ForkSettings`, `ForkDesktopAutomixStyle`). */
     @Volatile
@@ -134,7 +141,7 @@ object ForkMixPicks {
 
     /**
      * Sets [pair]'s pick, the extension's `pick()`: a loop or a fade has no length of its own to pick,
-     * a filter mix is at most [ForkAutoDj.FILTER_MAX_BARS] bars, and an all-Auto pick is removed.
+     * a filter mix is at most [FILTER_MAX_BARS] bars, and an all-Auto pick is removed.
      * The newest pick goes last, and the oldest beyond [MAX_PICKS] are dropped.
      */
     fun set(pair: String, pick: Pick) {
@@ -162,10 +169,10 @@ object ForkMixPicks {
         }
     }
 
-    /** A loop or a fade has no length to pick, and a filter mix is at most [ForkAutoDj.FILTER_MAX_BARS] bars. */
+    /** A loop or a fade has no length to pick, and a filter mix is at most [FILTER_MAX_BARS] bars. */
     private fun normalised(pick: Pick): Pick = when {
         pick.style == Style.LOOP || pick.style == Style.FADE -> pick.copy(bars = null)
-        pick.style == Style.FILTER && (pick.bars ?: 0) > ForkAutoDj.FILTER_MAX_BARS -> pick.copy(bars = ForkAutoDj.FILTER_MAX_BARS)
+        pick.style == Style.FILTER && (pick.bars ?: 0) > FILTER_MAX_BARS -> pick.copy(bars = FILTER_MAX_BARS)
         else -> pick
     }
 
@@ -186,28 +193,30 @@ object ForkMixPicks {
     fun encode(picks: Map<String, Pick>): String =
         picks.entries.joinToString("\n") { (pair, p) -> "$pair\t${p.style?.key.orEmpty()}\t${p.bars?.toString().orEmpty()}" }
 
-    /** From [ForkAutoDj.planTransition], each time it plans a pair. */
+    /**
+     * From ForkV2Automix.planTransition, each time it plans a pair: what the mix is ([style], [bars],
+     * the planner's [reason] when it is not a plain blend), and where Preview jumps to: just before
+     * the outgoing ramp that starts [rampSongSec] before the mix-out [mixOut].
+     */
     internal fun notePlanned(
         pair: String,
-        mix: ForkAutoDj.Mix,
+        style: Style,
+        bars: Int,
+        reason: String?,
+        mixOut: Double,
+        rampSongSec: Double,
         positionSec: Double,
         outTitle: String = "",
         inTitle: String = "",
         armed: Boolean = false,
     ) {
-        val style = when (mix.style) {
-            ForkAutoDj.Style.BLEND -> Style.BLEND
-            ForkAutoDj.Style.FILTER -> Style.FILTER
-            ForkAutoDj.Style.CROSSFADE -> Style.FADE
-        }
-        val reason = mix.reason.takeIf { it != "blend" }
-        val previewAt = mix.mixOut - mix.rampSongSec - PREVIEW_BLEND_LEAD_SEC
+        val previewAt = mixOut - rampSongSec - PREVIEW_BLEND_LEAD_SEC
         // Whole seconds: this is called every tick, and the overview only needs the room left.
-        val value = Planned(pair, style, mix.bars, reason, previewAt, kotlin.math.floor(positionSec), outTitle, inTitle, armed)
+        val value = Planned(pair, style, bars, reason, previewAt, kotlin.math.floor(positionSec), outTitle, inTitle, armed)
         if (_planned.value != value) _planned.value = value
     }
 
-    /** From [ForkAutoDj.planTransition] when it plans nothing (a short, spoken or live song): no stale pair. */
+    /** From ForkV2Automix.planTransition when it plans nothing (a short, spoken or live song): no stale pair. */
     internal fun notePlannedNothing() {
         _planned.value = null
     }

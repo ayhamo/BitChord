@@ -20,13 +20,15 @@ import com.music.bitchord.playback.smart.AutomixStyle
 
 /**
  * Fork: Settings > Playback "Automix style", under the Automix phrase length (and greyed with it
- * while Automix is off): BitChord's own Automix, or the YouTube Music extension's Original /
- * Advanced AutoDJ ([ForkDesktopAutomixStyle]). The phone's row has the same three choices.
+ * while Automix is off): BitChord's own Automix, or Automix v2, the YouTube Music extension's engine
+ * ported ([ForkDesktopAutomixStyle]). The phone's row has the same two choices. The old Web /
+ * Advanced AutoDJ chips and the "Shorter blend when keys clash" toggle are gone: v2 always weighs
+ * the keys, and a saved old choice reads as v2.
  */
 @Composable
 internal fun ForkAutomixStyleSetting() {
     val title = "Automix style"
-    val subtitle = "BitChord's own mixes, or the YouTube Music extension's AutoDJ"
+    val subtitle = "BitChord's own mixes, or the YouTube Music extension's Automix v2"
     val style by ForkDesktopAutomixStyle.style.collectAsState()
     if (settingsRowVisible(title, subtitle)) Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
         Text(title, fontWeight = FontWeight.Medium)
@@ -45,22 +47,11 @@ internal fun ForkAutomixStyleSetting() {
         Spacer(Modifier.height(8.dp))
         Text(detail(style), color = DesktopSecondary, style = MaterialTheme.typography.bodySmall)
     }
-    // Advanced AutoDJ's own toggle, as in the extension: greyed under the other styles.
-    val keyAware by ForkDesktopAutomixStyle.keyAware.collectAsState()
-    ForkDisabledWhen(style != AutomixStyle.ADVANCED) {
-        SettingsToggle(
-            "Shorter blend when keys clash",
-            "Automix, Advanced AutoDJ style: songs whose keys don't mix get a 2-bar blend (4 when that would be very short), as in the extension",
-            keyAware,
-            ForkDesktopAutomixStyle::setKeyAware,
-        )
-    }
 }
 
 private fun detail(style: AutomixStyle): String = when (style) {
     AutomixStyle.BITCHORD -> "BitChord's own Automix"
-    AutomixStyle.ORIGINAL ->
-        "The extension's Automix: phrase-aligned blends ending with the song, a bass swap and a high-shelf cross, tempo only ever sped up"
-    AutomixStyle.ADVANCED ->
-        "The extension's Advanced AutoDJ: the same planner, cut to where the music ends, blends moved off two singers at once, DJ fader and filter shapes"
+    AutomixStyle.V2 ->
+        "The extension's Automix v2: beatmatched blends that glide between tempos up to 8% apart, a hand-over when two songs " +
+            "can't be matched, keys, sub-bass and loudness weighed, and a loop mix only when it beats the blend"
 }

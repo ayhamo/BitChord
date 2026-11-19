@@ -711,7 +711,7 @@ internal object DesktopAddonSource {
         for (query in TrackMatcher.queries(TrackMatcher.targetOf(song))) { // fork: the phone's matcher
             val candidates = search(config, query, 25).getOrDefault(emptyList())
                 .mapNotNull { (it as? SearchResult.Track)?.song }
-            TrackMatcher.ranked(candidates, TrackMatcher.targetOf(song)).ifEmpty { null }?.let { return it } // fork: the phone's matcher
+            com.music.bitchord.data.sources.ForkAddonPick.rowsToOpen(candidates, TrackMatcher.targetOf(song), com.music.bitchord.data.sources.ForkAddonPick.Opt(ForkUpgradeLength.seconds.value.toDouble(), atmosAllowed = ForkAtmos.wanted())) { com.music.bitchord.data.sources.ForkAddonPick.rowOf(it, it.sourceQuality == DesktopModuleSource.DOLBY) }.open.ifEmpty { null }?.let { return it } // fork: the phone's matcher, held to the rulebook's rowsToOpen (was TrackMatcher.ranked)
         }
         return emptyList()
     }

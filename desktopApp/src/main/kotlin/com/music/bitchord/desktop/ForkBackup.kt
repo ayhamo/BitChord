@@ -136,6 +136,13 @@ internal object ForkBackup {
         { it.takeIf { value -> value in names } },
     )
 
+    /** The Automix style's key, a removed style's as Automix v2's ([com.music.bitchord.playback.smart.AutomixStyle.migratedKey]). */
+    private fun automixStyle(key: String) = Mapped(
+        key, key, main,
+        { com.music.bitchord.playback.smart.AutomixStyle.migratedKey(it as? String) },
+        { com.music.bitchord.playback.smart.AutomixStyle.migratedKey(it) },
+    )
+
     /** The PC's Navidrome switches stored as "on" / "off" ([ForkNavidrome]). */
     private fun onOff(phone: String, pc: String) = Mapped(
         phone, pc, navidromeFork,
@@ -263,10 +270,11 @@ internal object ForkBackup {
         int("clip_cache_mb", "clip_cache_mb", navidromeFork, allowed = ForkNavidromeSettings.CLIP_CACHE_CHOICES_MB),
         int("preload_songs", "preload_songs", navidromeFork, allowed = ForkNavidromeSettings.PRELOAD_CHOICES),
         bool("cover_fade", ForkPlayerEffects.KEY_COVER_FADE), // "Cover fade" (ForkPlayerEffects), both apps
-        // Automix style, "Shorter blend when keys clash", the phrase length and the overview's picks (ForkDesktopAutomixStyle,
-        // DesktopApp's "Automix phrase length"): the phone's keys, styles and lengths; the picks' text is the same on both.
-        named("automix_style", "automix_style", com.music.bitchord.playback.smart.AutomixStyle.entries.map { it.key }),
-        bool("automix_key_aware"),
+        // Automix style, the phrase length and the overview's picks (ForkDesktopAutomixStyle, DesktopApp's "Automix phrase
+        // length"): the phone's keys, styles and lengths; the picks' text is the same on both. A backup naming the removed
+        // Web / Advanced AutoDJ comes in (and goes out) as Automix v2, and its "automix_key_aware" (a removed switch) is
+        // not read.
+        automixStyle("automix_style"),
         int("automix_phrase_bars", allowed = listOf(0, 8, 16)),
         text("automix_pair_picks"),
     )
@@ -277,6 +285,13 @@ internal object ForkBackup {
         "paxsenix_api_key", "downloaded_tracks", "downloaded_tracks_metadata", "downloaded_collections",
         "local_music_folder_uri", "last_version_code", "onboarding_complete", "offline_mode",
     )
+
+    /**
+     * Fork settings both apps have removed: an import reads them as nothing and they are not carried
+     * back out either, so an old backup's value dies here instead of travelling on in every export
+     * ("automix_key_aware": the key-clash switch, removed with Advanced AutoDJ on 2026-11-19).
+     */
+    private val REMOVED = setOf("automix_key_aware")
 
     /** The phone's quality before it split into Wi-Fi and cellular; read when a backup has only it. */
     private const val PHONE_LEGACY_QUALITY = "audio_quality"
@@ -382,7 +397,7 @@ internal object ForkBackup {
 
         val forkSettings = LinkedHashMap<String, PrefValue>()
         FORK.forEach { mapped -> read(mapped)?.let { forkSettings[mapped.phoneKey] = it } }
-        carried.forkSettings.forEach { (key, value) -> if (key !in forkSettings && key !in SECRETS) forkSettings[key] = value }
+        carried.forkSettings.forEach { (key, value) -> if (key !in forkSettings && key !in SECRETS && key !in REMOVED) forkSettings[key] = value }
 
         val buckets = DesktopListeningStats.forkBuckets()
         val byMonth = carried.listening.associateBy { it.month }
@@ -508,7 +523,7 @@ internal object ForkBackup {
             writeCarried(
                 Carried(
                     settings = file.settings.filterKeys { it !in mappedMain && it !in SECRETS },
-                    forkSettings = forkSettings.orEmpty().filterKeys { it !in mappedFork && it !in SECRETS },
+                    forkSettings = forkSettings.orEmpty().filterKeys { it !in mappedFork && it !in SECRETS && it !in REMOVED },
                     listening = file.listening,
                 ),
             )

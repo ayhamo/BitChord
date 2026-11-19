@@ -16,7 +16,7 @@ internal object DesktopTransitionRide {
         outgoing: TransitionFilter,
         incoming: TransitionFilter,
     ) {
-        if (ForkDesktopAutoDj.aim(plan, progress, outgoing, incoming)) return // fork: an AutoDJ mix's filters (Automix style)
+        if (ForkDesktopV2.aim(plan, outgoing, incoming)) return // fork: an Automix v2 blend's filters are its shelves (ForkDesktopV2)
         when (plan.transitionStyle) {
             TransitionStyle.DJ_FILTER -> when (plan.filterVariant) {
                 FilterTransitionVariant.BASS_HANDOFF -> fallbackBassHandoff(plan, progress, outgoing, incoming)
@@ -81,7 +81,7 @@ internal object DesktopTransitionRide {
     /** The fader shapes paired with [aim], matching the phone's advanced Automix renderer. */
     fun gains(plan: TransitionPlan, progress: Float, result: FloatArray) {
         require(result.size >= 2)
-        if (ForkDesktopAutoDj.gains(plan, progress.coerceIn(0f, 1f), result)) return // fork: an AutoDJ mix's faders (Automix style)
+        if (ForkDesktopV2.gains(plan, progress.coerceIn(0f, 1f), result)) return // fork: an Automix v2 blend's faders (ForkDesktopV2)
         val p = progress.coerceIn(0f, 1f)
         val plainIn = rise(p)
         val plainOut = fall(p)

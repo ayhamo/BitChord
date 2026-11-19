@@ -540,7 +540,7 @@ class ModuleSource(
                 LOSSLESS_HINTS.any { it in text } -> LOSSLESS
                 LOW_HINTS.any { it in text } -> LOW
                 HIGH_HINTS.any { it in text } -> HIGH
-                else -> null
+                else -> ForkAddonPickPhone.tierSpelling(text) // fork: "Hi Res", "16bit", a bare "96" (the rulebook's tierOf)
             }
         }
 

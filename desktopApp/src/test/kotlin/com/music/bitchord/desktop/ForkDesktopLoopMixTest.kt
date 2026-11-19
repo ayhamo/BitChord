@@ -245,7 +245,7 @@ class ForkDesktopLoopMixTest {
     @Test
     fun `a fixed length is the reason even when the pair has a pick`() {
         try {
-            ForkMixPicks.style = AutomixStyle.ORIGINAL
+            ForkMixPicks.style = AutomixStyle.V2
             ForkMixPicks.set("a->b", ForkMixPicks.Pick(style = ForkMixPicks.Style.FILTER))
             assertEquals(ForkMixPicks.PICKED_REASON, ForkLoopMixRules.refusal(pair()))
             assertEquals("a fixed 8-bar overlap is chosen", ForkLoopMixRules.refusal(pair(phraseBars = 8)))

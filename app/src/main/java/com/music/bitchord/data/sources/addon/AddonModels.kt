@@ -214,6 +214,9 @@ data class AddonTrack(
     @SerialName("infoText") val forkInfoText: JsonElement? = null,
     @SerialName("cached") val forkCached: JsonElement? = null,
     @SerialName("isCached") val forkIsCached: JsonElement? = null,
+    // fork: NullBeat's Atmos flags (rulebook protocol §3), read as JSON so a stray type can't fail a search
+    @SerialName("isAtmos") val forkIsAtmos: JsonElement? = null,
+    @SerialName("isAtmosOnly") val forkIsAtmosOnly: JsonElement? = null,
 ) {
     val durationSec: Int? get() = duration?.takeIf { it > 0 }?.toInt()
 
@@ -241,7 +244,7 @@ data class AddonTrack(
      * rather than the best. See [AddonSource.search][com.music.bitchord.data.sources.AddonSource].
      */
     val isDolbyAtmos: Boolean
-        get() = atmos == true || ATMOS_HINT.containsMatchIn(
+        get() = atmos == true || forkIsAtmos.asFlag() == true || forkIsAtmosOnly.asFlag() == true || ATMOS_HINT.containsMatchIn( // fork: NullBeat's isAtmos / isAtmosOnly
             "$audioQuality ${audioMode.orEmpty()} ${audioModes.joinToString(" ")} $format",
         )
 

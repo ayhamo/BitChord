@@ -1057,6 +1057,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         }
 
         val samples = pcm.samples ?: return Structural(null) // fork: resampled while decoding (null as the resample's null was)
+        com.music.bitchord.playback.smart.automixv2.ForkV2EvidenceStore.measure(context.filesDir, trackId, samples, structRate) // fork: Automix v2's whole-song evidence from this same buffer
 
         return Structural(TrackFeatures.analyze(samples, effectiveDuration))
     }

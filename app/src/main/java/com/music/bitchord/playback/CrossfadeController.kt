@@ -1115,7 +1115,7 @@ class CrossfadeController(
             fadeSeconds = fallbackSeconds,
             mode = CrossfadeMode.SMART,
             advanced = advanced,
-            forkStyle = com.music.bitchord.fork.ForkSettings.automixStyle.value, // fork: Automix style (ForkAutoDj)
+            forkStyle = com.music.bitchord.fork.ForkSettings.automixStyle.value, // fork: Automix style (BitChord or Automix v2, ForkV2Automix)
             phraseBars = com.music.bitchord.fork.ForkSettings.automixPhraseBars.value, // fork: Automix phrase length, the PC's (Desktop Revived d150d26f)
             mixWindow = com.music.bitchord.fork.ForkSettings.automixPhraseBars.value != 0, // fork: a fixed length kept to the last/first 30 s, as the PC's (16 slow bars run near a minute); Auto plans unchanged
         )
@@ -2447,7 +2447,6 @@ class CrossfadeController(
                 )
             }
             lyricSpans[id] = LyricSpans(spans)
-            com.music.bitchord.playback.smart.ForkAutoDj.noteSung(id, spans) // fork: Advanced AutoDJ's vocal re-route reads lyrics first
         }
     }
 
@@ -2508,7 +2507,7 @@ class CrossfadeController(
             return cached
         }
         val why = StringBuilder()
-        val plan = LoopMix.plan(
+        val plan = com.music.bitchord.playback.smart.automixv2.ForkV2Loop.plan( // fork: Automix v2 decides loop or blend (ForkV2Loop; BitChord's style: LoopMix.plan as was)
             out = currentAnalysis,
             outDuration = durationMs / 1000.0,
             inn = nextAnalysis,
@@ -3039,7 +3038,7 @@ class CrossfadeController(
                 // walked back a beat at a time over a few bars rather than in
                 // one jump — the tempo lurch a DJ never lets anyone hear. An
                 // unstretched track goes straight to the listener's speed.
-                beginEase(it, incomingPlaybackRate, incomingAnalysis)
+                beginEase(it, com.music.bitchord.playback.smart.automixv2.ForkV2Automix.incomingRateAtEnd(planInFlight, incomingPlaybackRate), incomingAnalysis) // fork: an Automix v2 glide ends at x1.0 (was incomingPlaybackRate)
             }
             outgoing?.let(::retire)
         } else {
@@ -3199,7 +3198,7 @@ class CrossfadeController(
      * locked: a pause parks the filter exactly where it parks the fade.
      */
     private fun rideStyle(progress: Float) {
-        planInFlight?.forkAutoDj?.let { ForkAutoDjRide.ride(it, progress, tracks); return } // fork: Original / Advanced AutoDJ (ForkAutoDjRide)
+        planInFlight?.forkV2?.let { ForkV2Ride.ride(it, progress, tracks, outgoing.takeIf { aimOutgoing }, incoming.takeIf { aimIncoming }); return } // fork: Automix v2 (ForkV2Ride)
         when (render.style) {
             TransitionStyle.DJ_FILTER -> when (render.filterVariant) {
                 FilterTransitionVariant.BASS_HANDOFF -> rideFallbackBassHandoff(progress)
@@ -3542,7 +3541,7 @@ class CrossfadeController(
      * [headroomFor] keeps two faders at full from summing past full scale.
      */
     private fun mixRise(progress: Float): Float {
-        planInFlight?.forkAutoDj?.let { return ForkAutoDjRide.rise(it, progress) } // fork
+        planInFlight?.forkV2?.let { return ForkV2Ride.rise(it, progress) } // fork: Automix v2 (ForkV2Ride)
         if (!render.advanced) return riseGain(progress)
         val styled = when (render.style) {
             TransitionStyle.DJ_BLEND ->
@@ -3564,7 +3563,7 @@ class CrossfadeController(
      * low-pass is already taking it away.
      */
     private fun mixFall(progress: Float): Float {
-        planInFlight?.forkAutoDj?.let { return ForkAutoDjRide.fall(it, progress) } // fork
+        planInFlight?.forkV2?.let { return ForkV2Ride.fall(it, progress) } // fork: Automix v2 (ForkV2Ride)
         if (!render.advanced) return fallGain(progress)
         // The fader carries the repeats too, so an echo out leaves it up and
         // fades the dry signal in the chain instead — see [rideEchoOut].
@@ -3750,7 +3749,7 @@ class CrossfadeController(
             analysis.bpm > 0.0 -> 60.0 / analysis.bpm
             else -> 0.0
         }
-        val forkGlide = com.music.bitchord.playback.smart.ForkAutoDj.glide(planInFlight) // fork: an AutoDJ blend glides back in 8 steps over 24 s
+        val forkGlide = com.music.bitchord.playback.smart.automixv2.ForkV2Automix.easeBack(planInFlight) // fork: an Automix v2 blend eases back 0.25% every 0.25 s
         val steps = forkGlide?.first ?: rampStepsFor(rate) // fork: forkGlide?.first ?:
         easeStep = stretch / steps
         easeRate = rate

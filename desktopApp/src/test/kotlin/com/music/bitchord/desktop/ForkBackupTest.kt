@@ -185,7 +185,7 @@ class ForkBackupTest {
         listOf("close_to_tray", "liked_ids.3", "window_backdrop", "volume").forEach { assertTrue(ForkBackup.pcOnly(it), it) }
     }
 
-    /** Automix style, key-aware, phrase length and the overview's picks: the phone's keys both ways, only values both apps have. */
+    /** Automix style, phrase length and the overview's picks: the phone's keys both ways, only values both apps have; an old style key as Automix v2. */
     @Test
     fun `the Automix settings and picks travel between the phone and the PC`() {
         val of = ForkBackupFormat.PrefValue.Companion::of
@@ -203,14 +203,15 @@ class ForkBackupTest {
                 ),
             ),
         )
-        assertEquals("advanced_autodj", main.get("automix_style", null))
-        assertEquals("true", main.get("automix_key_aware", null))
+        // A style removed since (Advanced AutoDJ) comes in as Automix v2; the removed key-aware switch is not read.
+        assertEquals("automix_v2", main.get("automix_style", null))
+        assertNull(main.get("automix_key_aware", null))
         assertEquals("16", main.get("automix_phrase_bars", null))
         assertEquals(picks, main.get("automix_pair_picks", null))
         val settings = exported()["fork"]!!.jsonObject["settings"]!!.jsonObject
         fun pref(value: Any) = ForkBackupFormat.json.encodeToJsonElement(ForkBackupFormat.PrefValue.serializer(), of(value)!!)
-        assertEquals(pref("advanced_autodj"), settings["automix_style"])
-        assertEquals(pref(true), settings["automix_key_aware"])
+        assertEquals(pref("automix_v2"), settings["automix_style"])
+        assertNull(settings["automix_key_aware"])
         assertEquals(pref(16), settings["automix_phrase_bars"])
         assertEquals(pref(picks), settings["automix_pair_picks"])
         // Not PC-only: they leave in the phone's part, never a second time in the PC's own.

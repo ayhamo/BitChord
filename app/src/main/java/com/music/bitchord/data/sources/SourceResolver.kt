@@ -1147,7 +1147,7 @@ object SourceResolver {
             // A strict search against no runtime at all is an empty one — see
             // [strictLength] — so with nothing to measure by, it is not strict.
             val strict = strictLength && matchOn.durationSec != null
-            var matches = TrackMatcher.ranked(candidates, matchOn)
+            var matches = ForkAddonPickPhone.ranked(source, candidates, matchOn, if (strict) driftSec else null) ?: TrackMatcher.ranked(candidates, matchOn) // fork: an addon's rows held to the rulebook's rowsToOpen
             if (requireSharedArtist) {
                 matches = matches.filter { TrackMatcher.sharesArtist(matchOn.artist, it.artist) }
             }

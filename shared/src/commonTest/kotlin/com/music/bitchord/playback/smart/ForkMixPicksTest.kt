@@ -1,12 +1,20 @@
 package com.music.bitchord.playback.smart
 
+import com.music.bitchord.playback.smart.automixv2.ForkV2Automix
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNotSame
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
-/** The Automix overview's picks per pair ([ForkMixPicks]) and how the AutoDJ planner uses them. */
+/**
+ * The Automix overview's picks per pair ([ForkMixPicks]), how Automix v2's hook in upstream's
+ * planner ([ForkV2Automix.planTransition]) uses them, and the saved style's migration
+ * ([AutomixStyle.fromKey], [AutomixStyle.migratedKey]).
+ */
 class ForkMixPicksTest {
 
     @AfterTest
@@ -14,64 +22,33 @@ class ForkMixPicksTest {
         ForkMixPicks.save = null
         ForkMixPicks.reset()
         ForkMixPicks.style = AutomixStyle.BITCHORD
-        ForkAutoDj.forget()
-    }
-
-    private fun song(bpm: Double, durationSec: Double, id: String, key: String = "", conf: Double = 1.0) = ForkAutoDj.Side(
-        id = id,
-        durationSec = durationSec,
-        grid = ForkAutoDj.Grid(60 / bpm, 0.4),
-        confidence = conf,
-        energy = (0 until durationSec.toInt()).map { EnergySample(it.toDouble(), 1.0) },
-        introEndSec = null,
-        contentEndSec = null,
-        vocalWindows = emptyList(),
-        vocalMask = emptyList(),
-        stub = false,
-        key = key,
-        keyConfidence = if (key.isEmpty()) 0.0 else 0.9,
-    )
-
-    private fun plan(pick: ForkMixPicks.Pick?, cur: ForkAutoDj.Side = song(120.0, 200.0, "a"), next: ForkAutoDj.Side = song(120.0, 200.0, "b"), keyAware: Boolean = false) =
-        ForkAutoDj.plan(cur, next, 20.0, 24.5, true, 0, keyAware = keyAware, pick = pick)
-
-    @Test
-    fun aPickedLengthIsTheBlendsLength() {
-        assertEquals(32, plan(ForkMixPicks.Pick(bars = 32)).bars)
-        assertEquals(4, plan(ForkMixPicks.Pick(style = ForkMixPicks.Style.BLEND, bars = 4)).bars)
+        ForkV2Automix.forget()
     }
 
     @Test
-    fun aPickedLengthStillGivesWayToAWeakGrid() {
-        assertEquals(8, plan(ForkMixPicks.Pick(bars = 32), cur = song(120.0, 200.0, "a", conf = 0.5)).bars)
+    fun theRemovedStylesReadAsAutomixV2AndAreStoredAsIt() {
+        assertEquals(AutomixStyle.V2, AutomixStyle.fromKey("original_autodj"))
+        assertEquals(AutomixStyle.V2, AutomixStyle.fromKey("advanced_autodj"))
+        assertEquals(AutomixStyle.V2, AutomixStyle.fromKey("automix_v2"))
+        assertEquals(AutomixStyle.BITCHORD, AutomixStyle.fromKey("bitchord"))
+        assertEquals(AutomixStyle.BITCHORD, AutomixStyle.fromKey(null))
+        assertEquals(AutomixStyle.BITCHORD, AutomixStyle.fromKey("something else"))
+        assertEquals("automix_v2", AutomixStyle.migratedKey("original_autodj"))
+        assertEquals("automix_v2", AutomixStyle.migratedKey("advanced_autodj"))
+        assertEquals("automix_v2", AutomixStyle.migratedKey("automix_v2"))
+        assertEquals("bitchord", AutomixStyle.migratedKey("bitchord"))
+        assertNull(AutomixStyle.migratedKey("something else"))
+        assertNull(AutomixStyle.migratedKey(null))
+        assertEquals(listOf("bitchord", "automix_v2"), AutomixStyle.entries.map { it.key }, "exactly two styles")
     }
 
     @Test
-    fun aPickedLengthBeatsTheKeyClashShortBlend() {
-        val cur = song(120.0, 200.0, "a", key = "C major")
-        val clash = song(120.0, 200.0, "b", key = "F♯ major")
-        assertEquals(2, plan(null, cur, clash, keyAware = true).bars)
-        assertEquals(16, plan(ForkMixPicks.Pick(bars = 16), cur, clash, keyAware = true).bars)
-    }
-
-    @Test
-    fun filterAndFadeArePlannedAsPicked() {
-        val filter = plan(ForkMixPicks.Pick(style = ForkMixPicks.Style.FILTER, bars = 32))
-        assertEquals(ForkAutoDj.Style.FILTER, filter.style)
-        assertEquals(ForkAutoDj.FILTER_MAX_BARS, filter.bars)
-        assertEquals(ForkMixPicks.PICKED_REASON, filter.reason)
-        val fade = plan(ForkMixPicks.Pick(style = ForkMixPicks.Style.FADE))
-        assertEquals(ForkAutoDj.Style.CROSSFADE, fade.style)
-        assertEquals(ForkAutoDj.FALLBACK_SEC, fade.durationSec, 1e-9)
-    }
-
-    @Test
-    fun blendFilterFadeOrALengthAloneTurnTheLoopAwayButOnlyUnderTheAutoDjStyles() {
+    fun blendFilterFadeOrALengthAloneTurnTheLoopAwayButOnlyUnderAutomixV2() {
         ForkMixPicks.set("a->b", ForkMixPicks.Pick(style = ForkMixPicks.Style.BLEND))
         ForkMixPicks.set("a->c", ForkMixPicks.Pick(bars = 8))
         ForkMixPicks.set("a->d", ForkMixPicks.Pick(style = ForkMixPicks.Style.LOOP))
         assertNull(ForkMixPicks.loopRefusal("a", "b"), "BitChord's style ignores picks")
-        ForkMixPicks.style = AutomixStyle.ORIGINAL
+        ForkMixPicks.style = AutomixStyle.V2
         assertEquals(ForkMixPicks.PICKED_REASON, ForkMixPicks.loopRefusal("a", "b"))
         assertEquals(ForkMixPicks.PICKED_REASON, ForkMixPicks.loopRefusal("a", "c"))
         assertNull(ForkMixPicks.loopRefusal("a", "d"))
@@ -83,7 +60,7 @@ class ForkMixPicksTest {
         ForkMixPicks.set("p", ForkMixPicks.Pick(style = ForkMixPicks.Style.LOOP, bars = 16))
         assertNull(ForkMixPicks.picks.value["p"]!!.bars)
         ForkMixPicks.set("p", ForkMixPicks.Pick(style = ForkMixPicks.Style.FILTER, bars = 32))
-        assertEquals(8, ForkMixPicks.picks.value["p"]!!.bars)
+        assertEquals(ForkMixPicks.FILTER_MAX_BARS, ForkMixPicks.picks.value["p"]!!.bars)
         ForkMixPicks.set("p", ForkMixPicks.Pick())
         assertTrue("p" !in ForkMixPicks.picks.value)
     }
@@ -106,7 +83,7 @@ class ForkMixPicksTest {
 
     @Test
     fun lettingTheLoopBackInShowsWhatTheLoopMixLastDecided() {
-        ForkMixPicks.style = AutomixStyle.ORIGINAL
+        ForkMixPicks.style = AutomixStyle.V2
         ForkMixPicks.noteLoop("a->b", null, "60 loops sung")
         ForkMixPicks.set("a->b", ForkMixPicks.Pick(bars = 16))
         ForkMixPicks.noteLoop("a->b", null, ForkMixPicks.PICKED_REASON)
@@ -128,15 +105,58 @@ class ForkMixPicksTest {
     }
 
     @Test
+    fun savedPicksKeepStyleAndLengthAndLoadAsSetWouldStoreThem() {
+        ForkMixPicks.set("a->b", ForkMixPicks.Pick(style = ForkMixPicks.Style.BLEND, bars = 16))
+        val saved = ForkMixPicks.encode(ForkMixPicks.picks.value)
+        ForkMixPicks.reset()
+        ForkMixPicks.load(saved + "\nc->d\tloop\t16\ne->f\tfilter\t32")
+        assertEquals(ForkMixPicks.Pick(ForkMixPicks.Style.BLEND, 16), ForkMixPicks.picks.value["a->b"])
+        assertEquals(ForkMixPicks.Pick(ForkMixPicks.Style.LOOP), ForkMixPicks.picks.value["c->d"])
+        assertEquals(ForkMixPicks.Pick(ForkMixPicks.Style.FILTER, ForkMixPicks.FILTER_MAX_BARS), ForkMixPicks.picks.value["e->f"])
+    }
+
+    // ---- the hook in upstream's planTransition ----
+
+    private val analysis = TrackAnalysis(status = TrackAnalysis.STATUS_READY, trackId = "a", bpm = 120.0, duration = 200.0)
+
+    private fun hook(at: Double, style: AutomixStyle = AutomixStyle.V2, seconds: Long = 200L) = ForkV2Automix.planTransition(
+        style, analysis, analysis.copy(trackId = "b"),
+        TransitionTrackInfo(id = "a", durationMs = seconds * 1000, title = "A"), TransitionTrackInfo(id = "b", durationMs = 200_000L, title = "B"),
+        at, seconds.toDouble(), false,
+    )
+
+    /** Upstream's own entry point, the fork's first line included. */
+    private fun upstream(style: AutomixStyle) = planTransition(
+        analysis = analysis,
+        nextAnalysis = analysis.copy(trackId = "b"),
+        currentTrack = TransitionTrackInfo(id = "a", durationMs = 200_000L, title = "A"),
+        nextTrack = TransitionTrackInfo(id = "b", durationMs = 200_000L, title = "B"),
+        currentTime = 20.0,
+        duration = 200.0,
+        fadeSeconds = 8.0,
+        mode = CrossfadeMode.SMART,
+        albumSequential = false,
+        forkStyle = style,
+    )
+
+    @Test
+    fun upstreamsPlannerTakesTheHookUnderAutomixV2AndPlansItselfUnderBitChord() {
+        ForkMixPicks.style = AutomixStyle.V2
+        val v2 = upstream(AutomixStyle.V2)
+        assertNotNull(v2.forkV2, "Automix v2 plans the pair")
+        assertTrue(v2.reason.contains("automix-v2"), v2.reason)
+        ForkV2Automix.forget()
+        ForkMixPicks.style = AutomixStyle.BITCHORD
+        val own = upstream(AutomixStyle.BITCHORD)
+        assertNull(own.forkV2, "BitChord's planner, untouched")
+        assertTrue(!own.reason.contains("automix-v2"), own.reason)
+    }
+
+    @Test
     fun theHookPlansThePairsPickAndNotesIt() {
-        ForkMixPicks.style = AutomixStyle.ADVANCED
+        ForkMixPicks.style = AutomixStyle.V2
         ForkMixPicks.set("a->b", ForkMixPicks.Pick(style = ForkMixPicks.Style.FADE))
-        val analysis = TrackAnalysis(status = TrackAnalysis.STATUS_READY, trackId = "a", bpm = 120.0, duration = 200.0)
-        val p = ForkAutoDj.planTransition(
-            AutomixStyle.ADVANCED, analysis, analysis.copy(trackId = "b"),
-            TransitionTrackInfo(id = "a", durationMs = 200_000L, title = "A"), TransitionTrackInfo(id = "b", durationMs = 200_000L, title = "B"),
-            20.0, 200.0, false,
-        )!!
+        val p = hook(20.0)!!
         assertEquals(TransitionStyle.EQUAL_POWER, p.transitionStyle)
         assertEquals(ForkMixPicks.PICKED_REASON, p.policyReasons.first())
         val noted = ForkMixPicks.planned.value!!
@@ -145,34 +165,27 @@ class ForkMixPicksTest {
         assertEquals("A" to "B", noted.outTitle to noted.inTitle)
     }
 
-    private val analysis = TrackAnalysis(status = TrackAnalysis.STATUS_READY, trackId = "a", bpm = 120.0, duration = 200.0)
-
-    private fun hook(at: Double, style: AutomixStyle = AutomixStyle.ADVANCED, seconds: Long = 200L) = ForkAutoDj.planTransition(
-        style, analysis, analysis.copy(trackId = "b"),
-        TransitionTrackInfo(id = "a", durationMs = seconds * 1000), TransitionTrackInfo(id = "b", durationMs = 200_000L),
-        at, seconds.toDouble(), false,
-    )
-
     @Test
     fun aPickBeforeTheMixIsArmedReplansItAndOneAfterWaitsForTheNextTime() {
-        // Songs with no beat grid: a Fade pick is "picked in the overview", Auto is the planner's own fade.
-        ForkMixPicks.style = AutomixStyle.ADVANCED
+        ForkMixPicks.style = AutomixStyle.V2
         ForkMixPicks.set("a->b", ForkMixPicks.Pick(style = ForkMixPicks.Style.FADE))
-        assertEquals(ForkMixPicks.PICKED_REASON, hook(20.0)!!.policyReasons.first())
+        val picked = hook(20.0)!!
+        assertEquals(ForkMixPicks.PICKED_REASON, picked.policyReasons.first())
         ForkMixPicks.set("a->b", ForkMixPicks.Pick())
-        val auto = hook(21.0)!!
-        assertTrue(auto.policyReasons.first() != ForkMixPicks.PICKED_REASON, "not armed yet: planned afresh")
+        val auto = hook(20.25)!!
+        assertNotSame(picked.forkV2, auto.forkV2, "not armed yet: planned afresh")
+        assertTrue(auto.policyReasons.firstOrNull() != ForkMixPicks.PICKED_REASON)
         assertTrue(!ForkMixPicks.planned.value!!.armed)
 
         val armedAt = auto.transitionStart - 1.0
         val held = hook(armedAt)!!
         assertTrue(ForkMixPicks.planned.value!!.armed, "the latch holds the plan")
         ForkMixPicks.set("a->b", ForkMixPicks.Pick(style = ForkMixPicks.Style.FADE))
-        val after = hook(armedAt + 0.25)!!
-        assertEquals(held.policyReasons, after.policyReasons, "the armed mix is not re-planned")
+        val after = hook(armedAt + 1.25)!!
+        assertSame(held.forkV2, after.forkV2, "the armed mix is not re-planned")
         assertEquals(held.transitionStart, after.transitionStart, 1e-9)
         assertTrue(ForkMixPicks.planned.value!!.armed)
-        ForkAutoDj.forget()
+        ForkV2Automix.forget()
         assertEquals(ForkMixPicks.PICKED_REASON, hook(20.0)!!.policyReasons.first(), "kept for the next time")
     }
 
@@ -186,21 +199,10 @@ class ForkMixPicksTest {
 
     @Test
     fun aSongTooShortToPlanLeavesNoStalePair() {
-        ForkMixPicks.style = AutomixStyle.ORIGINAL
+        ForkMixPicks.style = AutomixStyle.V2
         hook(20.0)
         assertEquals("a->b", ForkMixPicks.planned.value!!.pair)
-        assertNull(hook(10.0, style = AutomixStyle.ORIGINAL, seconds = 30L))
+        assertNull(hook(10.0, seconds = 30L))
         assertNull(ForkMixPicks.planned.value)
-    }
-
-    @Test
-    fun savedPicksKeepStyleAndLengthAndLoadAsSetWouldStoreThem() {
-        ForkMixPicks.set("a->b", ForkMixPicks.Pick(style = ForkMixPicks.Style.BLEND, bars = 16))
-        val saved = ForkMixPicks.encode(ForkMixPicks.picks.value)
-        ForkMixPicks.reset()
-        ForkMixPicks.load(saved + "\nc->d\tloop\t16\ne->f\tfilter\t32")
-        assertEquals(ForkMixPicks.Pick(ForkMixPicks.Style.BLEND, 16), ForkMixPicks.picks.value["a->b"])
-        assertEquals(ForkMixPicks.Pick(ForkMixPicks.Style.LOOP), ForkMixPicks.picks.value["c->d"])
-        assertEquals(ForkMixPicks.Pick(ForkMixPicks.Style.FILTER, ForkAutoDj.FILTER_MAX_BARS), ForkMixPicks.picks.value["e->f"])
     }
 }

@@ -1044,7 +1044,7 @@ class DesktopPlaybackEngine(
         val channels = sink.format.channels.coerceAtLeast(1)
         val plan = activePlan
         val subBlock = TransitionFilter.GLIDE_FRAMES * channels
-        ForkDesktopAutoDj.shelve(plan, (transitionTotal - fadeRemaining).toFloat() / fadeTotal.coerceAtLeast(1), block, count, other, otherCount, channels, sink.format.sampleRate) // fork: an AutoDJ mix's shelves (Automix style)
+        ForkDesktopV2.shelve(plan, (transitionTotal - fadeRemaining).toFloat() / fadeTotal.coerceAtLeast(1), block, count, other, otherCount, channels, sink.format.sampleRate)?.let { forkGlideDecks(track, incoming, it) } // fork: an Automix v2 blend's shelves, and a glide's rates
 
         var index = 0
         while (index < count) {
@@ -1308,7 +1308,7 @@ class DesktopPlaybackEngine(
         incoming.decoder.forkPrepareForPlayback() // fork
         if (incoming.tempo != null && kotlin.math.abs(incoming.tempoRate - 1.0) > FORK_TEMPO_UNITY) { // fork: slowed too
             val gap = kotlin.math.abs(incoming.tempoRate - 1.0)
-            val forkGlide = com.music.bitchord.playback.smart.ForkAutoDj.glide(plan) // fork: an AutoDJ mix glides back in 8 steps, 3 s apart
+            val forkGlide = com.music.bitchord.playback.smart.automixv2.ForkV2Automix.easeBack(plan) // fork: an Automix v2 blend eases back 0.25% every 0.25 s
             val steps = forkGlide?.first ?: ceil(gap / TEMPO_STEP_PER_BEAT).toInt().coerceAtLeast(1) // fork: forkGlide
             incoming.tempoEaseStep = gap / steps
             incoming.tempoEaseEveryFrames = (
@@ -2153,13 +2153,13 @@ class DesktopPlaybackEngine(
         forkMarkSeam(plan, incoming.song, positionMs, duration) // fork
         forkPlanned(track, incoming.song, (incoming.decoder.durationUs ?: 0L) / 1_000, plan, duration) // fork: the mix popup's preview (ForkMixPreview)
         if (forkLoopConsider(track, incoming, positionMs, duration)) return // fork: a loop mix holds the blend (ForkDesktopLoopMix)
-        forkRampOutgoing(track, com.music.bitchord.playback.smart.ForkAutoDj.outgoingRampRate(plan, positionMs / 1_000.0)) // fork: an AutoDJ mix speeds the outgoing song up beat by beat (Automix style)
+        forkRampOutgoing(track, com.music.bitchord.playback.smart.automixv2.ForkV2Automix.outgoingRampRate(plan, positionMs / 1_000.0)) // fork: an Automix v2 blend speeds the outgoing song up beat by beat
 
         if (plan.blocked) return
         // fork (PC-Continued 18b6b3ae): a tail already gone silent starts the mix now (ForkSilentTail)
         if (!plan.shouldStart && !ForkSilentTail.mustLeave(plan.fadeSeconds, positionMs, duration, forkSilence.silentFrames, sink.format.sampleRate)) return
         if (!plan.shouldStart) DesktopTrackLog.log("'${track.song.title}' has gone silent ${(duration - positionMs) / 1000}s before its end; mixing now")
-        armIncomingBlend(incoming, plan, forkAutomatic = true) // fork: an automatic handover (ForkAutomixFx)
+        armIncomingBlend(incoming, ForkDesktopV2.fromDecoder(plan, playhead.peek(framesWritten) / 1_000_000.0), forkAutomatic = true) // fork: an automatic handover (ForkAutomixFx); an Automix v2 blend opened from the decoder's position
     }
 
     /**
@@ -2168,7 +2168,7 @@ class DesktopPlaybackEngine(
      * in, so both routes get the same cue, tempo, echo and texture arming.
      */
     private fun armIncomingBlend(incoming: Track, plan: TransitionPlan, forkAutomatic: Boolean = false) { // fork: forkAutomatic (ForkAutomixFx)
-        val seconds = ForkDesktopAutoDj.seconds(plan).takeIf { it > 0 } ?: return // fork: was plan.fadeSeconds; an AutoDJ mix lasts its output seconds
+        val seconds = ForkDesktopV2.seconds(plan).takeIf { it > 0 } ?: return // fork: was plan.fadeSeconds; an Automix v2 blend lasts its output seconds
         forkSkipMixInto.set(null) // fork: a new blend; startSkipMix marks its own after this
         forkMixEngaged = true // fork (PC-Continued be257dad)
         // A planned transition says where the incoming track should be entered, which is the whole
@@ -2191,7 +2191,7 @@ class DesktopPlaybackEngine(
         val echoTail = (echoTailSeconds(plan.echoSeconds) * sink.format.sampleRate * sink.format.channels).toInt()
         // The beat-roll and reverb-tail are the subtler alternative to a planned echo, so they only
         // arm on a smart DJ transition the planner gave no echo to, and never stack with one.
-        val djStyle = ForkDesktopAutoDj.sends(plan) && (plan.transitionStyle == TransitionStyle.DJ_BLEND || // fork: no sends on an AutoDJ mix
+        val djStyle = ForkDesktopV2.sends(plan) && (plan.transitionStyle == TransitionStyle.DJ_BLEND || // fork: no sends on an Automix v2 blend
             plan.transitionStyle == TransitionStyle.DJ_FILTER) // fork: parenthesised
         val noEcho = plan.echoSeconds <= 0.0
         beatRepeatActive = noEcho && djStyle && plan.beatSeconds > 0.0 && plan.transitionBeats >= 4
@@ -2238,8 +2238,8 @@ class DesktopPlaybackEngine(
         } else null
         outgoingFilter.flush()
         incomingFilter.flush()
-        ForkDesktopAutoDj.arm(plan) // fork: the AutoDJ shelves start clean (Automix style)
-        current?.let { forkRampOutgoing(it, plan.takeIf { p -> p.forkAutoDj != null && p.outgoingPlaybackRate > 1.0001 }?.outgoingPlaybackRate) } // fork: at its full speed-up from the mix on
+        ForkDesktopV2.arm(plan) // fork: the Automix v2 shelves start clean
+        current?.let { forkRampOutgoing(it, ForkDesktopV2.outgoingRateAtStart(plan)) } // fork: at its full speed-up (or a glide's first rate) from the mix on
         blendActive = true
     }
 
@@ -2349,24 +2349,25 @@ class DesktopPlaybackEngine(
             phraseBars = if (smart) automixPhraseBars else 0,
             // The last/first 30 s window; the phone's planner calls leave it off.
             mixWindow = true,
-            forkStyle = ForkDesktopAutomixStyle.style.value, // fork: Automix style (ForkAutoDj)
+            forkStyle = ForkDesktopAutomixStyle.style.value, // fork: Automix style (BitChord or Automix v2, ForkV2Automix)
         )
     }
 
-    // ---- fork: Automix style's outgoing speed-up, see ForkDesktopAutoDj ----------------
+    // ---- fork: Automix v2's deck rates, see ForkDesktopV2 ----------------
 
     /** The deck [forkRampOutgoing] last sped up, so only that one is ever eased back. */
     private var forkRampedDeck: Track? = null
 
     /**
-     * Fork: plays the outgoing [track] at [rate] (an AutoDJ mix into a faster song), or, with null,
-     * eases a deck sped up here back to its own tempo the way a promoted deck is (an abandoned mix).
+     * Fork: plays the outgoing [track] at [rate] (an Automix v2 blend into a faster song, or a glide's
+     * step, which may be under 1), or, with null, eases a deck sped up here back to its own tempo the
+     * way a promoted deck is (an abandoned mix).
      */
     private fun forkRampOutgoing(track: Track, rate: Double?) {
         if (rate == null) {
             if (forkRampedDeck !== track) return
             forkRampedDeck = null
-            if (track.tempoRate > 1.0) {
+            if (kotlin.math.abs(track.tempoRate - 1.0) > FORK_TEMPO_UNITY) {
                 val gap = track.tempoRate - 1.0
                 val steps = ceil(gap / TEMPO_STEP_PER_BEAT).toInt().coerceAtLeast(1)
                 track.tempoEaseStep = gap / steps
@@ -2380,8 +2381,21 @@ class DesktopPlaybackEngine(
             track.tempoDrained = false
         }
         track.tempoEaseStep = 0.0
-        track.tempoRate = rate.coerceIn(1.0, MAX_INCOMING_RATE)
+        track.tempoRate = rate.coerceIn(MIN_INCOMING_RATE, MAX_INCOMING_RATE)
         forkRampedDeck = track
+    }
+
+    /**
+     * Fork: an Automix v2 glide's rates for this block ([ForkDesktopV2.shelve]): the outgoing deck's
+     * through [forkRampOutgoing] (its tempo buffer made if it has none), the incoming deck's on the
+     * buffer [readIncoming] already reads it through. Each buffer takes the rate at its next push.
+     */
+    private fun forkGlideDecks(outgoing: Track, incoming: Track?, rates: DoubleArray) {
+        if (kotlin.math.abs(outgoing.tempoRate - rates[0]) > FORK_TEMPO_UNITY || outgoing.tempo == null) forkRampOutgoing(outgoing, rates[0])
+        if (incoming != null) {
+            incoming.tempoEaseStep = 0.0
+            incoming.tempoRate = rates[1].coerceIn(MIN_INCOMING_RATE, MAX_INCOMING_RATE).let { if (kotlin.math.abs(it - 1.0) <= FORK_TEMPO_UNITY) 1.0 else it }
+        }
     }
 
     // ---- fork: Crossfade on skip, see ForkCrossfadeOnSkip ----------------

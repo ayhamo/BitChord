@@ -25,7 +25,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.settings.MixTransitionView
-import com.music.bitchord.playback.smart.ForkAutoDj
 import com.music.bitchord.playback.smart.ForkMixPicks
 import kotlin.math.roundToLong
 
@@ -39,7 +38,7 @@ private val PickNote = Color.White.copy(alpha = 0.55f)
  * bars) for this pair of songs, kept for the next time they meet ([ForkMixPicks]), Preview to jump to
  * just before the mix, and a note on what the pick did.
  *
- * Only the Web and Advanced AutoDJ styles plan with picks; under BitChord's own style the rows are
+ * Only Automix v2 plans with picks; under BitChord's own style the rows are
  * greyed out and the note says so. While a mix plays, a pick is for the next time the pair plays.
  * [live] is the popup's own: a blend in flight. [view] is the pair it draws; the picks wait until the
  * planner's pair is that one.
@@ -77,7 +76,7 @@ internal fun ForkMixPicksPanel(live: Boolean, view: MixTransitionView?, modifier
     val lenWhy = when {
         fixedLen && (style ?: actual) == ForkMixPicks.Style.LOOP -> "A loop mix sets its own length: pick Blend or Filter to choose one"
         fixedLen -> "A fade has a fixed length"
-        style == ForkMixPicks.Style.FILTER -> "A filter mix is at most ${ForkAutoDj.FILTER_MAX_BARS} bars"
+        style == ForkMixPicks.Style.FILTER -> "A filter mix is at most ${ForkMixPicks.FILTER_MAX_BARS} bars"
         else -> null
     }
 
@@ -95,7 +94,7 @@ internal fun ForkMixPicksPanel(live: Boolean, view: MixTransitionView?, modifier
         leftSec >= ForkMixPicks.PREVIEW_MIN_LEFT_SEC && ForkMixPicks.seek != null
 
     val note = when {
-        !styleOn -> "Pick Web or Advanced AutoDJ in Settings to choose a mix for each pair of songs."
+        !styleOn -> "Pick Automix v2 in Settings to choose a mix for each pair of songs."
         plan == null -> "Planning the mix…"
         live || mixing || plan.armed -> "Mixing now: a new pick is for the next time these two play."
         style != null && style != actual -> if (style == ForkMixPicks.Style.LOOP) {
@@ -129,7 +128,7 @@ internal fun ForkMixPicksPanel(live: Boolean, view: MixTransitionView?, modifier
         PickRow("Length") {
             PickChip("Auto", on = pick.bars == null, enabled = editable) { choose { copy(bars = null) } }
             for (b in ForkMixPicks.BARS) {
-                val off = fixedLen || (style == ForkMixPicks.Style.FILTER && b > ForkAutoDj.FILTER_MAX_BARS)
+                val off = fixedLen || (style == ForkMixPicks.Style.FILTER && b > ForkMixPicks.FILTER_MAX_BARS)
                 PickChip("$b", on = pick.bars == b, enabled = editable && !off) { choose { copy(bars = b) } }
             }
         }

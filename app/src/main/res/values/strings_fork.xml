@@ -122,11 +122,7 @@
     <string name="fork_automix_phrase_16_detail">Mixes over exactly 16 bars, both edges on the beat grid</string>
     <string name="fork_automix_style">Automix style</string>
     <string name="fork_automix_style_bitchord">BitChord</string>
-    <string name="fork_automix_style_original">Web AutoDJ</string>
-    <string name="fork_automix_style_advanced">Advanced AutoDJ</string>
+    <string name="fork_automix_style_v2">Automix v2</string>
     <string name="fork_automix_style_bitchord_subtitle">BitChord\'s own Automix</string>
-    <string name="fork_automix_style_original_subtitle">The YouTube Music extension\'s Automix: phrase-aligned blends ending with the song, a bass swap and a high-shelf cross, tempo only ever sped up</string>
-    <string name="fork_automix_key_aware">Shorter blend when keys clash</string>
-    <string name="fork_automix_key_aware_subtitle">Automix, Advanced AutoDJ style: songs whose keys don\'t mix get a 2-bar blend (4 when that would be very short), as in the extension</string>
-    <string name="fork_automix_style_advanced_subtitle">The extension\'s Advanced AutoDJ: the same planner, cut to where the music ends, blends moved off two singers at once, DJ fader and filter shapes</string>
+    <string name="fork_automix_style_v2_subtitle">The YouTube Music extension\'s Automix v2: beatmatched blends that glide between tempos up to 8% apart, a hand-over when two songs can\'t be matched, keys, sub-bass and loudness weighed, and a loop mix only when it beats the blend</string>
 </resources>

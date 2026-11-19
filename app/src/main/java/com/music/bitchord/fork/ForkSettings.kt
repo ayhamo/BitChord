@@ -68,16 +68,12 @@ object ForkSettings {
     private val _automixStyle = MutableStateFlow(com.music.bitchord.playback.smart.AutomixStyle.BITCHORD)
 
     /**
-     * "Automix style": BitChord's own Automix (default) or the YouTube Music extension's Original /
-     * Advanced AutoDJ; the planner reads it each tick (`CrossfadeController` passes it to
-     * `planTransition`), see `ForkAutoDj`.
+     * "Automix style": BitChord's own Automix (default) or Automix v2 (the YouTube Music extension's
+     * engine, ported); the planner reads it each tick (`CrossfadeController` passes it to
+     * `planTransition`), see `ForkAutomixStyle` and `ForkV2Automix`. A saved "Web AutoDJ" or
+     * "Advanced AutoDJ" (both removed) reads as Automix v2 and is stored as it ([readAutomix]).
      */
     val automixStyle: StateFlow<com.music.bitchord.playback.smart.AutomixStyle> = _automixStyle.asStateFlow()
-
-    private val _automixKeyAware = MutableStateFlow(false)
-
-    /** "Shorter blend when keys clash" (Advanced AutoDJ only, off by default); mirrored into `ForkAutoDj.keyAware`. */
-    val automixKeyAware: StateFlow<Boolean> = _automixKeyAware.asStateFlow()
 
     private val _automixPhraseBars = MutableStateFlow(0)
 
@@ -116,6 +112,8 @@ object ForkSettings {
         _coverFade.value = prefs.getBoolean(KEY_COVER_FADE, false)
         readAutomix()
         com.music.bitchord.playback.smart.ForkMixPicks.save = { prefs.edit().putString(KEY_AUTOMIX_PAIR_PICKS, it).apply() }
+        // Automix v2's whole-song evidence, measured by TrackAnalyzer beside its analyses (ForkV2EvidenceStore).
+        com.music.bitchord.playback.smart.automixv2.ForkV2EvidenceStore.install(context.filesDir)
         com.music.bitchord.ui.theme.ForkSystemBars.mode.value = prefs.getString(KEY_SYSTEM_BARS, null)
             ?.let { saved -> com.music.bitchord.ui.theme.ForkSystemBars.Mode.entries.firstOrNull { it.name == saved } }
             ?: com.music.bitchord.ui.theme.ForkSystemBars.Mode.NONE
@@ -194,13 +192,18 @@ object ForkSettings {
         prefs.edit().putString(KEY_AUTOMIX_STYLE, value.key).apply()
     }
 
-    /** Automix style, key-aware, phrase length and the overview's picks, from the prefs (start-up and a restored backup). */
+    /** Automix style, phrase length and the overview's picks, from the prefs (start-up and a restored backup). */
     private fun readAutomix() {
-        _automixStyle.value = com.music.bitchord.playback.smart.AutomixStyle.fromKey(prefs.getString(KEY_AUTOMIX_STYLE, null))
-        _automixKeyAware.value = prefs.getBoolean(KEY_AUTOMIX_KEY_AWARE, false)
-        com.music.bitchord.playback.smart.ForkAutoDj.keyAware = _automixKeyAware.value
+        val saved = prefs.getString(KEY_AUTOMIX_STYLE, null)
+        _automixStyle.value = com.music.bitchord.playback.smart.AutomixStyle.fromKey(saved)
+        // A removed style's key (Web / Advanced AutoDJ) is stored as Automix v2's from now on, and the
+        // removed "Shorter blend when keys clash" switch goes: Automix v2 always weighs the keys.
+        val migrated = com.music.bitchord.playback.smart.AutomixStyle.migratedKey(saved)
+        if (saved != null && migrated != saved || prefs.contains(KEY_AUTOMIX_KEY_AWARE)) {
+            prefs.edit().apply { if (migrated == null) remove(KEY_AUTOMIX_STYLE) else putString(KEY_AUTOMIX_STYLE, migrated) }.remove(KEY_AUTOMIX_KEY_AWARE).apply()
+        }
         _automixPhraseBars.value = prefs.getInt(KEY_AUTOMIX_PHRASE_BARS, 0).takeIf { it in PHRASE_BAR_CHOICES } ?: 0
-        // The Automix overview's picks per pair of songs (ForkMixPicks), read by the AutoDJ styles.
+        // The Automix overview's picks per pair of songs (ForkMixPicks), read by Automix v2.
         com.music.bitchord.playback.smart.ForkMixPicks.style = _automixStyle.value
         com.music.bitchord.playback.smart.ForkMixPicks.load(prefs.getString(KEY_AUTOMIX_PAIR_PICKS, null))
     }
@@ -209,12 +212,6 @@ object ForkSettings {
         val bars = value.takeIf { it in PHRASE_BAR_CHOICES } ?: 0
         _automixPhraseBars.value = bars
         prefs.edit().putInt(KEY_AUTOMIX_PHRASE_BARS, bars).apply()
-    }
-
-    fun setAutomixKeyAware(value: Boolean) {
-        _automixKeyAware.value = value
-        com.music.bitchord.playback.smart.ForkAutoDj.keyAware = value
-        prefs.edit().putBoolean(KEY_AUTOMIX_KEY_AWARE, value).apply()
     }
 
     fun setCrossfadeOnSkip(value: Boolean) {
@@ -231,7 +228,8 @@ object ForkSettings {
         KEY_NAVIDROME_HOME_SHELVES, KEY_CLIP_CACHE_MB, KEY_NAVIDROME_YT_HISTORY, KEY_DOWNLOAD_ON_MOBILE,
         KEY_PRELOAD_SONGS, KEY_COVER_FADE,
         // Automix style and what goes with it (the PC maps the same keys, ForkBackup.FORK there).
-        KEY_AUTOMIX_STYLE, KEY_AUTOMIX_KEY_AWARE, KEY_AUTOMIX_PHRASE_BARS, KEY_AUTOMIX_PAIR_PICKS,
+        // A backup's "automix_key_aware" (a removed switch) is not read: Automix v2 always weighs the keys.
+        KEY_AUTOMIX_STYLE, KEY_AUTOMIX_PHRASE_BARS, KEY_AUTOMIX_PAIR_PICKS,
     )
 
     /**
@@ -291,8 +289,9 @@ object ForkSettings {
         KEY_CLIP_CACHE_MB -> (value as? Int)?.takeIf { it in CLIP_CACHE_CHOICES_MB }
         KEY_PRELOAD_SONGS -> (value as? Int)?.takeIf { it in PRELOAD_CHOICES }
         KEY_AUTOMIX_PHRASE_BARS -> (value as? Int)?.takeIf { it in PHRASE_BAR_CHOICES }
-        // A style this build doesn't know is the default, as a missing one is.
-        KEY_AUTOMIX_STYLE -> (value as? String)?.takeIf { key -> com.music.bitchord.playback.smart.AutomixStyle.entries.any { it.key == key } }
+        // A style this build doesn't know is the default, as a missing one is; a removed one
+        // (Web / Advanced AutoDJ) comes in as Automix v2 (AutomixStyle.migratedKey).
+        KEY_AUTOMIX_STYLE -> com.music.bitchord.playback.smart.AutomixStyle.migratedKey(value as? String)
         // Read leniently by ForkMixPicks.load: a line it can't read is dropped, the rest kept.
         KEY_AUTOMIX_PAIR_PICKS -> value as? String
         in BACKED_UP -> value as? Boolean
@@ -313,6 +312,7 @@ object ForkSettings {
     private const val KEY_SYSTEM_BARS = "system_bars"
     private const val KEY_COVER_FADE = "cover_fade"
     private const val KEY_AUTOMIX_STYLE = "automix_style"
+    /** The removed "Shorter blend when keys clash" switch's key, only to clear it ([readAutomix]). */
     private const val KEY_AUTOMIX_KEY_AWARE = "automix_key_aware"
     private const val KEY_AUTOMIX_PAIR_PICKS = "automix_pair_picks"
     private const val KEY_AUTOMIX_PHRASE_BARS = "automix_phrase_bars"

@@ -6300,7 +6300,7 @@ private fun DesktopSettingsScreen(
                                 )
                             }
                         }
-                        ForkAutomixStyleSetting() // fork: Automix style (ForkDesktopAutoDj)
+                        ForkAutomixStyleSetting() // fork: Automix style (ForkDesktopAutomixStyle)
                     }
                     if (settingsRowVisible(DesktopStrings["automix_performance", "Automix performance"], DesktopStrings["automix_performance_subtitle", "Sets how much CPU background analysis may use"])) {
                         Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {

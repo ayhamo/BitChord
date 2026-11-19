@@ -117,17 +117,14 @@ Seven items:
 
 **Artist radio feedback:** it took about 8 s with no sign it had started. Now "Starting X radio…" shows at once: a toast on the phone (`ForkArtistRadio.kt`, `fork_starting_artist_radio`), a notice on the PC with a guard against a second press.
 
-**Automix style** (helper, merged; files `shared/…/smart/ForkAutoDj.kt`, `ForkAutoDjCurves.kt`, `jvmSharedMain/…/ForkMixShelf.kt`, `app/…/ForkAutoDjRide.kt`, `ui/screens/ForkAutomixStyleRow.kt`, `desktopApp/…/ForkDesktopAutoDj.kt`, `ForkAutomixStyleSetting.kt`; upstream hooks listed in FORK.md):
-- Settings › Playback › Automix style offers BitChord (default, unchanged), Web AutoDJ and Advanced AutoDJ: the YT Music extension's planner and curves, on the phone and the PC.
-- On the emulator, the row shows under Automix, switches, and its subtitle follows the choice. It was left on BitChord.
-- **My fix in the audit:** the bass swap and highs shelves were not applied on 16-bit output (float off, which is most Bluetooth routes). Added `ForkMixShelf.process16` and a hook after both `flip()`s in `TransitionFilterProcessor.queueInput`, with a test.
-- **Not judged by ear:** the shelves, the speed-up and the 8 × 3 s glide back, Advanced's vocal re-route, and the level mid-blend (the 1/√ headroom trim stays on).
-- **Automix overview picks** (2026-11-12; `ForkMixPicks.kt`, `ForkMixPicksPanel.kt`, one hook in `MixViewPopup.kt`): under Web/Advanced AutoDJ only, the overview takes a style (Auto, Loop, Blend, Filter, Fade) and a length (Auto, 4–32 bars) per song pair, saved, with Preview. Locked once the mix is armed or the popup still shows a finished pair. 14 unit tests; tested on the PC and the emulator (lock, Loop verdict, 16 → 8 fit, Filter capped at 8, Preview).
-- **The helper's open points:**
-  - The setting is not in backup.
-  - The phone has no phrase-length setting, so it is always Auto.
-  - The cut filters are 24 dB/oct; the extension's are 12.
-  - On the PC, a loop mix that takes over after the speed-up leaves the outgoing deck fast until it ends.
+**Automix style: BitChord and Automix v2** (2026-11-19, helper; not committed, not heard yet; files in FORK.md's Automix style rows):
+- Exactly two styles on both apps: BitChord (default, upstream's planner and loop mix untouched) and Automix v2 (the extension's planner ported under `shared/…/smart/automixv2`, version 3, matching its goldens).
+- Web AutoDJ and Advanced AutoDJ are gone (`ForkAutoDj*`, `ForkAutoDjRide`, `ForkDesktopAutoDj`, the key-aware switch). A saved or backed-up `original_autodj` / `advanced_autodj` reads and is stored as `automix_v2`; `automix_key_aware` is deleted and no longer backed up.
+- Under v2 the loop-or-blend choice and the loop plan come from the port (`ForkV2Loop`), fed to the existing loop renderers as `LoopMix.Plan`. Pair 1 of the fixtures loops, pair 2 (about 12% apart) never does (`ForkV2AutomixPairTest`).
+- Evidence (sub-bass, bass/loudness curves, pitch profiles, key strength) is measured where each app decodes the whole song, at the DSP pass's 11 025 Hz (the extension's 44.1/48 kHz: close, not bit-identical). Songs analysed earlier have none until analysed again, and the planner then skips the rules that need it.
+- **PC plays from the plan:** faders per 64-frame sub-block (1.3 ms at 48 kHz); both decks' shelves and 12 dB/oct cuts aimed once per mix block, gliding 0.5 dB per 64 frames; the outgoing ramp a beat at a time; a glide's per-beat rates on both decks' tempo buffers, taking effect at each buffer's next decoder push; the blend opened from the decoder position so the incoming cue matches. **Not played:** kick lock.
+- **Phone plays from the plan:** faders, shelves and cuts set per controller tick (about 50 ms steps), read at the incoming player's position; the incoming stretch and the outgoing ramp through the players' speed; a glide's rates set on each player's speed per tick.
+- **What the phone cannot do sample-exactly:** the two ExoPlayers are separate pipelines, not sample-aligned (upstream's phase lock covers only a constant-rate blend, not a glide); gains and rate steps land on the controller's tick at the sink's lead, not on the beat's sample; the shelf glides 0.5 dB per 64 frames; no kick lock.
 
 **Fork lines moved out of upstream files** (helper, merged):
 - New files: `ui/screens/ForkHomeRoutes.kt`, `data/canvas/ForkSpotifyHarvestBackoff.kt`, `download/ForkDownloadHelpers.kt`, `shared/…/canvas/ForkCanvasTitles.kt`.
@@ -148,15 +145,7 @@ Seven items:
 These runs started before the key-clash toggle (below) and may have missed the 16-bit fix. **Rebuild first thing.**
 
 ### Done, not built yet
-**"Shorter blend when keys clash"** (the extension's `automixKeyAware`):
-- Advanced AutoDJ only, off by default.
-- Camelot rule: same number, or one step on the same letter. Keys under 0.5 confidence don't count.
-- A clash gets 2 bars, or 4 when 2 are under 4 s (under 6 s from 140 BPM).
-- Where it lives:
-  - Shared: `ForkAutoDj.keyAware`, `keysClash`, `camelot`, and 3 new tests in `ForkAutoDjTest`.
-  - Phone: `ForkSettings.automixKeyAware` (key `automix_key_aware`) and a switch under Automix style, greyed unless Advanced.
-  - PC: `ForkDesktopAutomixStyle.keyAware` and a `SettingsToggle` under the style chips.
-- PC settings search now also finds the toggle on its own.
+**"Shorter blend when keys clash"**: removed with Advanced AutoDJ on 2026-11-19 (Automix v2 always weighs the keys).
 
 ### In progress: Home 1:1 with YouTube Music (helper stopped mid-way tonight; its edits are left in the tree)
 **Why shelves are missing today:**

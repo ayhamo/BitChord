@@ -275,6 +275,7 @@ internal class DesktopTrackAnalyzer(
         durationSeconds: Double,
     ): TrackAnalysis? {
         val features = decode(stream, TrackFeatures.sampleRate)
+            ?.also { com.music.bitchord.playback.smart.automixv2.ForkV2EvidenceStore.measure(DesktopAnalysisRuntime.analysisHome(), trackId, it, TrackFeatures.sampleRate) } // fork: Automix v2's whole-song evidence from this same buffer
             ?.let { TrackFeatures.analyze(it, durationSeconds) }
             ?: return null
         if (cancelled()) return null

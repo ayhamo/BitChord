@@ -560,7 +560,7 @@ object SourceRegistry {
      * credentials. Falls back to the trimmed text when the URL will not parse,
      * so a malformed entry still compares equal to itself.
      */
-    private fun canonicalUrl(raw: String): String {
+    internal fun canonicalUrl(raw: String): String { // fork: internal (was private), so ForkRulebookPickTest checks sameAddon on it
         val trimmed = raw.trim().trimEnd('/')
         val parsed = trimmed.toHttpUrlOrNull() ?: return trimmed
         val path = parsed.encodedPath.trimEnd('/')

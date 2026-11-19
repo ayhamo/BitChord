@@ -647,7 +647,9 @@ internal class ForkDesktopLoopMix(private val scope: CoroutineScope) {
             return cached
         }
         val why = StringBuilder()
-        val plan = LoopMix.plan(
+        // Automix v2 decides loop or blend itself (ForkV2Loop: the port's loop search and loopOrBlend);
+        // under BitChord's style this is LoopMix.plan, unchanged.
+        val plan = com.music.bitchord.playback.smart.automixv2.ForkV2Loop.plan(
             out = p.outAnalysis,
             outDuration = p.outDurationSec,
             inn = p.inAnalysis,
@@ -789,7 +791,6 @@ internal class ForkDesktopLoopMix(private val scope: CoroutineScope) {
                 )
             }
             lyricSpans[id] = Spans(spans)
-            com.music.bitchord.playback.smart.ForkAutoDj.noteSung(id, spans) // Advanced AutoDJ reads the same sung lines (Automix style)
         }
     }
 
