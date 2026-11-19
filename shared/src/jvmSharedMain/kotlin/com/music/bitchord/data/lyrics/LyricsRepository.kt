@@ -279,6 +279,8 @@ object LyricsRepository {
         },
     )
 
+    fun forkKnownIsrc(videoId: String): String? = isrcs[videoId] // fork: the recording's ISRC for the addon rulebook's ISRC-first rule (ForkAddonStream.songIsrc)
+
     private fun remember(videoId: String, isrc: String?) {
         if (isrc.isNullOrBlank() || videoId.isEmpty()) return
         isrcs.put(videoId, isrc)

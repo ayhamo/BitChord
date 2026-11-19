@@ -370,6 +370,9 @@ class AddonSource(
     internal fun forkCached(trackId: String): Boolean? =
         com.music.bitchord.data.sources.addon.ForkAddonLimitsPhone.cachedOf(config.baseUrl, rows[trackId])
 
+    /** Fork: the ISRC the addon gave the row [trackId] in its search, as sent; null when none or not searched. */
+    internal fun forkIsrc(trackId: String): kotlinx.serialization.json.JsonElement? = rows[trackId]?.forkIsrc
+
     private fun fromRow(trackId: String, tier: String): SourceStream? {
         val row = rows[trackId] ?: return null
         val url = row.streamURL?.ifBlank { null } ?: return null
@@ -400,6 +403,7 @@ class AddonSource(
             )
             return null
         }
+        if (com.music.bitchord.data.sources.ForkAddonStream.cleartextRefused(url, config.baseUrl)) return null.also { TrackLog.w(TAG, "${config.displayName}: $trackId came back as a plain http link; refused, not probed (ForkAddonStream.cleartextRefused)") } // fork: the rulebook's https-only stream links
         if (answer.isEncrypted) {
             TrackLog.w(
                 TAG,
@@ -423,7 +427,7 @@ class AddonSource(
         // at `/dash/{id}` — is the exact shape that reaches a progressive
         // extractor and fails as an unreadable container. The addon told us
         // what it is; the player only needed to be passed it on.
-        answer.transport?.let { StreamContainer.declare(url, it) }
+        (answer.transport ?: ForkAddonStream.transportOfMime(answer.mimeType))?.let { StreamContainer.declare(url, it) } // fork: was answer.transport alone; mimeType too (the rulebook's readStream)
 
         return SourceStream(
             url = url,
@@ -464,11 +468,7 @@ class AddonSource(
         // the lossy rungs, where "HIGH" is a statement of 320 and the
         // number is what says "this is not what you asked for". Flagged, so
         // stats for nerds measures the stream instead of repeating the tier.
-        val tierKbps = when (tier) {
-            AddonClient.TIER_HIGH -> 320
-            AddonClient.TIER_LOW -> 128
-            else -> null
-        }
+        val tierKbps = ForkAddonStream.inferredKbps(ForkAddonStream.tierOf("${answer.qualityText} ${answer.statedCodec.orEmpty()}"), tier) // fork: the answer's own tier first, then the asked one (was the asked tier alone)
         return StreamFormat(
             codec = codec,
             kbps = answer.kbps ?: tierKbps,

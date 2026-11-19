@@ -246,7 +246,7 @@ class AddonClient(rawBaseUrl: String, private val pickedQuality: String? = null)
                 ?.options.orEmpty()
                 .mapNotNull { it.stringValue }
             val chosen = when {
-                tier != TIER_LOSSLESS -> matchTier(tier, options)
+                tier != TIER_LOSSLESS -> com.music.bitchord.data.sources.ForkAddonStream.lowerQuality(tier, declared.firstOrNull { it.key == QUALITY_KEY }?.options.orEmpty().mapNotNull { o -> o.stringValue?.let { it to (o.labelText ?: it) } }) // fork: the rulebook's paramsFor (was matchTier(tier, options): LOW with no low option sent the first, the best)
                 manifest == null -> pickedQuality
                 else -> pickedQuality?.takeIf { it in options } ?: options.firstOrNull()
             }

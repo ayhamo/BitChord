@@ -2,6 +2,12 @@
 
 Snapshot for picking the work up again. Plan: `FORK_PLAN.md`. Every touched upstream line: `FORK.md`.
 
+## Done 2026-11-19, night (not committed): the 36 rulebook leftovers
+
+- **Addons (10):** all pass on the phone end to end (`ForkRulebookPickTest.DIFFERS` empty), the PC on the same shared rules (`ForkAddonStream`): ISRC first (the song's ISRC from its lyrics lookup, since YouTube Music gives none), LOW without a low option takes the high one else the last, a missing bitrate from the answer's own tier, the tier read off the codec, plain-http stream links refused (localhost-only exception), HLS from `mimeType`. Not checked on a device: ISRC first only applies once a song's lyrics were looked up, and a LAN addon serving plain http is now refused.
+- **Canvas:** downloaded songs read their canvases saved by id first, phone and PC (`spid:<id>`, then `id:<id>`); the phone's Spotify REST fallback uses the rulebook match (20/20; upstream 13/20); chromeWhite is BitChord's own `PlayerChrome` and runs 3/3. The 17 Metrolist bleed cases stay unported on purpose (phone-only in the rulebook; BitChord draws its own mesh). Canvas 196 / 0 / 19.
+- **Analysis:** the 4 synthetic misses are model limits matching the extension's figures (Beat This! hears drums-85 as two-beat bars and drops a beat after the tempo jump; Open-Unmix hears noise drums and a sine pad as voice). Nothing changed, nothing tuned. The 4 real-song downbeat differences (layer 1; layer 2 matches 10/10 vs pc and phone) are reported, not tuned (FORK.md row "Analysis, real-song downbeats").
+
 ## Done 2026-11-19, evening (committed): Automix transition editor, loop gate, most replayed, PC upgrade picks
 
 - **Transition editor (phone and PC):** the mix popup's pick panel is now the editor of spec/automix/editor.md (`ForkTransitionEditor`, `ForkV2EditorGeometry`, `ForkV2EditorFeed`): header with the Custom badge, decks drawn from Automix v2's plan curves, the window dragged per song and held at the planner's limits, presets, Customize lanes, beat match, length 2-32, ±10 ms nudges, Preview, Lock, Reset to Auto, the §6 warnings.

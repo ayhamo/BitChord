@@ -29,7 +29,10 @@ import kotlin.test.fail
  *
  * The pick-cases' other groups (tier, kbps, probe, parameters, stream answers,
  * base URLs) read the phone's addon code and are in the app's
- * `ForkRulebookPickTest`.
+ * `ForkRulebookPickTest`. The `paramsFor` and `readStream` rules both apps take
+ * from [ForkAddonStream] (lower-tier quality, the answer's tier and bitrate,
+ * https only, HLS/DASH from the MIME type) are checked here too, since the PC
+ * has no end-to-end reading of the cases.
  */
 class ForkRulebookTest {
 
@@ -95,7 +98,7 @@ class ForkRulebookTest {
                     slackSec = opt["slackSec"]?.numOrNull() ?: ForkAddonPick.DEFAULT_SLACK_SEC,
                     forDownload = opt["forDownload"]?.flagOrNull() ?: false,
                 ),
-                isrc = t["isrc"]?.textOrNull(),
+                // isrc: the target's own (Target.isrc), as both apps hand it over
             ) { rowOf(it) }
             val got = picked.open.map { it.str("id") } to picked.refused.map { it.id to it.why }
             val e = c.getValue("expect").jsonObject
@@ -105,6 +108,95 @@ class ForkRulebookTest {
         }
         report("pick-cases rowsToOpen", cases.size, failures)
     }
+
+    /** paramsFor's quality for the tiers below the top: [ForkAddonStream.lowerQuality], `?: tier` as both apps send it. */
+    @Test
+    fun paramsForLowerTiers() {
+        val cases = read("pick-cases.json").getValue("paramsFor").jsonArray.map { it.jsonObject }
+            .filter { it.str("tier") != "LOSSLESS" }
+        val failures = cases.mapNotNull { c ->
+            val tier = c.str("tier")
+            val options = c.getValue("manifest").jsonObject["settings"]?.jsonArray.orEmpty().map { it.jsonObject }
+                .firstOrNull { it.str("key") == "quality" }?.get("options")?.jsonArray.orEmpty().map { it.jsonObject }
+                .map { o -> o.str("value") to (o["label"]?.textOrNull() ?: o.str("value")) }
+            val got = ForkAddonStream.lowerQuality(tier, options) ?: tier
+            val want = c.getValue("expect").jsonArray.map { it.jsonArray }
+                .first { it[0].jsonPrimitive.content == "quality" }[1].jsonPrimitive.content
+            if (got == want) null else "paramsFor: ${c.str("name")}: got $got, want $want"
+        }
+        report("pick-cases paramsFor (lower tiers)", cases.size, failures)
+    }
+
+    /**
+     * readStream's rules from [ForkAddonStream], on each answer as both apps read it: the tier
+     * (format, quality labels, codec), the bitrate assumed when the answer states none (asked for
+     * the best, as the cases are), `not https`, and a transport only the MIME type states.
+     */
+    @Test
+    fun readStreamRules() {
+        val cases = read("pick-cases.json").getValue("readStream").jsonArray.map { it.jsonObject }
+        val failures = mutableListOf<String>()
+        for (c in cases) {
+            val a = c.getValue("answer").jsonObject
+            val e = c.getValue("expect").jsonObject
+            val url = a.str("url")
+            val wantRefused = e["miss"]?.textOrNull() == "not https"
+            val refused = url.isNotBlank() && ForkAddonStream.cleartextRefused(url, "https://addon.example/token")
+            if (wantRefused || refused) {
+                if (wantRefused != refused) failures += "readStream: ${c.str("name")}: refused $refused, want ${e["miss"]}"
+                continue
+            }
+            if (e["miss"] != null) continue
+            val text = listOf("quality", "streamQuality", "audioQuality", "format", "codec").joinToString(" ") { a.str(it) }
+            val tier = ForkAddonStream.tierOf(text)
+            if ("tier" in e && tier != e["tier"]?.textOrNull()) failures += "readStream: ${c.str("name")}: tier $tier, want ${e["tier"]}"
+            if ("bitrate" in e && a["bitrate"] == null) {
+                val kbps = ForkAddonStream.inferredKbps(tier, ForkAddonStream.TIER_LOSSLESS)
+                val want = e["bitrate"]?.numOrNull()?.toInt()
+                if (kbps != want) failures += "readStream: ${c.str("name")}: bitrate $kbps, want $want"
+            }
+            if (a["mimeType"] != null) {
+                val got = ForkAddonStream.transportOfMime(a.str("mimeType")) ?: "file"
+                if (got != e.str("transport")) failures += "readStream: ${c.str("name")}: transport $got, want ${e.str("transport")}"
+            }
+        }
+        // The rulebook's one exception: plain http to this machine, from an addon on it.
+        if (ForkAddonStream.cleartextRefused("http://127.0.0.1:8080/x.flac", "http://localhost:9000")) {
+            failures += "cleartext: a local addon's local file was refused"
+        }
+        if (!ForkAddonStream.cleartextRefused("http://127.0.0.1:8080/x.flac", "https://addon.example")) {
+            failures += "cleartext: a remote addon was let point at localhost"
+        }
+        report("pick-cases readStream (shared rules)", cases.size + 2, failures)
+    }
+
+    /**
+     * The song's ISRC reaches the pick: what the lyrics lookup remembered for a video id is
+     * [TrackMatcher.targetOf]'s `isrc`, normalised, and [ForkAddonPick.rowsToOpen] opens the
+     * equal-ISRC row first without being handed it. A song with nothing remembered has none.
+     */
+    @Test
+    fun songIsrcReachesThePick() {
+        val lyrics = com.music.bitchord.data.lyrics.LyricsRepository
+        lyrics::class.java.getDeclaredMethod("remember", String::class.java, String::class.java)
+            .apply { isAccessible = true }
+            .invoke(lyrics, "forkIsrcTest", "us-ug1-19-00001")
+        fun song(id: String) = Song(videoId = id, title = "Blinding Lights", artist = "The Weeknd", thumbnailUrl = null, durationText = "3:20")
+        val target = TrackMatcher.targetOf(song("forkIsrcTest"))
+        val none = TrackMatcher.targetOf(song("forkIsrcNone"))
+        val rows = listOf(
+            ForkAddonPick.Row("title", "Blinding Lights", "The Weeknd", durationSec = 200.0),
+            ForkAddonPick.Row("isrc", "Blinding Lights - 2020 Remaster", "The Weeknd", durationSec = 200.0, isrc = "USUG11900001"),
+        )
+        val open = ForkAddonPick.rowsToOpen(rows, target) { it }.open.map { it.id }
+        val failures = listOfNotNull(
+            "target isrc ${target.isrc}, want USUG11900001".takeIf { target.isrc != "USUG11900001" },
+            "a song with nothing remembered has isrc ${none.isrc}".takeIf { none.isrc != null },
+            "open $open, want [isrc, title]".takeIf { open != listOf("isrc", "title") },
+        )
+        report("song ISRC", 3, failures)
+    }
+
 
     /** paramsFor's atmos value (both apps send it when Atmos is not wanted): an "off" option, else false. */
     @Test
@@ -138,6 +230,7 @@ class ForkRulebookTest {
         album = t["album"]?.textOrNull(),
         isExplicit = t["isExplicit"]?.flagOrNull(),
         isVideo = t["isVideo"]?.flagOrNull() ?: false,
+        isrc = t["isrc"]?.textOrNull(),
     )
 
     /**

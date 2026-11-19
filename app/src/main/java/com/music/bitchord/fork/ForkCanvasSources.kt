@@ -10,12 +10,14 @@ import com.music.bitchord.data.canvas.CommunityCanvas
 import com.music.bitchord.data.canvas.ForkAnonymousSpotifyCanvas
 import com.music.bitchord.data.canvas.ForkCanvasRules
 import com.music.bitchord.data.canvas.ForkCanvasStore
+import com.music.bitchord.data.canvas.ForkDownloadedCanvas
 import com.music.bitchord.data.canvas.ForkMusicVideoMatch
 import com.music.bitchord.data.canvas.ForkVideoCanvas
 import com.music.bitchord.data.canvas.SpotifyCanvas
 import com.music.bitchord.data.canvas.SpotifyToken
 import com.music.bitchord.data.canvas.TidalCanvas
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.navidrome.NavidromeSettings
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.player.ForkCanvasSwitch
 import java.io.File
@@ -44,6 +46,9 @@ import java.io.File
  * a failed lookup not at all. The music video is keyed by the song's id, Spotify and Apple by title
  * and artist; Apple's miss is kept only when the album was known (the fork searches with it).
  *
+ * A downloaded song ([downloaded]) reads its clips saved by its id first, Spotify's canvas and then
+ * its art clip (rules 1.5 and 2.5, [ForkDownloadedCanvas]), and a clip found for it is kept by its id.
+ *
  * Spotify: with the listener's `sp_dc` cookie set, the signed-in route (`SpotifyCanvas`, upstream's)
  * as before; without one, the rulebook's anonymous route ([ForkAnonymousSpotifyCanvas]), where the
  * fork had none at all.
@@ -69,19 +74,40 @@ object ForkCanvasSources {
      * the class comment gives. [spotifyFirst]: "Prioritise Spotify Canvas".
      */
     fun song(song: Song, title: String, artist: String, album: String?, spotifyFirst: Boolean): Array<suspend () -> CanvasArtwork?> {
-        val covers = covers(title, artist, album)
+        val covers = covers(song, title, artist, album)
         val backdrops = backdrops(song, title, artist, album)
-        return if (spotifyFirst) (backdrops.sortedBy { if (it.first == ForkCanvasRules.Source.SPOTIFY) 0 else 1 }.map { it.second } + covers).toTypedArray()
-        else (covers + backdrops.map { it.second }).toTypedArray()
+        val ordered = if (spotifyFirst) backdrops.sortedBy { if (it.first == ForkCanvasRules.Source.SPOTIFY) 0 else 1 }.map { it.second } + covers
+        else covers + backdrops.map { it.second }
+        return (savedById(song) + ordered).toTypedArray()
     }
 
-    /** Apple, Tidal, the community index, while "Animated covers" is on. */
-    fun covers(title: String, artist: String, album: String?): List<suspend () -> CanvasArtwork?> {
+    /**
+     * Rule 1.5: a downloaded song's clips saved by its id, Spotify's canvas then its art clip, before
+     * any source is asked (so they answer offline); each only while its switch would ask for it.
+     */
+    private fun savedById(song: Song): List<suspend () -> CanvasArtwork?> {
+        if (!downloaded(song)) return emptyList()
+        val keys = ForkDownloadedCanvas.keys(song.videoId, spotify = ForkCanvasSwitch.backdrops.value, covers = ForkCanvasSwitch.covers.value)
+        return if (keys.isEmpty()) emptyList() else listOf<suspend () -> CanvasArtwork?>({ ForkDownloadedCanvas.saved(keys) })
+    }
+
+    /**
+     * A song saved by Downloads: its id names a saved file. A server song is left out: it has its own
+     * clips first (`NavidromeClips`), and "Available offline" is the server's, not a catalogue download.
+     */
+    private fun downloaded(song: Song): Boolean =
+        song.videoId.isNotBlank() && !NavidromeSettings.isNavidromeId(song.videoId) &&
+            song.videoId in com.music.bitchord.download.Downloads.saved.value
+
+    /** Apple, Tidal, the community index, while "Animated covers" is on; a downloaded song's art clip is kept by its id. */
+    fun covers(song: Song, title: String, artist: String, album: String?): List<suspend () -> CanvasArtwork?> {
         if (!ForkCanvasSwitch.covers.value) return emptyList()
+        val idKey = if (downloaded(song)) ForkCanvasRules.downloadedKey(song.videoId) else null
+        val accept = { a: CanvasArtwork -> a.matches(title, artist, album) }
         return listOf<suspend () -> CanvasArtwork?>(
-            { ForkCanvasStore.cached(ForkCanvasRules.appleKey(title, artist), saveMiss = album != null) { AppleMusicCanvas.search(title, artist, album) } },
-            { TidalCanvas.search(title, artist, album) },
-            { CommunityCanvas.search(title, artist, album) },
+            { ForkDownloadedCanvas.through(idKey, accept) { ForkCanvasStore.cached(ForkCanvasRules.appleKey(title, artist), saveMiss = album != null) { AppleMusicCanvas.search(title, artist, album) } } },
+            { ForkDownloadedCanvas.through(idKey, accept) { TidalCanvas.search(title, artist, album) } },
+            { ForkDownloadedCanvas.through(idKey, accept) { CommunityCanvas.search(title, artist, album) } },
         )
     }
 
@@ -116,7 +142,14 @@ object ForkCanvasSources {
         }
     }
 
-    private suspend fun spotify(song: Song, title: String, artist: String, album: String?): CanvasArtwork? {
+    /** Spotify's canvas; a downloaded song's is read and kept by its id too (rule 2.5). */
+    private suspend fun spotify(song: Song, title: String, artist: String, album: String?): CanvasArtwork? =
+        ForkDownloadedCanvas.through(
+            if (downloaded(song)) ForkCanvasRules.downloadedSpotifyKey(song.videoId) else null,
+            { it.matches(title, artist, album) },
+        ) { spotifySearch(song, title, artist, album) }
+
+    private suspend fun spotifySearch(song: Song, title: String, artist: String, album: String?): CanvasArtwork? {
         if (AppSettings.spotifySpdcToken.value.isBlank()) {
             val songMs = ForkMusicVideoMatch.lengthOf(song.durationText) * 1000
             return ForkCanvasStore.cached(ForkCanvasRules.spotifyKey(title, artist)) {

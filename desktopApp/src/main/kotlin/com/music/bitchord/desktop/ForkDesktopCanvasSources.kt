@@ -8,9 +8,11 @@ import com.music.bitchord.data.canvas.CanvasSource
 import com.music.bitchord.data.canvas.ForkAnonymousSpotifyCanvas
 import com.music.bitchord.data.canvas.ForkCanvasRules
 import com.music.bitchord.data.canvas.ForkCanvasStore
+import com.music.bitchord.data.canvas.ForkDownloadedCanvas
 import com.music.bitchord.data.canvas.ForkMusicVideoMatch
 import com.music.bitchord.data.canvas.ForkVideoCanvas
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.navidrome.NavidromeSettings
 import com.music.bitchord.ui.player.ForkCanvasSwitch
 import java.io.File
 
@@ -26,6 +28,8 @@ import java.io.File
  *  - every switch decides what is asked (rule 1.3), and is part of the in-memory key
  *    ([keySuffix], through `ForkSpotifyCanvasFirst.key`);
  *  - the rulebook's sources go through [ForkCanvasStore] (§2);
+ *  - a downloaded song reads its clips saved by its id first, Spotify's canvas and then its art
+ *    clip (rules 1.5 and 2.5, [ForkDownloadedCanvas]), and a clip found for it is kept by its id;
  *  - Spotify: the signed-in route (`DesktopSpotifyCanvas`) with an `sp_dc` cookie, else the
  *    rulebook's anonymous one ([ForkAnonymousSpotifyCanvas]).
  *
@@ -63,22 +67,46 @@ internal object ForkDesktopCanvasSources {
 
     /** The client's sources for [song] ([title], [artist], [album] already cleaned); see the class comment. */
     fun song(song: Song, title: String, artist: String, album: String?): Array<suspend () -> DesktopCanvasArtwork?> {
-        val covers = covers(title, artist, album)
+        val covers = covers(song, title, artist, album)
         val backdrops = backdrops(song, title, artist, album)
         val video = backdrops.filter { it.first == ForkCanvasRules.Source.YOUTUBE_MUSIC_VIDEO }.map { it.second }
         val spotify = backdrops.filter { it.first == ForkCanvasRules.Source.SPOTIFY }.map { it.second }
-        return (if (ForkSpotifyCanvasFirst.prioritized.value) video + covers + spotify else covers + video + spotify).toTypedArray()
+        // The saved-by-id answers go first; with Spotify prioritised the client's firstHit moves the
+        // last source (Spotify, which reads its own id key) in front of them, which is the same order.
+        return (savedById(song) + if (ForkSpotifyCanvasFirst.prioritized.value) video + covers + spotify else covers + video + spotify).toTypedArray()
     }
 
-    /** Apple, Tidal, the community index, while "Animated covers" is on. */
-    fun covers(title: String, artist: String, album: String?): List<suspend () -> DesktopCanvasArtwork?> {
+    /**
+     * Rule 1.5: a downloaded song's clips saved by its id, Spotify's canvas then its art clip, before
+     * any source is asked (so they answer offline); each only while its switch would ask for it.
+     */
+    private fun savedById(song: Song): List<suspend () -> DesktopCanvasArtwork?> {
+        if (!downloaded(song)) return emptyList()
+        val keys = ForkDownloadedCanvas.keys(song.videoId, spotify = ForkCanvasSwitch.backdrops.value, covers = ForkCanvasSwitch.covers.value)
+        return if (keys.isEmpty()) emptyList() else listOf<suspend () -> DesktopCanvasArtwork?>({ ForkDownloadedCanvas.saved(keys)?.toDesktop() })
+    }
+
+    /**
+     * A song the download manager saved: a catalogue id and its file on this computer. A local file
+     * (no id) has nothing to key on; a server song has its own clips first.
+     */
+    private fun downloaded(song: Song): Boolean =
+        song.videoId.isNotBlank() && !NavidromeSettings.isNavidromeId(song.videoId) && DesktopDownloadManager.isSaved(song)
+
+    /** Apple, Tidal, the community index, while "Animated covers" is on; a downloaded song's art clip is kept by its id. */
+    fun covers(song: Song, title: String, artist: String, album: String?): List<suspend () -> DesktopCanvasArtwork?> {
         if (!ForkCanvasSwitch.covers.value) return emptyList()
+        val idKey = if (downloaded(song)) ForkCanvasRules.downloadedKey(song.videoId) else null
         return listOf<suspend () -> DesktopCanvasArtwork?>(
-            { cached(ForkCanvasRules.appleKey(title, artist), saveMiss = album != null) { DesktopAppleMusicCanvas.search(title, artist, album) } },
-            { DesktopTidalCanvas.search(title, artist, album) },
-            { DesktopCommunityCanvas.search(title, artist, album) },
+            { byId(idKey, title, artist, album) { cached(ForkCanvasRules.appleKey(title, artist), saveMiss = album != null) { DesktopAppleMusicCanvas.search(title, artist, album) } } },
+            { byId(idKey, title, artist, album) { DesktopTidalCanvas.search(title, artist, album) } },
+            { byId(idKey, title, artist, album) { DesktopCommunityCanvas.search(title, artist, album) } },
         )
     }
+
+    /** [ForkDownloadedCanvas.through] for the PC's own artwork type, kept when the client's own match takes it. */
+    private suspend fun byId(key: String?, title: String, artist: String, album: String?, lookUp: suspend () -> DesktopCanvasArtwork?): DesktopCanvasArtwork? =
+        ForkDownloadedCanvas.through(key, { it.toDesktop().matches(title, artist, album) }) { lookUp()?.toShared() }?.toDesktop()
 
     /** The backdrop sources in the rulebook's order (the video, then Spotify), while "Backdrop videos" is on. */
     fun backdrops(song: Song, title: String, artist: String, album: String?): List<Pair<ForkCanvasRules.Source, suspend () -> DesktopCanvasArtwork?>> {
@@ -110,7 +138,11 @@ internal object ForkDesktopCanvasSources {
         }
     }
 
+    /** Spotify's canvas; a downloaded song's is read and kept by its id too (rule 2.5). */
     private suspend fun spotify(song: Song, title: String, artist: String, album: String?): DesktopCanvasArtwork? =
+        byId(if (downloaded(song)) ForkCanvasRules.downloadedSpotifyKey(song.videoId) else null, title, artist, album) { spotifySearch(song, title, artist, album) }
+
+    private suspend fun spotifySearch(song: Song, title: String, artist: String, album: String?): DesktopCanvasArtwork? =
         cached(ForkCanvasRules.spotifyKey(title, artist)) {
             if (DesktopSpotifyToken.cookie().isBlank()) {
                 val songMs = ForkMusicVideoMatch.lengthOf(song.durationText) * 1000

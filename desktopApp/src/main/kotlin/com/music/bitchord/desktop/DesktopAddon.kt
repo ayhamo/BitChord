@@ -109,6 +109,7 @@ internal data class DesktopAddonTrack(
     @SerialName("infoText") val forkInfoText: JsonElement? = null,
     @SerialName("cached") val forkCached: JsonElement? = null,
     @SerialName("isCached") val forkIsCached: JsonElement? = null,
+    @SerialName("isrc") val forkIsrc: JsonElement? = null, // fork: the row's ISRC, for the rulebook's ISRC-first rule (DesktopAddonSource.forkIsrc)
 ) {
     val durationSec: Int? get() = duration?.takeIf { it > 0 }?.toInt()
 
@@ -362,7 +363,7 @@ internal class DesktopAddonClient(rawBaseUrl: String, private val forkSourceId: 
             val options = declared.firstOrNull { it.key == QUALITY_KEY }
                 ?.options.orEmpty()
                 .mapNotNull { it.stringValue }
-            params[QUALITY_KEY] = ForkAddonQuality.valueFor(forkSourceId, tier, options, forkManifest != null) { matchTier(tier, options) } ?: tier // fork: was matchTier(tier, options) ?: tier; v1.9.1's pick
+            params[QUALITY_KEY] = ForkAddonQuality.valueFor(forkSourceId, tier, options, forkManifest != null) { com.music.bitchord.data.sources.ForkAddonStream.lowerQuality(tier, declared.firstOrNull { it.key == QUALITY_KEY }?.options.orEmpty().mapNotNull { o -> o.stringValue?.let { v -> v to (o.label?.asQueryValue() ?: v) } }) } ?: tier // fork: was matchTier(tier, options) ?: tier; v1.9.1's pick; lower tiers by the rulebook's paramsFor
         }
         // `auto` asks for Atmos when available and stereo otherwise. A declared addon default is
         // authoritative, exactly as on Android, so this never overwrites one.
@@ -712,7 +713,7 @@ internal object DesktopAddonSource {
         for (query in TrackMatcher.queries(TrackMatcher.targetOf(song))) { // fork: the phone's matcher
             val candidates = search(config, query, 25).getOrDefault(emptyList())
                 .mapNotNull { (it as? SearchResult.Track)?.song }
-            com.music.bitchord.data.sources.ForkAddonPick.rowsToOpen(candidates, TrackMatcher.targetOf(song), com.music.bitchord.data.sources.ForkAddonPick.Opt(ForkUpgradeLength.seconds.value.toDouble(), atmosAllowed = ForkAtmos.wanted())) { com.music.bitchord.data.sources.ForkAddonPick.rowOf(it, it.sourceQuality == DesktopModuleSource.DOLBY) }.open.ifEmpty { null }?.let { return it } // fork: the phone's matcher, held to the rulebook's rowsToOpen (was TrackMatcher.ranked)
+            com.music.bitchord.data.sources.ForkAddonPick.rowsToOpen(candidates, TrackMatcher.targetOf(song), com.music.bitchord.data.sources.ForkAddonPick.Opt(ForkUpgradeLength.seconds.value.toDouble(), atmosAllowed = ForkAtmos.wanted())) { com.music.bitchord.data.sources.ForkAddonPick.rowOf(it, it.sourceQuality == DesktopModuleSource.DOLBY, forkIsrc(config, it)) }.open.ifEmpty { null }?.let { return it } // fork: the phone's matcher, held to the rulebook's rowsToOpen (was TrackMatcher.ranked)
         }
         return emptyList()
     }
@@ -764,6 +765,9 @@ internal object DesktopAddonSource {
     internal fun forkCached(config: DesktopSourceConfig, trackId: String): Boolean? =
         ForkDesktopAddonLimits.cachedOf(config.baseUrl, rows[rowKey(config.id, trackId)])
 
+    /** Fork: the ISRC [config]'s addon sent on the search row [song], when it sent one as text. */
+    internal fun forkIsrc(config: DesktopSourceConfig, song: Song): String? = parseTrack(song.videoId)?.let { (rows[rowKey(config.id, it.trackId)]?.forkIsrc as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }
+
     /** The stream the search row carried, when the `/stream` call had nothing. */
     private fun fromRow(config: DesktopSourceConfig, trackId: String, tier: String): DesktopStream? {
         val row = rows[rowKey(config.id, trackId)] ?: return null
@@ -782,6 +786,7 @@ internal object DesktopAddonSource {
             DesktopTrackLog.log("${config.displayName}: malformed stream URL; skipping it")
             return null
         }
+        if (com.music.bitchord.data.sources.ForkAddonStream.cleartextRefused(url, config.baseUrl)) return null.also { DesktopTrackLog.log("${config.displayName}: a plain http stream link; refused, not probed (ForkAddonStream.cleartextRefused)") } // fork: the rulebook's https-only stream links
         // Never sent a `?drm=`, so an encrypted answer is an addon ignoring the protocol.
         if (answer.isEncrypted) {
             DesktopTrackLog.log(
@@ -794,7 +799,7 @@ internal object DesktopAddonSource {
             format = formatOf(answer, url, tier),
             sourceId = config.id,
             isDolbyAtmos = answer.isDolbyAtmos,
-            transport = answer.transport,
+            transport = answer.transport ?: com.music.bitchord.data.sources.ForkAddonStream.transportOfMime(answer.mimeType), // fork: mimeType too (the rulebook's readStream)
             durationSec = rows[rowKey(config.id, trackId)]?.durationSec,
         )
     }
@@ -821,11 +826,7 @@ internal object DesktopAddonSource {
         return DesktopStreamFormat(
             codec = codec,
             // The tier's published meaning is the last resort, and only on the lossy rungs.
-            kbps = answer.kbps ?: when (tier) {
-                DesktopAddonClient.TIER_HIGH -> 320
-                DesktopAddonClient.TIER_LOW -> 128
-                else -> null
-            },
+            kbps = answer.kbps ?: com.music.bitchord.data.sources.ForkAddonStream.inferredKbps(com.music.bitchord.data.sources.ForkAddonStream.tierOf("${answer.qualityText} ${answer.statedCodec.orEmpty()}"), tier), // fork: the answer's own tier first, then the asked one (was the asked tier alone)
             sampleRateHz = answer.sampleRateHz,
             bitDepth = answer.bits,
         )

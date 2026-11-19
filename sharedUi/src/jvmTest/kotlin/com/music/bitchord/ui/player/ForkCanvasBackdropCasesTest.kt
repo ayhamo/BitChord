@@ -15,9 +15,13 @@ import kotlin.test.fail
 
 /**
  * Fork: the canvas rulebook's cases whose code is the player's own, upstream's (canvas.md §8.2, §9.2,
- * §11.1), against that code:
+ * §11.1, §11.2), against that code:
  *
  *  - `backdrop` meshLift: ArtworkMeshBackdrop's private `lifted()`, by reflection;
+ *  - `badge` chromeWhite (§11.2, the rulebook cites BitChord's own `PlayerChrome.kt` as the original): the
+ *    blended white is `alpha - CHROME_ALPHA_DROP`; the drop is read off PlayerChrome's private
+ *    constant by reflection and `chromeWhite` is pinned to that arithmetic (a composable reading
+ *    `LocalPlayerChrome`, not a function a test can call);
  *  - `display` clipFade and `badge` bandCentre: `ForkCanvasRules.clipFade` / `bandCentre` run the
  *    cases, and the player's own lines (NowPlayingScreen's `clipFadeFraction`, PlayerControls'
  *    ShimmerText band) are pinned to the same arithmetic, so an upstream change that moves them away
@@ -30,6 +34,10 @@ class ForkCanvasBackdropCasesTest {
 
     private val lifted = Class.forName("com.music.bitchord.ui.player.ArtworkMeshBackdropKt")
         .getDeclaredMethod("lifted", Int::class.javaPrimitiveType!!).apply { isAccessible = true }
+
+    /** PlayerChrome's private `CHROME_ALPHA_DROP`: a private `const val` is still a static field on the file class. */
+    private val chromeDrop = Class.forName("com.music.bitchord.ui.player.PlayerChromeKt")
+        .getDeclaredField("CHROME_ALPHA_DROP").apply { isAccessible = true }.getFloat(null)
 
     private fun num(e: kotlinx.serialization.json.JsonElement?) = (e as? JsonPrimitive)?.doubleOrNull ?: 0.0
 
@@ -76,6 +84,12 @@ class ForkCanvasBackdropCasesTest {
             val got = ForkCanvasRules.bandCentre(num(i["progress"]).toFloat(), num(i["width"]).toFloat())
             check("badge bandCentre", c, abs(got - num(c["expect"])) <= 1e-5, got)
         }
+        for (e in all["badge"] as JsonArray) {
+            val c = e as JsonObject
+            if ((c["kind"] as JsonPrimitive).content != "chromeWhite") continue
+            val got = num((c["input"] as JsonObject)["alpha"]).toFloat() - chromeDrop
+            check("badge chromeWhite", c, abs(got - num(c["expect"])) <= 1e-5, got)
+        }
         // the player's own lines still do that arithmetic
         val np = source("NowPlayingScreen.kt")
         if (!np.contains("private const val HERO_FADE_FRACTION = 0.42f") ||
@@ -85,6 +99,10 @@ class ForkCanvasBackdropCasesTest {
         if (!pc.contains("val band = width * 0.6f") || !pc.contains("val center = -band + progress.value * (width + 2 * band)")) {
             fails += "PlayerControls' shimmer band is no longer 0.6 x width swept from -band to width + band (rule 11.1)"
         }
+        val chrome = source("PlayerChrome.kt")
+        if (!chrome.contains("Color.White.copy(alpha = if (LocalPlayerChrome.current) alpha - CHROME_ALPHA_DROP else alpha)") ||
+            !chrome.contains("internal const val CHROME_FULL_ALPHA = 0.73f")
+        ) fails += "PlayerChrome's chromeWhite is no longer alpha - CHROME_ALPHA_DROP with full white at 0.73 (rule 11.2)"
         val report = counts.entries.joinToString("\n") { (g, n) -> "  $g ${n[0]}/${n[1]} pass" } + fails.joinToString("") { "\n  FAIL $it" }
         println("canvas cases against the player:\n$report")
         assertTrue(fails.isEmpty(), report)

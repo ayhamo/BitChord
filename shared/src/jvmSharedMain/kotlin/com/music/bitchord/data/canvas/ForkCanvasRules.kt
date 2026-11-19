@@ -111,6 +111,16 @@ object ForkCanvasRules {
     fun appleKey(title: String, artist: String, tall: Boolean = false): String =
         "$title|$artist" + if (tall) "|tall" else ""
 
+    /**
+     * Rule 2.5: a downloaded song's Spotify canvas, saved by the song's id. Keyed on the id rather
+     * than [spotifyKey]'s title and artist because those can read differently for the same song
+     * offline; see [ForkDownloadedCanvas].
+     */
+    fun downloadedSpotifyKey(songId: String): String = "spid:$songId"
+
+    /** Rule 2.5: a downloaded song's art clip (its motion cover), saved by the song's id. */
+    fun downloadedKey(songId: String): String = "id:$songId"
+
     // ---- §8 Display -----------------------------------------------------------------------
 
     /**

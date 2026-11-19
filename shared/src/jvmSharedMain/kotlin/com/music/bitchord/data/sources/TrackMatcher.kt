@@ -52,6 +52,7 @@ object TrackMatcher {
         val isExplicit: Boolean? = null,
         /** Music-video timing includes visual intros/outros that catalogue audio omits. */
         val isVideo: Boolean = false,
+        val isrc: String? = null, // fork: the song's ISRC when the app has one, for the addon rulebook's ISRC-first rule (ForkAddonStream.songIsrc)
     )
 
     fun targetOf(song: Song) = Target(
@@ -61,6 +62,7 @@ object TrackMatcher {
         song.albumName,
         song.isExplicit,
         song.isVideo,
+        ForkAddonStream.songIsrc(song.videoId), // fork: ISRC first (ForkAddonStream.songIsrc)
     )
 
     // ── Asking ──────────────────────────────────────────────────────────────

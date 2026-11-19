@@ -44,6 +44,34 @@ object ForkSpotifyMatch {
         return null
     }
 
+    /**
+     * Whether a Web API search track (`tracks.items[]`: `name`, `artists[].name`, `album.name`,
+     * `duration_ms`) is the song, by the same rule 4.4 as [pick] ([ForkSpotifyCanvasRules.matches]).
+     *
+     * `SpotifyCanvas.searchViaRest`, the search after Pathfinder, kept upstream's `isMatch`: the
+     * title equal once normalised and every requested artist credited, no length or album. On the
+     * rulebook's 20 `spotifyMatch` cases written as REST tracks it gets 13 right, this 20
+     * (`ForkSpotifyRestCasesTest`). The REST answer carries the album and the length, so both are
+     * checked here as on Pathfinder's.
+     *
+     * [primary] is the song's first artist (rule 4.4's "primary"), as [pick] cuts it; the hit's is its
+     * first credited artist. [durationMs] is null where the caller doesn't know the song's length.
+     */
+    fun restMatches(
+        track: JsonObject, title: String, artist: String, album: String?,
+        durationMs: Long? = null, primary: String? = ForkSpotifyCanvasRules.primaryOf(artist),
+    ): Boolean {
+        val name = text(track, "name") ?: return false
+        val artists = (track["artists"] as? JsonArray)?.mapNotNull { (it as? JsonObject)?.let { a -> text(a, "name") } }.orEmpty()
+        val hitAlbum = (track["album"] as? JsonObject)?.let { text(it, "name") }
+        val hitMs = (track["duration_ms"] as? JsonPrimitive)?.contentOrNull?.toLongOrNull()
+        return ForkSpotifyCanvasRules.matches(
+            title, artist, album, durationMs,
+            name, artists.joinToString(", "), hitAlbum, hitMs,
+            primary, artists.firstOrNull(),
+        )
+    }
+
     /** The song Pathfinder just answered with named hits, none of them it; see [takeNamedMiss]. */
     private val namedMiss = ThreadLocal<String?>()
 

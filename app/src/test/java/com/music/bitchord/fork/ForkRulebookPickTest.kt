@@ -5,6 +5,7 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.AddonSource
 import com.music.bitchord.data.sources.DeviceCodecs
 import com.music.bitchord.data.sources.ForkAddonPickPhone
+import com.music.bitchord.data.sources.ForkAddonStream
 import com.music.bitchord.data.sources.ModuleSource
 import com.music.bitchord.data.sources.SourceConfig
 import com.music.bitchord.data.sources.SourceKind
@@ -116,6 +117,9 @@ class ForkRulebookPickTest {
                 artist = t.str("artist"),
                 durationSec = t["durationSec"]?.num()?.toInt(),
                 album = t["album"]?.text(),
+                // As TrackMatcher.targetOf hands it over (ForkAddonStream.songIsrc); the row's own
+                // ISRC is read off the search answer by AddonSource.
+                isrc = t["isrc"]?.text(),
             )
             val open = ForkAddonPickPhone.ranked(source, songs, target, strict).orEmpty().map { rowId(it.videoId) }
             val e = c.getValue("expect").jsonObject
@@ -230,7 +234,8 @@ class ForkRulebookPickTest {
                         MimeTypes.APPLICATION_MPD -> "dash"
                         else -> "file"
                     },
-                    "tier" to ModuleSource.qualityTier(answer.qualityText),
+                    // The tier the phone reads off the answer, which its missing bitrate is taken from (AddonSource.formatOf)
+                    "tier" to ForkAddonStream.tierOf("${answer.qualityText} ${answer.statedCodec.orEmpty()}"),
                     "sampleRate" to stream.format.sampleRateHz?.toString(),
                     "bitDepth" to stream.format.bitDepth?.toString(),
                     "bitrate" to stream.format.kbps?.toString(),
@@ -340,27 +345,11 @@ class ForkRulebookPickTest {
             "cached",
         )
 
-        private const val BITRATE = "the fork fills a missing bitrate from the tier it asked for (StreamFormat.kbpsInferred), " +
-            "not from the answer's own label: asked for LOSSLESS, an AAC answer's bitrate stays unknown"
-        private const val TIER_FROM_CODEC = "the fork reads no tier off a stream answer's codec; a stated flac codec makes " +
-            "StreamFormat.isLossless true, which is what the fork ranks by"
-        private const val LOW_FIRST = "BitChord's rule for LOW without a low option: the first option (AddonClient.matchTier)"
-
-        /** Cases the fork answers differently, and why. Keyed "group: case name". */
-        val DIFFERS = mapOf(
-            "rowsToOpen: ISRC first, whatever the title says" to
-                "no ISRC: a YouTube Music song carries none in this app, so the matcher decides (the rulebook's no-ISRC rule)",
-            "paramsFor: LOW: no low option: the high one (ours; BitChord: the first)" to LOW_FIRST,
-            "paramsFor: LOW: no low or high option: the last (ours)" to LOW_FIRST,
-            "readStream: HLS seen in the URL" to BITRATE,
-            "readStream: DASH from the manifest field" to BITRATE,
-            "readStream: no bitrate: 320 for HIGH" to BITRATE,
-            "readStream: headers: strings with valid names only; the cached flag" to TIER_FROM_CODEC,
-            "readStream: an addon's User-Agent, Range and Accept-Encoding are dropped (one fixed UA; ours)" to TIER_FROM_CODEC,
-            "readStream: a plain http stream link is refused, not probed" to
-                "the fork has no https-only rule for addon streams (upstream opens any URL OkHttp parses; cleartext is allowed for LAN Navidrome)",
-            "readStream: HLS from the MIME type" to
-                "AddonStream.transport reads manifest, mediaType and format, not mimeType; the URL's extension is the fallback",
-        )
+        /**
+         * Cases the fork answers differently, and why. Keyed "group: case name". Empty since the
+         * ten addon gaps were closed (2026-11-19): ISRC first, LOW's fallback, the bitrate and
+         * tier read off the answer, https only, HLS from the MIME type.
+         */
+        val DIFFERS = emptyMap<String, String>()
     }
 }

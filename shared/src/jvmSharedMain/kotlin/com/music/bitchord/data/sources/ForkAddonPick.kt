@@ -77,8 +77,9 @@ object ForkAddonPick {
     /**
      * The rows of [rows] to open for [target], best first.
      *
-     * [isrc] is the song's own ISRC when its catalogue gave one; null skips the
-     * ISRC rule and leaves everything to the matcher. Generic over the caller's
+     * [isrc] is the song's own ISRC when the app knows it ([TrackMatcher.Target.isrc],
+     * see [ForkAddonStream.songIsrc]); null skips the ISRC rule and leaves
+     * everything to the matcher. Generic over the caller's
      * row type so the phone and the PC hand in their own `Song`s and get the
      * same objects back, while [read] says what each one is.
      */
@@ -86,7 +87,7 @@ object ForkAddonPick {
         rows: List<T>,
         target: TrackMatcher.Target,
         opt: Opt = Opt(),
-        isrc: String? = null,
+        isrc: String? = target.isrc,
         read: (T) -> Row,
     ): Picked<T> {
         val refused = mutableListOf<Refusal>()
@@ -158,14 +159,19 @@ object ForkAddonPick {
         isExplicit = row.explicit,
     )
 
-    /** A matched song as a [Row]: what the phone's and the PC's addon searches already produce. */
-    fun rowOf(song: Song, atmos: Boolean): Row = Row(
+    /**
+     * A matched song as a [Row]: what the phone's and the PC's addon searches already produce.
+     * [isrc] is the addon row's own, which a `Song` has no field for, so each app reads it off the
+     * search row it kept (`AddonSource.forkIsrc`, `DesktopAddonSource.forkIsrc`).
+     */
+    fun rowOf(song: Song, atmos: Boolean, isrc: String? = null): Row = Row(
         id = song.videoId,
         title = song.title,
         artist = song.artist,
         album = song.albumName,
         durationSec = TrackMatcher.secondsOf(song.durationText)?.toDouble(),
         explicit = song.isExplicit,
+        isrc = isrcOf(isrc),
         atmos = atmos,
     )
 

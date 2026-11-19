@@ -215,7 +215,7 @@ object SpotifyCanvas {
             val artists = track["artists"]?.jsonArray
                 ?.mapNotNull { it.jsonObject["name"]?.jsonPrimitive?.contentOrNull }
                 .orEmpty()
-            if (!isMatch(trackTitle, artists, title, artist)) continue
+            if (!com.music.bitchord.fork.ForkSpotifyMatch.restMatches(track, title, artist, album)) continue // fork: the canvas rulebook's match (rule 4.4: words, primary artist, length, album); was isMatch(trackTitle, artists, title, artist)
 
             val uri = track["uri"]?.jsonPrimitive?.contentOrNull ?: continue
             val albumName = track["album"]?.jsonObject?.get("name")?.jsonPrimitive?.contentOrNull

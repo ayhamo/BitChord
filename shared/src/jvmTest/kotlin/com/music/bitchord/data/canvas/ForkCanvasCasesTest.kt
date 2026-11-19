@@ -201,7 +201,9 @@ class ForkCanvasCasesTest {
                         "video" -> ForkCanvasRules.videoKey(i.str("songId")!!)
                         "spotify" -> ForkCanvasRules.spotifyKey(i.str("title")!!, i.str("artist")!!)
                         "apple" -> ForkCanvasRules.appleKey(i.str("title")!!, i.str("artist")!!, i.bool("tall"))
-                        else -> return skip(g, "downloaded-song keys: the fork looks a downloaded song up like a streamed one (phone only)")
+                        "downloadedSpotify" -> ForkCanvasRules.downloadedSpotifyKey(i.str("songId")!!)
+                        "downloaded" -> ForkCanvasRules.downloadedKey(i.str("songId")!!)
+                        else -> return check(g, c, false, "unknown source ${i.str("source")}")
                     }
                     check(g, c, got == (want as JsonPrimitive).content, got)
                 }
@@ -327,7 +329,9 @@ class ForkCanvasCasesTest {
             }
             "backdrop" -> when (c.str("kind")) {
                 "meshLift" -> skip(g, "meshLift: run in sharedUi ForkCanvasBackdropCasesTest against ArtworkMeshBackdrop's lifted()")
-                else -> skip(g, "${c.str("kind")}: the art bleed (§9-10) is the phone extension's; BitChord's player has no bleed")
+                // §10 is "[phone only]": Metrolist's bleed, which the phone extension blends onto YouTube's own
+                // art. BitChord's player draws its own mesh (§9) instead; FORK.md records it as not BitChord's.
+                else -> skip(g, "${c.str("kind")}: Metrolist's art bleed (§10, phone only); BitChord's player draws its own mesh (§9), not ported")
             }
             "badge" -> when (c.str("kind")) {
                 "bandCentre" -> {
@@ -335,7 +339,7 @@ class ForkCanvasCasesTest {
                     val got = ForkCanvasRules.bandCentre(i.num("progress").toFloat(), i.num("width").toFloat())
                     check(g, c, near(got.toDouble(), num(want), 1e-5), got)
                 }
-                else -> skip(g, "chromeWhite: the phone extension's additive chrome; BitChord draws its own chrome")
+                else -> skip(g, "chromeWhite: run in sharedUi ForkCanvasBackdropCasesTest against PlayerChrome's chromeWhite")
             }
             else -> check(g, c, false, "unknown group")
         }

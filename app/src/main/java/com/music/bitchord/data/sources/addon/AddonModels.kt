@@ -217,6 +217,7 @@ data class AddonTrack(
     // fork: NullBeat's Atmos flags (rulebook protocol §3), read as JSON so a stray type can't fail a search
     @SerialName("isAtmos") val forkIsAtmos: JsonElement? = null,
     @SerialName("isAtmosOnly") val forkIsAtmosOnly: JsonElement? = null,
+    @SerialName("isrc") val forkIsrc: JsonElement? = null, // fork: the row's ISRC, for the rulebook's ISRC-first rule (ForkAddonPickPhone)
 ) {
     val durationSec: Int? get() = duration?.takeIf { it > 0 }?.toInt()
 

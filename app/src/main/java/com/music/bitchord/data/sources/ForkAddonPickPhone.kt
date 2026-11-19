@@ -3,6 +3,7 @@ package com.music.bitchord.data.sources
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * The phone's side of [ForkAddonPick]: an addon's search rows held to the
@@ -29,9 +30,12 @@ import com.music.bitchord.data.settings.AppSettings
  *  - Previews (≤ 35 s against a song over 45 s) were refused by the matcher's
  *    length rule only, and logged as "not the song".
  *
- * The ISRC rule has nothing to work with here: a YouTube Music song carries no
- * ISRC in this app, so [ForkAddonPick.rowsToOpen] is called without one and
- * the matcher decides, as the rulebook says it does then.
+ * The ISRC rule: [target]'s ISRC is what `TrackMatcher.targetOf` found for the
+ * song ([ForkAddonStream.songIsrc]: YouTube Music gives none, so it is the one
+ * the lyrics lookup worked out, when it has run), and each row's is the `isrc`
+ * the addon sent on it in the search, kept on the row by `AddonSource`
+ * ([AddonSource.forkIsrc]). With both, an equal ISRC opens first; with either
+ * missing the matcher decides, as the rulebook says it does then.
  */
 internal object ForkAddonPickPhone {
 
@@ -56,7 +60,7 @@ internal object ForkAddonPickPhone {
                 slackSec = (strictSlackSec ?: AppSettings.upgradeLengthSlackSeconds.value).toDouble(),
                 atmosAllowed = DeviceCodecs.atmosWanted,
             ),
-        ) { ForkAddonPick.rowOf(it, atmos = it.sourceQuality == ModuleSource.DOLBY) }
+        ) { ForkAddonPick.rowOf(it, atmos = it.sourceQuality == ModuleSource.DOLBY, isrc = rowIsrc(source, it)) }
         // One line per search, and only when something was held back: a row
         // refused for its length reads in the log exactly like a source that
         // never had the song, and the two have opposite fixes.
@@ -69,6 +73,13 @@ internal object ForkAddonPickPhone {
             )
         }
         return picked.open
+    }
+
+    /** The ISRC [source]'s search sent on the row [song], read leniently (a number or a stray type is none). */
+    private fun rowIsrc(source: MusicSource, song: Song): String? {
+        val addon = source as? AddonSource ?: return null
+        val trackId = SourceRegistry.parseTrackKey(song.videoId)?.second ?: return null
+        return ((addon.forkIsrc(trackId) as? JsonPrimitive)?.takeIf { it.isString })?.content
     }
 
     /**
