@@ -74,6 +74,8 @@ internal object ForkDebugBridge {
         server.createContext("/reload") { respond(it) { engine?.reloadCurrent(); "ok" } }
         server.createContext("/handoff-probe") { respond(it) { kotlinx.coroutines.runBlocking { com.music.bitchord.data.navidrome.ForkHandoffStore.probe() } } }
         server.createContext("/handoff-note") { respond(it) { kotlinx.coroutines.runBlocking { ForkHandoffDesktop.describe() } } }
+        // Dumps the signed-in web Home (FEmusic_home, continuations, chips) into ?dir= and answers the parser diff (ForkHomeDump).
+        server.createContext("/homedump") { respond(it) { kotlinx.coroutines.runBlocking { com.music.bitchord.data.innertube.ForkHomeDump.dump(java.io.File(it.query("dir"))) } } }
         server.createContext("/quit") { ex ->
             respond(ex) {
                 // POST only: a page's <img> GET carries no Origin. The quit waits a moment so this reply is sent first.

@@ -105,8 +105,7 @@ object YtMusicRepository {
      * FEmusic_new_releases are one-shot and don't participate.
      */
     suspend fun moreHome(token: String): Result<HomeFeed> = call("home:more") {
-        val response = Innertube.browseContinuation(token)
-        com.music.bitchord.data.innertube.ForkHomeFeedParser.parseContinuation(response) // fork: was HomeFeed(parseHomeContinuation(response), continuationToken(response))
+        com.music.bitchord.data.innertube.ForkHomeFeedParser.more(token) // fork: was HomeFeed(parseHomeContinuation(Innertube.browseContinuation(token)), continuationToken(response))
     }
 
     /**

@@ -69,6 +69,24 @@ object ForkHomeFeedParser {
         )
     }
 
+    /**
+     * The next page of Home after [token], read past pages that hold no shelf. Home's pager
+     * (`MainViewModel.loadMoreHome`, the PC's alike) takes a page with no new shelves for the feed's
+     * end and drops the token, so one continuation page of spacers or of kinds this reader skips cut
+     * off the whole lower half of Home while YouTube still had more to send.
+     */
+    suspend fun more(token: String): HomeFeed {
+        var feed = parseContinuation(Innertube.browseContinuation(token))
+        var hops = 0
+        while (feed.shelves.isEmpty() && hops++ < EMPTY_PAGE_HOPS) {
+            val next = feed.continuation ?: break
+            feed = parseContinuation(Innertube.browseContinuation(next))
+        }
+        return feed
+    }
+
+    private const val EMPTY_PAGE_HOPS = 4
+
     /** The chip cloud over Home: `sectionListRenderer.header.chipCloudRenderer.chips[]`. */
     fun chips(header: JsonElement?): List<HomeChip> {
         val cloud = header.o("chipCloudRenderer") ?: (findFirst(header, "chipCloudRenderer") as? JsonObject)
