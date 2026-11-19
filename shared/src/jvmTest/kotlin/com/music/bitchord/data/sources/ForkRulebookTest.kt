@@ -105,6 +105,23 @@ class ForkRulebookTest {
         report("pick-cases rowsToOpen", cases.size, failures)
     }
 
+    /** paramsFor's atmos value (both apps send it when Atmos is not wanted): an "off" option, else false. */
+    @Test
+    fun atmosOffValue() {
+        val cases = listOf(
+            Triple(emptyList<String>(), "true", "false"),
+            Triple(listOf("auto", "only", "off"), "auto", "off"),
+            Triple(listOf("Stereo", "Atmos"), "Atmos", "Stereo"),
+            Triple(listOf("1", "0"), "1", "0"),
+            Triple(listOf("auto", "strict"), "strict", "false"),
+        )
+        val failures = cases.mapNotNull { (options, default, want) ->
+            val got = ForkAddonPick.atmosOff(options, default)
+            if (got == want) null else "$options (default $default): got $got, want $want"
+        }
+        report("atmosOff", cases.size, failures)
+    }
+
     private fun report(what: String, n: Int, failures: List<String>) {
         println("$what: ${n - failures.size}/$n pass")
         if (failures.isNotEmpty()) fail("$what: ${failures.size} of $n differ\n" + failures.joinToString("\n"))

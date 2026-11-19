@@ -49,13 +49,15 @@ internal object ForkDesktopAutomixStyle {
     /**
      * Loads the Automix overview's picks per pair of songs ([ForkMixPicks]) and saves them as they
      * change; also opens Automix v2's evidence beside the analyses ([ForkV2EvidenceStore], measured by
-     * `DesktopTrackAnalyzer`). Called once from the engine's `init`.
+     * `DesktopTrackAnalyzer`, or by [ForkDesktopV2Evidence] for a song analysed before it) and wires
+     * the kick lock ([ForkDesktopKickLock]). Called once from the engine's `init`.
      */
     fun loadPairPicks() {
         ForkMixPicks.load(persistence.string(PAIR_PICKS, ""))
         ForkMixPicks.save = { persistence.saveString(PAIR_PICKS, it) }
         ForkMixPicks.style = _style.value
         runCatching { ForkV2EvidenceStore.install(DesktopAnalysisRuntime.analysisHome()) }
+        ForkDesktopKickLock.install()
     }
 }
 

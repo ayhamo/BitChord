@@ -110,6 +110,7 @@ internal object ForkNavidrome {
         ForkYouTubeHistory.enabled.value = settings.string(KEY_YT_HISTORY) != "off" // on until switched off: the owner asked for this sync on the PC (the phone's default is off)
         ForkCanvasSwitch.backdrops.value = settings.string(KEY_BACKDROPS) != "off"
         ForkCanvasSwitch.covers.value = settings.string(KEY_COVERS) != "off"
+        ForkDesktopCanvasSources.install() // the canvas rulebook's saved lookups, the music-video loops' folder and switch
         ForkNavidromeSettings.install()
         ForkWidePlayerSettings.install() // the player's saved wide layout, before it is drawn
         ForkPlayerEffects.install() // "Cover fade" and "Bass glow", before the player is drawn

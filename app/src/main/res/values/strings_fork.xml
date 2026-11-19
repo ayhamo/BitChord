@@ -23,6 +23,7 @@
     <string name="fork_navidrome_scrobble">Report plays to Navidrome</string>
     <string name="fork_navidrome_scrobble_subtitle">Your server shows what is playing, and counts songs played to the end</string>
     <string name="fork_settings">Fork settings</string>
+    <string name="fork_navidrome_server">Server</string>
     <string name="fork_crossfade_on_skip">Crossfade on skip</string>
     <string name="fork_crossfade_on_skip_subtitle">Next and Previous blend into the new track too, also with Automix on (Automix still mixes songs that end on their own)</string>
     <string name="fork_sort_reversed">Reverse order</string>
@@ -31,6 +32,8 @@
     <string name="fork_library_navidrome_playlists">Navidrome playlists</string>
     <string name="fork_library_navidrome_albums">Navidrome albums</string>
     <string name="fork_backdrop_menu">Backdrop videos</string>
+    <string name="fork_music_video_canvas">Music video canvas</string>
+    <string name="fork_music_video_canvas_subtitle">A backdrop cut from the song\'s own music video on YouTube, its most replayed part, tried before Spotify\'s Canvas. Needs Backdrop videos</string>
     <string name="fork_animated_covers">Animated covers</string>
     <string name="fork_animated_covers_subtitle">Video in the cover square: the moving covers from Apple Music and other services, for YouTube and server songs alike. Backdrops have their own switch</string>
     <string name="fork_on">On</string>

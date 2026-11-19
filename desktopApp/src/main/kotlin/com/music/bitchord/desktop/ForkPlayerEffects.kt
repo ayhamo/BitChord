@@ -46,7 +46,7 @@ internal object ForkPlayerEffects {
  * every moving part still, which is when both draw nothing.
  */
 @Composable
-internal fun ForkPlayerEffectsRows() {
+internal fun ForkPlayerEffectsRows() = ForkMarked {
     val coverFade by ForkCoverFade.enabled.collectAsState()
     val bassGlow by ForkBassGlow.enabled.collectAsState()
     val reduceAnimation by DesktopAppearanceSettings.reduceAnimation.collectAsState()

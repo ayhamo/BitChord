@@ -24,7 +24,7 @@ class ForkSpotifyTotpTokenTest {
 
     @Test
     fun `the secret transform is XOR with i mod 33 plus 9, joined as decimal digits`() {
-        val (_, secret) = ForkSpotifyTotpToken.FALLBACK_SECRET
+        val (_, secret) = ForkSpotifyTotpToken.SECRET_V12
         assertEquals(
             "98915853788388658481597337365767711075051",
             String(ForkSpotifyTotpToken.secretKey(secret), Charsets.US_ASCII),
@@ -34,7 +34,7 @@ class ForkSpotifyTotpTokenTest {
 
     @Test
     fun `secret v12 gives the known code at a fixed server time`() {
-        val key = ForkSpotifyTotpToken.secretKey(ForkSpotifyTotpToken.FALLBACK_SECRET.second)
+        val key = ForkSpotifyTotpToken.secretKey(ForkSpotifyTotpToken.SECRET_V12.second)
         assertEquals("165105", ForkSpotifyTotpToken.totp(key, 1_700_000_000))
         // 30 s steps: 1_700_000_010 starts the next one.
         assertEquals("518490", ForkSpotifyTotpToken.totp(key, 1_700_000_029))

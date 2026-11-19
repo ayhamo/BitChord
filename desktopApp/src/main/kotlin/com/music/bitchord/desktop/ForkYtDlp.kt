@@ -468,12 +468,14 @@ internal object ForkYtDlp {
 internal fun ForkYtDlpRows() {
     val on by ForkYtDlp.enabled.collectAsState()
     val stored by ForkYtDlp.path.collectAsState()
-    SettingsToggle(
-        DesktopStrings[ForkYtDlp.TITLE_KEY, ForkYtDlp.TITLE],
-        DesktopStrings["fork_ytdlp_subtitle", "Resolve YouTube streams with your own yt-dlp first; the built-in resolver stays the fallback"],
-        on,
-        ForkYtDlp::setEnabled,
-    )
+    ForkMarked {
+        SettingsToggle(
+            DesktopStrings[ForkYtDlp.TITLE_KEY, ForkYtDlp.TITLE],
+            DesktopStrings["fork_ytdlp_subtitle", "Resolve YouTube streams with your own yt-dlp first; the built-in resolver stays the fallback"],
+            on,
+            ForkYtDlp::setEnabled,
+        )
+    }
     val pathTitle = DesktopStrings["fork_ytdlp_path", "yt-dlp path"]
     if (!settingsRowVisible(pathTitle, stored)) return
     var input by remember(stored) { mutableStateOf(stored) }
@@ -505,7 +507,7 @@ internal fun ForkYtDlpRows() {
     }
     ForkDisabledWhen(!on) {
         Column(Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
-            Text(pathTitle, style = MaterialTheme.typography.bodyLarge)
+            ForkSettingsTitle(pathTitle, fork = true)
             OutlinedTextField(
                 input,
                 { input = it },

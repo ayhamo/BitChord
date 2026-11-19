@@ -394,6 +394,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             // entry-only estimate: no content end, no mix-out anchor, no vocal
             // mask, which is most of what the outgoing half of a blend reads.
             if (trackId in provisional && !usableComplete) cache.requestAnalysisHead(analysisUri)
+            if (usableComplete && recorded.isUsable && trackId !in provisional && com.music.bitchord.playback.smart.automixv2.ForkV2EvidenceBackfill.claim(trackId)) runCatching { executor.execute { ForkV2EvidencePass.run(context.filesDir, trackId, durationSeconds, { stopped }) { copyToRead(trackId, analysisUri, durationSeconds)?.open } } } // fork: Automix v2 evidence for a song analysed before it, once (ForkV2EvidenceBackfill)
             return
         }
         // The strike count belongs to the attempt that was given up on, not to

@@ -34,7 +34,7 @@ internal object ForkSpotifyCanvasFirst {
     }
 
     /** The phone's `cacheKey`: the order is part of the question. */
-    fun key(base: String, spotifyFirst: Boolean = prioritized.value): String = "$base|spotifyFirst=$spotifyFirst"
+    fun key(base: String, spotifyFirst: Boolean = prioritized.value): String = "$base|spotifyFirst=$spotifyFirst" + ForkDesktopCanvasSources.keySuffix()
 
     /**
      * [sources] in the order they are asked. They are passed in the PC's default order, Spotify
@@ -47,13 +47,16 @@ internal object ForkSpotifyCanvasFirst {
 
 /**
  * Under "Spotify Canvas setup": the phone's switch, its wording. Greyed (never hidden, the owner's
- * rule) while no `sp_dc` cookie is saved: without a sign-in the Spotify provider asks nothing
- * (`DesktopSpotifyToken.accessToken` answers null), so putting it first would change nothing.
+ * rule) while "Backdrop videos" is off: Spotify's Canvas is a backdrop and isn't asked for then
+ * (`ForkDesktopCanvasSources`). It was greyed until signed in; Spotify now answers without a sign-in
+ * too (the canvas rulebook's anonymous route, `ForkAnonymousSpotifyCanvas`), so [signedIn] no
+ * longer decides it.
  */
 @Composable
-internal fun ForkPrioritizeSpotifyCanvasRow(signedIn: Boolean) {
+internal fun ForkPrioritizeSpotifyCanvasRow(@Suppress("UNUSED_PARAMETER") signedIn: Boolean) {
     val prioritized by ForkSpotifyCanvasFirst.prioritized.collectAsState()
-    ForkDisabledWhen(!signedIn) {
+    val backdrops by com.music.bitchord.ui.player.ForkCanvasSwitch.backdrops.collectAsState()
+    ForkDisabledWhen(!backdrops) {
         SettingsToggle(
             DesktopStrings["prioritize_spotify_canvas", "Prioritize Spotify Canvas"],
             DesktopStrings[

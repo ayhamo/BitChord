@@ -343,20 +343,14 @@ class ForkRulebookPickTest {
             "not from the answer's own label: asked for LOSSLESS, an AAC answer's bitrate stays unknown"
         private const val TIER_FROM_CODEC = "the fork reads no tier off a stream answer's codec; a stated flac codec makes " +
             "StreamFormat.isLossless true, which is what the fork ranks by"
-        private const val ATMOS_DEFAULT = "upstream's rule: an addon's declared atmos setting keeps its default, and the " +
-            "phone adds ?atmos=auto only when Atmos is wanted (AddonClient.settingsFor)"
         private const val LOW_FIRST = "BitChord's rule for LOW without a low option: the first option (AddonClient.matchTier)"
 
         /** Cases the fork answers differently, and why. Keyed "group: case name". */
         val DIFFERS = mapOf(
             "rowsToOpen: ISRC first, whatever the title says" to
                 "no ISRC: a YouTube Music song carries none in this app, so the matcher decides (the rulebook's no-ISRC rule)",
-            "paramsFor: settings in order, atmos=false, quality last: LOSSLESS takes the first option" to ATMOS_DEFAULT,
-            "paramsFor: LOSSLESS: the user's pick when still listed" to ATMOS_DEFAULT,
-            "paramsFor: LOSSLESS: a pick no longer listed falls back to the first" to ATMOS_DEFAULT,
-            "paramsFor: HIGH: by label (320)" to ATMOS_DEFAULT,
-            "paramsFor: LOW: no low option: the high one (ours; BitChord: the first)" to "$ATMOS_DEFAULT; $LOW_FIRST",
-            "paramsFor: LOW: no low or high option: the last (ours)" to "$ATMOS_DEFAULT; $LOW_FIRST",
+            "paramsFor: LOW: no low option: the high one (ours; BitChord: the first)" to LOW_FIRST,
+            "paramsFor: LOW: no low or high option: the last (ours)" to LOW_FIRST,
             "readStream: HLS seen in the URL" to BITRATE,
             "readStream: DASH from the manifest field" to BITRATE,
             "readStream: no bitrate: 320 for HIGH" to BITRATE,

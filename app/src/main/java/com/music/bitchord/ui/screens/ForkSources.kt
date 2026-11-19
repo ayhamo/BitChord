@@ -49,6 +49,26 @@ internal fun ForkNavidromeSourceSection() {
     )
 }
 
+/**
+ * The Navidrome settings page's first row (`forkNavidromeRows`): the server it is signed in to, and a
+ * tap opens the same editor as Sources' section above. The login used to be reachable only from
+ * Sources, two pages away from the settings that need it; the page is meant to hold everything about
+ * the server, so its way in is here too. Test and Disconnect stay in Sources, where the other
+ * libraries keep theirs.
+ */
+@Composable
+internal fun ForkNavidromeServerRow() {
+    val url by NavidromeSettings.url.collectAsStateWithLifecycle()
+    val user by NavidromeSettings.username.collectAsStateWithLifecycle()
+    SettingsRow(
+        icon = Icons.Rounded.Cloud,
+        title = stringResource(R.string.fork_navidrome_server),
+        subtitle = if (url.isBlank()) stringResource(R.string.navidrome_not_configured) else "$url · $user",
+        badge = com.music.bitchord.data.ForkSettingsBadge.TEXT,
+        onClick = { editorOpen.value = true },
+    )
+}
+
 /** The window-level server editor, as the WebDAV and SMB ones; draws nothing until opened. */
 @Composable
 fun ForkNavidromeEditor(hazeState: HazeState) {

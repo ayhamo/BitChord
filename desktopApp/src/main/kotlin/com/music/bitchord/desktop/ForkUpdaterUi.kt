@@ -332,12 +332,13 @@ internal fun ForkAboutSettingsGroup() {
             onClick = {
                 if (state != ForkUpdateFlow.CheckState.Checking) scope.launch { ForkUpdateFlow.check(manual = true) }
             },
+            fork = true, // the fork's updater; the version row above is upstream's footer line, unmarked
         )
     }
 }
 
 @Composable
-private fun ForkAboutRow(title: String, subtitle: String, onClick: (() -> Unit)?) {
+private fun ForkAboutRow(title: String, subtitle: String, onClick: (() -> Unit)?, fork: Boolean = false) {
     if (!settingsRowVisible(title, subtitle)) return
     Row(
         Modifier
@@ -347,7 +348,7 @@ private fun ForkAboutRow(title: String, subtitle: String, onClick: (() -> Unit)?
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
+            ForkSettingsTitle(title, fork = fork)
             Text(subtitle, color = DesktopSecondary, style = MaterialTheme.typography.bodyMedium, maxLines = 3)
         }
         Spacer(Modifier.width(18.dp))

@@ -114,12 +114,7 @@ object DesktopCanvasClient {
         // Keyed on the track alone: the album arrives after the player opens, and keying on it made
         // the late arrival look like a different question.
         return resolve(ForkSpotifyCanvasFirst.key("song|${song.videoId}"), album != null) { // fork: keyed on the order, as the phone's cacheKey
-            firstHit(
-                { DesktopAppleMusicCanvas.search(title, artist, album) },
-                { DesktopTidalCanvas.search(title, artist, album) },
-                { DesktopCommunityCanvas.search(title, artist, album) },
-                { DesktopSpotifyCanvas.search(title, artist, album) },
-            ) { it.matches(title, artist, album) }
+            firstHit(*ForkDesktopCanvasSources.song(song, title, artist, album)) { it.matches(title, artist, album) } // fork: the canvas rulebook's sources and order (+ the music video, anonymous Spotify, saved lookups); was Apple, Tidal, Community, Spotify
         }
     }
 

@@ -277,6 +277,33 @@ class DesktopAddonServerTest {
         }
     }
 
+    /** Fork (the rulebook's paramsFor): Atmos not wanted, a declared atmos setting is sent "off", not its default. */
+    @Test
+    fun `a declared atmos setting is sent off when Atmos is not wanted`() = runBlocking {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.start()
+        try {
+            val base = "http://127.0.0.1:${server.address.port}"
+            val query = AtomicReference<String>()
+            server.json("/manifest.json", """{"id":"nb","resources":["search"],"settings":[{"key":"atmos","default":true}]}""")
+            server.jsonCapturing("/search", query) { """{"tracks":[]}""" }
+            server.json(
+                "/opt/manifest.json",
+                """{"id":"opt","resources":["search"],"settings":[{"key":"atmos","default":"auto","options":[{"value":"auto"},{"value":"off"}]}]}""",
+            )
+            server.jsonCapturing("/opt/search", query) { """{"tracks":[]}""" }
+            DesktopAddonSettings.dolbyAtmosEnabled = false
+
+            DesktopAddonClient(base).search("x", DesktopAddonClient.TIER_LOSSLESS).getOrThrow()
+            assertTrue(query.get().contains("atmos=false"), query.get())
+            DesktopAddonClient("$base/opt").search("x", DesktopAddonClient.TIER_LOSSLESS).getOrThrow()
+            assertTrue(query.get().contains("atmos=off"), query.get())
+        } finally {
+            DesktopAddonSettings.dolbyAtmosEnabled = true
+            server.stop(0)
+        }
+    }
+
     private fun HttpServer.json(path: String, body: String) {
         createContext(path) { exchange ->
             val bytes = body.toByteArray()

@@ -159,7 +159,7 @@ object SpotifyCanvas {
         // `matches()` downstream could never turn a wrong song's Canvas away
         // (once validated, the hit carries the names asked for, as before, so the strict `matches()`
         // downstream doesn't turn away a "- Remastered" title or a Deluxe album)
-        com.music.bitchord.fork.ForkSpotifyMatch.pick(items, title, artist)?.let { return TrackHit(it.uri, title, artist, album) }
+        com.music.bitchord.fork.ForkSpotifyMatch.pick(items, title, artist, album)?.let { return TrackHit(it.uri, title, artist, album) }
         if (items != null && com.music.bitchord.fork.ForkSpotifyMatch.carriesNames(items)) { // fork: named hits, none of them this song
             com.music.bitchord.fork.ForkSpotifyMatch.noteNamedMiss(title, artist)
             return null

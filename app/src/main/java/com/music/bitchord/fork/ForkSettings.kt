@@ -26,6 +26,7 @@ object ForkSettings {
 
     private val _backdropClips = com.music.bitchord.ui.player.ForkCanvasSwitch.backdrops // the player reads it live
     private val _animatedCovers = com.music.bitchord.ui.player.ForkCanvasSwitch.covers // the player and album pages read it live
+    private val _musicVideoCanvas = com.music.bitchord.ui.player.ForkCanvasSwitch.videos // the clip lookup reads it live
     private val _navidromeScrobble = MutableStateFlow(true)
     private val _navidromeHomeShelves = MutableStateFlow(true)
     private val _clipCacheMb = MutableStateFlow(DEFAULT_CLIP_CACHE_MB)
@@ -40,6 +41,9 @@ object ForkSettings {
 
     /** Animated covers from the online services (Apple Music etc.); separate from the Navidrome backdrops. See `ForkCanvasSwitch.covers`. */
     val animatedCovers: StateFlow<Boolean> = _animatedCovers.asStateFlow()
+
+    /** A loop cut from the song's own music video as the backdrop, before Spotify's; see `ForkCanvasSources`, `ForkVideoCanvas`. */
+    val musicVideoCanvas: StateFlow<Boolean> = _musicVideoCanvas.asStateFlow()
 
     /** "Now playing" and finished plays are reported to Navidrome; see `NavidromeScrobble`. */
     val navidromeScrobble: StateFlow<Boolean> = _navidromeScrobble.asStateFlow()
@@ -102,6 +106,7 @@ object ForkSettings {
         _crossfadeOnSkip.value = prefs.getBoolean(KEY_CROSSFADE_ON_SKIP, true)
         _backdropClips.value = prefs.getBoolean(KEY_BACKDROP_CLIPS, true)
         _animatedCovers.value = prefs.getBoolean(KEY_ANIMATED_COVERS, true)
+        _musicVideoCanvas.value = prefs.getBoolean(KEY_MUSIC_VIDEO_CANVAS, true)
         _navidromeScrobble.value = prefs.getBoolean(KEY_NAVIDROME_SCROBBLE, true)
         _navidromeHomeShelves.value = prefs.getBoolean(KEY_NAVIDROME_HOME_SHELVES, true)
         _clipCacheMb.value = prefs.getInt(KEY_CLIP_CACHE_MB, DEFAULT_CLIP_CACHE_MB)
@@ -121,6 +126,9 @@ object ForkSettings {
         ForkNetwork.init(context)
         ForkQueues.init(context)
         ForkClipCache.applyLimit(_clipCacheMb.value)
+        // The canvas rulebook's saved lookups (ForkCanvasStore) and the music-video loops (ForkCanvasSources)
+        com.music.bitchord.data.canvas.ForkCanvasStore.init(context.filesDir)
+        ForkCanvasSources.videoDir = java.io.File(context.cacheDir, "fork_canvas_video")
         // Canvas controls stay up until tapped away (upstream hides them after 5 s). Once, so the
         // owner can turn auto-hide back on in Settings.
         if (!prefs.getBoolean(KEY_CANVAS_MANUAL_SET, false)) {
@@ -137,6 +145,11 @@ object ForkSettings {
     fun setAnimatedCovers(value: Boolean) {
         _animatedCovers.value = value
         prefs.edit().putBoolean(KEY_ANIMATED_COVERS, value).apply()
+    }
+
+    fun setMusicVideoCanvas(value: Boolean) {
+        _musicVideoCanvas.value = value
+        prefs.edit().putBoolean(KEY_MUSIC_VIDEO_CANVAS, value).apply()
     }
 
     fun setNavidromeScrobble(value: Boolean) {
@@ -224,7 +237,7 @@ object ForkSettings {
      * left out (it describes this phone's network right now), and so is the one-off canvas flag.
      */
     private val BACKED_UP = listOf(
-        KEY_CROSSFADE_ON_SKIP, KEY_BACKDROP_CLIPS, KEY_ANIMATED_COVERS, KEY_NAVIDROME_SCROBBLE,
+        KEY_CROSSFADE_ON_SKIP, KEY_BACKDROP_CLIPS, KEY_ANIMATED_COVERS, KEY_MUSIC_VIDEO_CANVAS, KEY_NAVIDROME_SCROBBLE,
         KEY_NAVIDROME_HOME_SHELVES, KEY_CLIP_CACHE_MB, KEY_NAVIDROME_YT_HISTORY, KEY_DOWNLOAD_ON_MOBILE,
         KEY_PRELOAD_SONGS, KEY_COVER_FADE,
         // Automix style and what goes with it (the PC maps the same keys, ForkBackup.FORK there).
@@ -267,6 +280,7 @@ object ForkSettings {
         _crossfadeOnSkip.value = prefs.getBoolean(KEY_CROSSFADE_ON_SKIP, true)
         _backdropClips.value = prefs.getBoolean(KEY_BACKDROP_CLIPS, true)
         _animatedCovers.value = prefs.getBoolean(KEY_ANIMATED_COVERS, true)
+        _musicVideoCanvas.value = prefs.getBoolean(KEY_MUSIC_VIDEO_CANVAS, true)
         _navidromeScrobble.value = prefs.getBoolean(KEY_NAVIDROME_SCROBBLE, true)
         _navidromeHomeShelves.value = prefs.getBoolean(KEY_NAVIDROME_HOME_SHELVES, true)
         _clipCacheMb.value = prefs.getInt(KEY_CLIP_CACHE_MB, DEFAULT_CLIP_CACHE_MB)
@@ -301,6 +315,7 @@ object ForkSettings {
     private const val KEY_CROSSFADE_ON_SKIP = "crossfade_on_skip"
     private const val KEY_BACKDROP_CLIPS = "backdrop_clips"
     private const val KEY_ANIMATED_COVERS = "animated_covers"
+    private const val KEY_MUSIC_VIDEO_CANVAS = "music_video_canvas"
     private const val KEY_NAVIDROME_SCROBBLE = "navidrome_scrobble"
     private const val KEY_NAVIDROME_HOME_SHELVES = "navidrome_home_shelves"
     private const val KEY_CANVAS_MANUAL_SET = "canvas_manual_set"

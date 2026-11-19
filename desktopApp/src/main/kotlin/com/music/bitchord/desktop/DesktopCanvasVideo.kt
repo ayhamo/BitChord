@@ -177,13 +177,7 @@ internal fun DesktopCanvasVideo(spec: CanvasVideoSpec, modifier: Modifier) {
         }
         val left = (size.width - drawWidth) / 2f
         val top = if (fit && spec.alignPortraitTop) 0f else (size.height - drawHeight) / 2f
-        drawImage(
-            image = image,
-            srcOffset = IntOffset.Zero,
-            srcSize = IntSize(image.width, image.height),
-            dstOffset = IntOffset(left.roundToInt(), top.roundToInt()),
-            dstSize = IntSize(drawWidth.roundToInt(), drawHeight.roundToInt()),
-        )
+        forkDrawClip(image, canvas.url, fit, IntOffset(left.roundToInt(), top.roundToInt()), IntSize(drawWidth.roundToInt(), drawHeight.roundToInt())) // fork: was drawImage of the whole frame; a music-video loop is drawn by its framing (ForkDesktopClipFraming)
         if (bottomFade > 0.001f) {
             val endY = bottomFadeEndPx?.coerceIn(0f, size.height) ?: size.height
             drawRect(
@@ -208,5 +202,5 @@ internal fun DesktopCanvasArtwork.toShared(): CanvasArtwork = CanvasArtwork(
     title = title,
     artist = artist,
     album = album,
-    source = if (source == DesktopCanvasSource.SPOTIFY) CanvasSource.SPOTIFY else CanvasSource.OTHER,
+    source = when (source) { DesktopCanvasSource.SPOTIFY -> CanvasSource.SPOTIFY; DesktopCanvasSource.VIDEO -> CanvasSource.VIDEO; else -> CanvasSource.OTHER }, // fork: + VIDEO (a music-video loop)
 )

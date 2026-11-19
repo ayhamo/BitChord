@@ -4116,6 +4116,7 @@ fun BitChordDesktopApp() {
                                     },
                                     onOpenIntegrations = { overlays.settingsPage = DesktopSettingsPage.INTEGRATIONS },
                                     onOpenLicenses = { overlays.settingsPage = DesktopSettingsPage.LICENSES },
+                                    forkNavidrome = ForkNavidromeSettingsLinks(openPage = { overlays.settingsPage = DesktopSettingsPage.NAVIDROME }, openServer = { selectDestination(DesktopDestination.NAVIDROME) }), // fork
                                 )
                                 DesktopSettingsPage.EQUALIZER -> DesktopEqualizerDialog(onDismiss = ::goBack)
                                 DesktopSettingsPage.AUDIO_OUTPUT -> DesktopAudioOutputDialog(onDismiss = ::goBack)
@@ -4174,6 +4175,7 @@ fun BitChordDesktopApp() {
                                     onDismiss = ::goBack,
                                 )
                                 DesktopSettingsPage.LICENSES -> DesktopLicensesPage(onDismiss = ::goBack)
+                                DesktopSettingsPage.NAVIDROME -> ForkNavidromeSettingsPage(onOpenServer = { selectDestination(DesktopDestination.NAVIDROME) }) // fork
                             }
                             }
                         }
@@ -6081,7 +6083,6 @@ private fun DesktopLibraryGroupingContent(
 /** Mobile's section order, with desktop-only groups placed beside their closest mobile counterpart. */
 private enum class DesktopSettingsSection {
     ACCOUNT,
-    NAVIDROME, // fork: after the account, as on the phone
     LISTEN_TOGETHER,
     SOURCES,
     AUDIO_QUALITY,
@@ -6098,6 +6099,7 @@ private enum class DesktopSettingsSection {
     MISCELLANEOUS,
     LANGUAGE,
     ADVANCED,
+    NAVIDROME, // fork: the fork's groups last, above About (owner, 2026-11-19); one row into its page
 }
 
 /**
@@ -6186,6 +6188,7 @@ private fun DesktopSettingsScreen(
     onTestSource: (DesktopSourceConfig) -> Unit,
     onOpenIntegrations: () -> Unit,
     onOpenLicenses: () -> Unit,
+    forkNavidrome: ForkNavidromeSettingsLinks, // fork: the Navidrome row's page and server
 ) {
     var editingSource by remember { mutableStateOf<DesktopSourceConfig?>(null) }
     val sourceProbeKey = sourceConfigs
@@ -6224,7 +6227,7 @@ private fun DesktopSettingsScreen(
                     contentPadding = PaddingValues(top = 12.dp, bottom = 28.dp),
                 ) {
             DesktopSettingsSection.entries.forEach { section ->
-            if (section == DesktopSettingsSection.NAVIDROME) item { ForkNavidromeSettingsGroup() } // fork
+            if (section == DesktopSettingsSection.NAVIDROME) item { ForkNavidromeSettingsEntry(forkNavidrome) } // fork: a row into Settings > Navidrome; its rows inline while searching
             if (section == DesktopSettingsSection.PLAYBACK) item {
                     SettingsGroup(DesktopStrings["playback", "Playback"]) {
                     ForkLoudnessRow() // fork: the phone's "Loudness normalization", above Crossfade as there
@@ -6267,7 +6270,7 @@ private fun DesktopSettingsScreen(
                     )
                     ForkDisabledWhen(!automix && crossfadeSeconds == 0) { // fork: greyed (not hidden) until a crossfade or Automix is set, as on the phone
                         val forkSkipFade by ForkCrossfadeOnSkip.enabled.collectAsState()
-                        SettingsToggle(ForkCrossfadeOnSkip.TITLE, ForkCrossfadeOnSkip.SUBTITLE, forkSkipFade, ForkCrossfadeOnSkip::set)
+                        ForkMarked { SettingsToggle(ForkCrossfadeOnSkip.TITLE, ForkCrossfadeOnSkip.SUBTITLE, forkSkipFade, ForkCrossfadeOnSkip::set) }
                     }
                     ForkDisabledWhen(!automix) { // fork: greyed while Automix is off, not hidden
                         val phraseTitle = DesktopStrings["automix_phrase_length", "Automix phrase length"]
@@ -6668,8 +6671,9 @@ private fun DesktopSettingsScreen(
                         // fork: the player menu's two video switches
                         val forkBackdrops by com.music.bitchord.ui.player.ForkCanvasSwitch.backdrops.collectAsState()
                         val forkCovers by com.music.bitchord.ui.player.ForkCanvasSwitch.covers.collectAsState()
-                        SettingsToggle(ForkPlayerMenu.BACKDROPS_TITLE, ForkPlayerMenu.BACKDROPS_SUBTITLE, forkBackdrops, ForkNavidrome::setBackdrops)
-                        SettingsToggle(ForkPlayerMenu.COVERS_TITLE, ForkPlayerMenu.COVERS_SUBTITLE, forkCovers, ForkNavidrome::setCovers)
+                        ForkMarked { SettingsToggle(ForkPlayerMenu.BACKDROPS_TITLE, ForkPlayerMenu.BACKDROPS_SUBTITLE, forkBackdrops, ForkNavidrome::setBackdrops) }
+                        ForkMarked { ForkMusicVideoCanvasRow() } // fork: "Music video canvas", greyed while Backdrop videos is off
+                        ForkMarked { SettingsToggle(ForkPlayerMenu.COVERS_TITLE, ForkPlayerMenu.COVERS_SUBTITLE, forkCovers, ForkNavidrome::setCovers) }
                         ForkCanvasAutoHideRow() // fork
                         SettingsNavigationRow(
                             title = DesktopStrings["spotify_canvas_setup", "Spotify Canvas setup"],
@@ -8307,7 +8311,7 @@ internal fun SettingsToggle(title: String, subtitle: String, checked: Boolean, o
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
+            ForkSettingsTitle(title) // fork: + the "Fork" mark on a fork row (ForkMarked); was Text(title, bodyLarge)
             Text(subtitle, color = DesktopSecondary, style = MaterialTheme.typography.bodyMedium, maxLines = 3)
         }
         Spacer(Modifier.width(18.dp))
@@ -8338,7 +8342,7 @@ internal fun SettingsRow( // fork: internal
         }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
+            ForkSettingsTitle(title) // fork: + the "Fork" mark on a fork row (ForkMarked); was Text(title, bodyLarge)
             Text(subtitle, color = DesktopSecondary, style = MaterialTheme.typography.bodyMedium, maxLines = 3)
         }
         if (onClick != null) {

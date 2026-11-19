@@ -376,12 +376,13 @@ internal class DesktopAddonClient(rawBaseUrl: String, private val forkSourceId: 
                 params[ATMOS_KEY] = atmosSetting.options
                     .mapNotNull { it.stringValue }
                     .firstOrNull { ATMOS_OFF.matches(it) }
-                    ?: ATMOS_NEVER
+                    ?: com.music.bitchord.data.sources.ForkAddonPick.ATMOS_FALSE // fork: the rulebook's value (was ATMOS_NEVER, "0")
             }
             return params
         }
         val atmosWanted = DesktopCodecs.supportsDolbyAtmos && DesktopAddonSettings.dolbyAtmosEnabled
         if (atmosWanted) params.putIfAbsent(ATMOS_KEY, ATMOS_AUTO)
+        else declared.firstOrNull { it.key == ATMOS_KEY }?.let { s -> params[ATMOS_KEY] = com.music.bitchord.data.sources.ForkAddonPick.atmosOff(s.options.mapNotNull { it.stringValue }, s.defaultValue) } // fork: Atmos not wanted: a declared atmos setting is sent "off", not its default (ForkAddonPick.atmosOff)
         return params
     }
 

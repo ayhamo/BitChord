@@ -33,6 +33,14 @@ object ForkCanvasSwitch {
     val covers = MutableStateFlow(true)
 
     /**
+     * "Music video canvas": a loop cut from the song's own music video (`ForkVideoCanvas`), the
+     * canvas rulebook's first source, asked before Spotify. A backdrop, so it needs [backdrops] too
+     * (its settings row is greyed while that is off). Its own switch because it is the heavy one: a
+     * video search, the storyboard sheets and two short downloads per song with no saved answer.
+     */
+    val videos = MutableStateFlow(true)
+
+    /**
      * Whether the player's window can run the still cover to the edges
      * ([forkBigArtFits]), so the PC's menu can say so instead of a switch that
      * quietly does nothing in a wide window.
@@ -66,14 +74,16 @@ object ForkCanvasSwitch {
 }
 
 /**
- * Fork: [first] (the cover clip some service had) with a Spotify Canvas as its
- * backdrop: the Canvas plays where it can fill the screen, [first] in the cover
- * square everywhere else ([CanvasArtwork.sleeveUrl]). Either missing, [first]
- * stays as it is. The one shape both platforms build ([ForkCanvasSwitch.backdropFor]).
+ * Fork: [first] (the cover clip some service had) with a backdrop (a Spotify
+ * Canvas, or a music-video loop): the backdrop plays where it can fill the screen,
+ * [first] in the cover square everywhere else ([CanvasArtwork.sleeveUrl]). Either
+ * missing, [first] stays as it is. The one shape both platforms build
+ * ([ForkCanvasSwitch.backdropFor]). A backdrop keeps its own source when it is
+ * one that fills the phone (the video loop's framing goes by it), else is Spotify's.
  */
 fun forkWithBackdrop(first: CanvasArtwork?, backdrop: CanvasArtwork?): CanvasArtwork? = when {
     first == null || backdrop == null -> first
-    else -> backdrop.copy(source = CanvasSource.SPOTIFY, sleeveUrl = first.url)
+    else -> backdrop.copy(source = if (backdrop.source.fillsPhone) backdrop.source else CanvasSource.SPOTIFY, sleeveUrl = first.url)
 }
 
 /** Fork: the clip [forkCanvases] last handed the sleeve, held across compositions (see [forkSteadyClip]). */

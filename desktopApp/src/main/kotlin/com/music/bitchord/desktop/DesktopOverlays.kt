@@ -67,4 +67,5 @@ internal enum class DesktopSettingsPage {
     SPOTIFY_CANVAS,
     INTEGRATIONS,
     LICENSES,
+    NAVIDROME, // fork: Settings > Navidrome (ForkNavidromeSettingsPage)
 }

@@ -191,6 +191,28 @@ object ForkAddonPick {
     const val PREVIEW_MAX_SEC = 35.0
     const val PREVIEW_SONG_SEC = 45
 
+    /**
+     * The value to send for an addon's declared `atmos` setting when Atmos is not wanted (the
+     * rulebook's `paramsFor`, protocol.md §1 item 3): the first of its listed [options] that reads
+     * as "off", else `false`.
+     *
+     * Upstream sent the declared default whenever Atmos was not wanted, and NullBeat's default is
+     * `true`: it then answered with its Atmos mix, which the fork refused as unplayable after the
+     * `/stream` call (one of about five a minute) had been spent, and the song fell to the next row
+     * or to YouTube. A declared setting is the addon saying it reads this parameter, so it is asked
+     * for stereo by name. `false` rather than upstream's `0` for a setting with no options: NullBeat's
+     * is a toggle whose default is a JSON boolean, and `false` is the rulebook's value.
+     *
+     * [default] is unused today and kept in the signature so a later rule (a non-boolean setting with
+     * no "off" option) can read it without touching the two callers.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    fun atmosOff(options: List<String>, default: String?): String =
+        options.firstOrNull { ATMOS_OFF.matches(it.trim()) } ?: ATMOS_FALSE
+
+    const val ATMOS_FALSE = "false"
+    private val ATMOS_OFF = Regex("0|false|off|no|none|never|stereo", RegexOption.IGNORE_CASE)
+
     private val NOT_ISRC_CHAR = Regex("[^A-Z0-9]")
     private val ISRC = Regex("[A-Z]{2}[A-Z0-9]{3}\\d{7}")
 }

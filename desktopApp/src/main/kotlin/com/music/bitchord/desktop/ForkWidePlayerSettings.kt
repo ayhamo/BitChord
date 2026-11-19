@@ -64,7 +64,7 @@ internal fun ForkWidePlayerLayoutRow() {
     if (!settingsRowVisible(ForkWidePlayerSettings.TITLE, "${ForkWidePlayerSettings.SUBTITLE} $words")) return
     val current by ForkWidePlayer.layout.collectAsState()
     Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
-        Text(ForkWidePlayerSettings.TITLE, style = MaterialTheme.typography.bodyLarge)
+        ForkSettingsTitle(ForkWidePlayerSettings.TITLE, fork = true)
         Text(ForkWidePlayerSettings.SUBTITLE, color = DesktopSecondary, style = MaterialTheme.typography.bodyMedium)
         Spacer(Modifier.height(6.dp))
         ForkWidePlayerSettings.choices.forEach { (layout, name, line) ->

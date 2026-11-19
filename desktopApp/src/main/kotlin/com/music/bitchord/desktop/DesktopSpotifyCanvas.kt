@@ -187,9 +187,9 @@ internal object DesktopSpotifyCanvas {
             val artists = (data["artists"] as? JsonObject)?.get("items")?.jsonArray
                 ?.mapNotNull { (it as? JsonObject)?.get("profile")?.jsonObject?.text("name") }
                 .orEmpty()
-            if (name != null && artists.isNotEmpty() && !canvasMatches(name, artists, title, artist)) continue
+            if (name != null && artists.isNotEmpty() && !com.music.bitchord.data.canvas.ForkSpotifyCanvasRules.matchesHit(title, artist, album, null, name, artists, (data["albumOfTrack"] as? JsonObject)?.text("name"), null)) continue // fork: the canvas rulebook's match (rule 4.4), as the phone; was canvasMatches
             val albumName = (data["albumOfTrack"] as? JsonObject)?.text("name")
-            return TrackHit(uri, name ?: title, artists.joinToString(", ").ifBlank { artist }, albumName ?: album)
+            return if (name != null && artists.isNotEmpty()) TrackHit(uri, title, artist, album) else TrackHit(uri, name ?: title, artists.joinToString(", ").ifBlank { artist }, albumName ?: album) // fork: a matched hit carries the names asked for (the phone's), so the exact re-check doesn't turn a rulebook match away
         }
         return null
     }
@@ -205,7 +205,7 @@ internal object DesktopSpotifyCanvas {
             val artists = track["artists"]?.jsonArray
                 ?.mapNotNull { it.jsonObject.text("name") }
                 .orEmpty()
-            if (!canvasMatches(trackTitle, artists, title, artist)) continue
+            if (!com.music.bitchord.data.canvas.ForkSpotifyCanvasRules.matchesHit(title, artist, album, null, trackTitle, artists, track["album"]?.jsonObject?.text("name"), null)) continue // fork: the canvas rulebook's match (rule 4.4); was canvasMatches
             val uri = track.text("uri") ?: continue
             return TrackHit(
                 uri = uri,

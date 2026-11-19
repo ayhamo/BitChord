@@ -4,7 +4,10 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** The Fork settings page greys its dependent rows on the same conditions as their home rows. */
+/**
+ * The Fork settings page greys its dependent rows on the same conditions as their home rows, and the
+ * Navidrome page greys its server's rows (all but Server and Clear lyrics cache) while none is set up.
+ */
 class ForkSettingsGreyingTest {
 
     @Test

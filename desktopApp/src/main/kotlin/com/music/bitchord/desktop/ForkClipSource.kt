@@ -99,6 +99,10 @@ internal object ForkClipSource {
     fun sourceFor(url: String): Source = synchronized(locks.getOrPut(url) { Any() }) { fetchLocked(url) }
 
     private fun fetchLocked(url: String): Source {
+        // a music-video loop is cut to a file already (ForkDesktopCanvasSources): played from there
+        if (com.music.bitchord.data.canvas.ForkCanvasStore.isLocal(url)) {
+            return if (java.io.File(url).length() > 0) Source.Local(url) else Source.Failed
+        }
         if (!isManifest(url)) {
             return DesktopCanvasCache.fileFor(url)?.let { Source.Local(it.toAbsolutePath().toString()) } ?: Source.Failed
         }

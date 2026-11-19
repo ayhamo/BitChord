@@ -53,6 +53,14 @@ object ForkV2Automix {
     @Volatile
     var evidence: ((String) -> ForkV2Analysis?)? = null
 
+    /**
+     * Told the id of a song with a usable analysis and no [evidence] (one analysed before Automix v2),
+     * so each app can measure it once in the background (`ForkV2EvidenceBackfill`). Set with
+     * [evidence]; must be cheap, as it is called on every plan of such a pair.
+     */
+    @Volatile
+    var evidenceMissing: ((String) -> Unit)? = null
+
     // ---- the analyses as the port reads them ----
 
     private class Mapped(val source: TrackAnalysis, val ev: ForkV2Analysis?, val analysis: ForkV2Analysis)
@@ -67,7 +75,9 @@ object ForkV2Automix {
      * (the planner does).
      */
     fun analysisOf(t: TrackAnalysis, id: String, durationSec: Double = 0.0): ForkV2Analysis {
-        val ev = evidence?.invoke(id.ifBlank { t.trackId })
+        val evId = id.ifBlank { t.trackId }
+        val ev = evidence?.invoke(evId)
+        if (ev == null && t.isUsable) evidenceMissing?.invoke(evId)
         mapped.firstOrNull { it.source === t && it.ev === ev }?.let { return withDuration(it.analysis, durationSec) }
         val a = ForkV2FromTrackAnalysis.map(t)
         if (a.fileKey.isNullOrBlank()) a.fileKey = id
@@ -140,8 +150,41 @@ object ForkV2Automix {
         ov: ForkV2MixOverride?,
     ): ForkV2Transition {
         val earliest = pos + LATCH_LEAD_SEC
-        val p = ForkV2Planner.plan(settings(phraseBars), fromId, toId, from, to, durationSec, pos, earliest, null, ov)
+        val planned = ForkV2Planner.plan(settings(phraseBars), fromId, toId, from, to, durationSec, pos, earliest, null, ov)
+        val p = kickLocked(planned, fromId, toId, pos)
         return ForkV2Transition(p, ForkV2Mix.blend(p, fromId, toId, durationSec))
+    }
+
+    /**
+     * Automix v2's kick lock for a pair, measured by the app from both songs' decoded audio
+     * ([ForkV2KickLock.kickLock] over [ForkV2KickLock.kickSource] sides), or null while it isn't
+     * (not measured yet, or an app that can't play it). Called on every plan of a beatmatched blend
+     * with the playhead [pos], so it must answer from memory and start any measuring elsewhere.
+     * Only the PC sets it (`ForkDesktopKickLock`): its decks are one sample clock, so a few ms of cue
+     * are heard as a few ms. The phone's two ExoPlayers start each other only to within their sinks'
+     * latency, which is coarser than the shift, so it leaves this null.
+     */
+    @Volatile
+    var kickLock: ((fromId: String, toId: String, plan: ForkV2Planner.Plan, pos: Double) -> ForkV2KickLock.Result?)? = null
+
+    /**
+     * [p] with the kick lock applied, as the phone app's `Automix.kickLocked` does before `Mix.blend`:
+     * a copy whose mix-in (the incoming deck's cue, and so its whole clock in the deck schedule) moves
+     * by the measured shift, with the result kept in [ForkV2Planner.Plan.kick] for the note. [p]
+     * itself for anything else: not a blend the lock may move ([ForkV2Planner.kickLockAllowed]: a
+     * mix-in placed in the editor stays), no beat, no measurement yet, or a measurement that found
+     * nothing to move ([ForkV2KickLock.Result.none]).
+     */
+    internal fun kickLocked(p: ForkV2Planner.Plan, fromId: String, toId: String, pos: Double): ForkV2Planner.Plan {
+        if (p.fallback || !ForkV2Planner.kickLockAllowed(p) || !(p.beatSec > 0) || !(p.durationSec > 0)) return p
+        val k = kickLock?.invoke(fromId, toId, p, pos) ?: return p
+        // A cue before the song's first sample can't be played (the cue is clamped to 0 and the deck
+        // schedule would run that much ahead of it): the plan stays as it was.
+        if (k.none != null || !k.shift.isFinite() || p.mixInTrackTime + k.shift < 0) return p
+        val q = p.copy()
+        q.mixInTrackTime += k.shift
+        q.kick = k
+        return q
     }
 
     private class Latch(val key: String, val plan: TransitionPlan, val armAt: Double, val end: Double)

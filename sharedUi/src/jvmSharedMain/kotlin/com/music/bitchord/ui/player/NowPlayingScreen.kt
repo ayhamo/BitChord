@@ -1474,7 +1474,7 @@ fun NowPlayingScreen(
         heroClipMounted?.source?.fillsPhone == true // fork: was == SPOTIFY
     val forkIntro = rememberForkBackdropIntro(heroClipMounted?.url, clipFullscreen && fullBleedArt) // fork: Fullscreen off, no big art before the video
     val clipPortrait = !clipFullscreen &&
-        heroClipMounted != null && canvasAspect > 0f && canvasAspect < 1f
+        heroClipMounted != null && com.music.bitchord.data.canvas.ForkCanvasRules.tallAspect(canvasAspect) // fork: the canvas rulebook's tall clip (rule 8.1: height / width over 1.2 and under 1.45, Apple's 3:4); was any aspect under 1
 
     // The setting defaults on, restoring the five-second stand-down, but the
     // listener can keep the deck open indefinitely from Spotify integration.

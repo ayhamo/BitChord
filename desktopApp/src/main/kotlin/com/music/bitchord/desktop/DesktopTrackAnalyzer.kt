@@ -164,7 +164,7 @@ internal class DesktopTrackAnalyzer(
             }
             return
         }
-        if (results.containsKey(trackId) || restored(trackId) != null) return
+        if (results.containsKey(trackId) || restored(trackId) != null) return ForkDesktopV2Evidence.offer(song, stream, durationSeconds) { stopped() || released.get() } // fork: Automix v2 evidence for a song analysed before it, once (ForkV2EvidenceBackfill); was `return`
         // Asked every tick; a track that just failed is not resolved and decoded again each time.
         failedAt[trackId]?.let { if (System.currentTimeMillis() - it < RETRY_AFTER_MS) return }
         val job = Job(song, stream?.takeIf { it.isLocalFile }, durationSeconds)

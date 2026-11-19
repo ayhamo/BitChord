@@ -709,6 +709,7 @@ class PlaybackService : MediaLibraryService() {
     private var discordPresenceUp = false
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private val forkUpgradeCover by lazy { ForkUpgradeCover(scope, { player }, { spare }, { crossfade?.isTransitioning() == true || versionSwapJob?.isActive == true }, { crossfade?.plannedTransitionFor(it) }, { speakers.active }, { spareLoudness().track(it, null) }) } // fork: the standby plays the old copy across a quality swap's cut
 
     /** Canonical context owner for the active local bounded album/playlist. */
     private val boundedContextRegistry = ContextRegistry { snapshot ->
@@ -1991,7 +1992,7 @@ class PlaybackService : MediaLibraryService() {
                     }
                 }
             },
-            versionSwapActive = { versionSwapJob?.isActive == true },
+            versionSwapActive = { versionSwapJob?.isActive == true || forkUpgradeCover.busy }, // fork: || the upgrade cover holds the standby
             // Direct Source Stream fetches the next track only in the last
             // seconds before the blend, so the marker waits for its audio:
             // a window shown over a track that may still fall back to YouTube
@@ -4961,6 +4962,7 @@ class PlaybackService : MediaLibraryService() {
             }
         }
 
+        val forkCover = forkUpgradeCover.raise(mediaId) // fork: the standby takes over the old copy before the cut (ForkUpgradeCover)
         withContext(Dispatchers.Main) {
             val now = swapPointFor(mediaId)
             if (crossfade?.isTransitioning() == true) {
@@ -5036,6 +5038,7 @@ class PlaybackService : MediaLibraryService() {
             NerdStats.recordSource(mediaId, upgradedSourceName)
             player.seekTo(player.currentMediaItemIndex, now.position)
             player.prepare()
+            forkCover?.land(upgradedUri) // fork: fades back once the new copy plays
             QualityUpgrade.unshelve(mediaId)
             TrackLog.d("BitChord", "upgraded to ${stream.format.summary} at ${now.position}ms ($upgradedSourceName)")
             watchUpgrade(mediaId, now.uri, now.position, now.duration, previousFormat)

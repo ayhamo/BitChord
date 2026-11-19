@@ -41,6 +41,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.R
+import com.music.bitchord.data.ForkSettingsBadge
 import com.music.bitchord.fork.ForkSettings
 import kotlinx.coroutines.flow.StateFlow
 
@@ -68,6 +69,25 @@ internal fun ForkBackdropClipsRow() = ForkSwitchRow(
     onChange = ForkSettings::setBackdropClips,
 )
 
+/** "Music video canvas": see `ForkCanvasSwitch.videos`. Greyed by its callers while "Backdrop videos" is off. */
+@Composable
+internal fun ForkMusicVideoCanvasRow() = ForkSwitchRow(
+    icon = Icons.Rounded.Wallpaper,
+    title = stringResource(R.string.fork_music_video_canvas),
+    subtitle = stringResource(R.string.fork_music_video_canvas_subtitle),
+    state = ForkSettings.musicVideoCanvas,
+    onChange = ForkSettings::setMusicVideoCanvas,
+)
+
+/** [ForkMusicVideoCanvasRow] under "Backdrop videos", greyed (never hidden) while that is off: the loop is a backdrop. */
+@Composable
+internal fun SettingsGroupScope.forkMusicVideoCanvasRow() {
+    val backdrops by ForkSettings.backdropClips.collectAsStateWithLifecycle()
+    forkDisabledWhen(!backdrops) {
+        row(stringResource(R.string.fork_music_video_canvas), "fork", "canvas", "music video", "youtube", "backdrop", "video") { ForkMusicVideoCanvasRow() }
+    }
+}
+
 @Composable
 internal fun ForkNavidromeScrobbleRow() = ForkSwitchRow(
     icon = Icons.Rounded.Cloud,
@@ -90,6 +110,7 @@ private fun ForkSwitchRow(
         icon = icon,
         title = title,
         subtitle = subtitle,
+        badge = ForkSettingsBadge.TEXT,
         trailing = {
             // Upstream's switch, so these rows look like the ones around them
             com.music.bitchord.ui.components.IosSwitch(checked = checked, onCheckedChange = onChange)
@@ -116,6 +137,7 @@ internal fun ForkClipCacheSizeRow() {
         icon = Icons.Rounded.VideoLibrary,
         title = stringResource(R.string.fork_clip_cache_size),
         subtitle = stringResource(R.string.fork_clip_cache_size_subtitle),
+        badge = ForkSettingsBadge.TEXT,
         value = if (mb >= 1024) "${mb / 1024} GB" else "$mb MB",
         onClick = { ForkSettings.setClipCacheMb(choices[(choices.indexOf(mb) + 1) % choices.size]) },
     )
@@ -148,6 +170,7 @@ private fun ForkClearClipsRow(kind: com.music.bitchord.fork.ForkClipCache.Kind, 
         icon = Icons.Rounded.DeleteSweep,
         title = title,
         subtitle = stringResource(R.string.fork_clear_clips_subtitle, forkCacheSize(bytes)),
+        badge = ForkSettingsBadge.TEXT,
         onClick = { scope.launch { com.music.bitchord.fork.ForkClipCache.clear(kind) } },
     )
 }
@@ -188,6 +211,7 @@ internal fun ForkPreloadRow() {
         icon = Icons.Rounded.FastForward,
         title = stringResource(R.string.fork_preload),
         subtitle = stringResource(R.string.fork_preload_subtitle),
+        badge = ForkSettingsBadge.TEXT,
         value = if (count == 0) stringResource(R.string.fork_preload_off) else count.toString(),
         onClick = { ForkSettings.setPreloadSongs(choices[(choices.indexOf(count) + 1) % choices.size]) },
     )
@@ -207,6 +231,7 @@ internal fun ForkClearLyricsRow() {
         icon = Icons.Rounded.DeleteSweep,
         title = stringResource(R.string.fork_clear_lyrics),
         subtitle = stringResource(R.string.fork_clear_lyrics_subtitle, forkCacheSize(bytes)),
+        badge = ForkSettingsBadge.TEXT,
         onClick = {
             scope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 com.music.bitchord.data.navidrome.NavidromeLyrics.clearCache()
@@ -238,6 +263,7 @@ internal fun ForkOfflineStorageRow() {
         } else {
             androidx.compose.ui.res.pluralStringResource(R.plurals.fork_offline_storage_subtitle, pages.size, com.music.bitchord.ui.components.forkSize(total), pages.size)
         },
+        badge = ForkSettingsBadge.TEXT,
         onClick = { open = true },
     )
     if (open) ForkOfflineStorageDialog(pages.values.sortedBy { it.title.lowercase() }) { open = false }
@@ -327,13 +353,25 @@ internal fun SettingsGroupScope.forkCoverFadeRow() {
     }
 }
 
-/** The "Navidrome" group, after "Account & integrations": what the Navidrome library adds. */
+/**
+ * Settings > Navidrome, the page of its own (owner, 2026-11-19): every setting the Navidrome library
+ * adds, in one place. They were in three: a "Navidrome" group inline on the main page, the same
+ * switches again on the Fork settings page, and "Clear lyrics cache" (the server's lyrics) under
+ * Storage, while the login sat in Sources only. The page is a [SettingsCategory] entry like the
+ * others, so the main page gets its chevron row for free and its search still finds every row here
+ * (a category's rows answer the main page's query, see `shows` in `SettingsScreen`).
+ *
+ * The server row comes first and is never greyed: it is how a server is set up. It opens the same
+ * editor as Sources' Navidrome section, which keeps its Test and Disconnect rows. The rest ride on
+ * the server and are greyed (never hidden) while none is set up, the owner's rule for dependent rows.
+ * "Clear lyrics cache" is not: lyrics kept from a server that has since been disconnected still take
+ * space, and clearing them needs no server.
+ */
 @Composable
 internal fun SettingsGroupScope.forkNavidromeRows() {
-    // All ride on the server, so greyed (never hidden) while none is set up: the owner's rule for
-    // dependent rows, and the Fork settings page's condition for the same rows.
     val url by com.music.bitchord.data.navidrome.NavidromeSettings.url.collectAsStateWithLifecycle()
     val user by com.music.bitchord.data.navidrome.NavidromeSettings.username.collectAsStateWithLifecycle()
+    row(stringResource(R.string.fork_navidrome_server), "fork", "navidrome", "server", "login", "sign in", "connect", "address", "password", "account") { ForkNavidromeServerRow() }
     forkDisabledWhen(forkNoNavidromeServer(url, user)) {
         row(stringResource(R.string.fork_navidrome_scrobble), "fork", "navidrome", "scrobbling", "now playing") { ForkNavidromeScrobbleRow() }
         row(stringResource(R.string.fork_navidrome_home_shelves), "fork", "navidrome", "home", "shelves") { ForkNavidromeHomeShelvesRow() }
@@ -344,6 +382,19 @@ internal fun SettingsGroupScope.forkNavidromeRows() {
         row(stringResource(R.string.fork_preload), "fork", "navidrome", "preload", "cache", "next") { ForkPreloadRow() }
         row(stringResource(R.string.fork_handoff_setting), "fork", "navidrome", "continue", "handoff", "pc", "device") { ForkHandoffRow() }
     }
+    row(stringResource(R.string.fork_clear_lyrics), "fork", "navidrome", "cache", "lyrics", "free space", "storage") { ForkClearLyricsRow() }
+}
+
+/** The Navidrome page's glyph in the main page's list: the cloud of Sources' Navidrome section. */
+internal val ForkNavidromeSettingsIcon: ImageVector get() = Icons.Rounded.Cloud
+
+/**
+ * The [ForkSettingsBadge] on the main page's chevron rows into the fork's own pages (Navidrome and
+ * Fork settings), as on the rows inside them; null for upstream's categories, which stay unmarked.
+ */
+internal fun SettingsCategory.forkBadge(): String? = when (this) {
+    SettingsCategory.NAVIDROME, SettingsCategory.FORK -> ForkSettingsBadge.TEXT
+    else -> null
 }
 
 /** "Continue on other devices": the queue left on the server for the PC ([com.music.bitchord.fork.ForkHandoffPhone]). */
@@ -374,21 +425,31 @@ internal fun SettingsGroupScope.forkCrossfadeOnSkipRow(enabled: Boolean) = forkD
 internal fun SettingsGroupScope.forkCanvasRows(enabled: Boolean) = forkDisabledWhen(!enabled) {
     row(stringResource(R.string.fork_animated_covers), "fork", "canvas", "apple", "animated", "cover", "video") { ForkAnimatedCoversRow() }
     row(stringResource(R.string.fork_backdrop_clips), "fork", "canvas", "spotify", "backdrop", "video") { ForkBackdropClipsRow() }
+    forkMusicVideoCanvasRow()
 }
 
-/** After "Clear image cache": the video clip cache's size and the clear buttons. */
+/**
+ * After "Clear image cache": the video clip cache's size and the clear buttons. "Clear lyrics cache"
+ * was the last of them; it empties the Navidrome lyrics cache, so it moved to the Navidrome page
+ * ([forkNavidromeRows]) with the rest of the server's settings (owner, 2026-11-19). Upstream's
+ * "Clear song cache" still takes the lyrics with it (`ForkClipCache.clearWithSongs`).
+ */
 @Composable
 internal fun SettingsGroupScope.forkCacheRows() {
     row(stringResource(R.string.fork_clip_cache_size), "fork", "cache", "video", "clips", "canvas") { ForkClipCacheSizeRow() }
     row(stringResource(R.string.fork_clear_backdrops), "fork", "cache", "backdrop", "video", "free space") { ForkClearBackdropsRow() }
     row(stringResource(R.string.fork_clear_cover_clips), "fork", "cache", "cover", "video", "free space") { ForkClearCoverClipsRow() }
-    row(stringResource(R.string.fork_clear_lyrics), "fork", "cache", "lyrics", "free space") { ForkClearLyricsRow() }
 }
 
 /**
- * Every fork switch again in one group (the same settings as their rows above, so they stay in sync).
- * Shown when the Fork settings page is browsed, not in the main page's search: every row here also
- * lives in its own section, so a search listed it twice. The rows above carry "fork" for that.
+ * The fork's switches again in one group (the same settings as their rows in upstream's sections, so
+ * they stay in sync). Shown when the Fork settings page is browsed, not in the main page's search:
+ * every row here also lives in its own section, so a search listed it twice. The rows above carry
+ * "fork" for that.
+ *
+ * The Navidrome rows (scrobbling, Home shelves, YouTube history, offline, pre-load) and "Clear lyrics
+ * cache" used to be repeated here too. They have a page of their own now ([forkNavidromeRows]), the
+ * one place they live (owner, 2026-11-19), so this page holds what has no other fork page.
  */
 @Composable
 internal fun SettingsGroupScope.forkSettingsRows() {
@@ -397,9 +458,6 @@ internal fun SettingsGroupScope.forkSettingsRows() {
     val crossfade by com.music.bitchord.data.settings.AppSettings.crossfadeSeconds.collectAsStateWithLifecycle()
     val smartFade by com.music.bitchord.data.settings.AppSettings.smartFadeEnabled.collectAsStateWithLifecycle()
     val animatedCanvas by com.music.bitchord.data.settings.AppSettings.animatedCanvas.collectAsStateWithLifecycle()
-    val url by com.music.bitchord.data.navidrome.NavidromeSettings.url.collectAsStateWithLifecycle()
-    val user by com.music.bitchord.data.navidrome.NavidromeSettings.username.collectAsStateWithLifecycle()
-    val noServer = forkNoNavidromeServer(url, user)
     run {
         forkDisabledWhen(!forkCrossfadeOnSkipAvailable(crossfade, smartFade)) {
             row(stringResource(R.string.fork_crossfade_on_skip), "fork", "fade", "skip") { ForkCrossfadeOnSkipRow() }
@@ -408,22 +466,11 @@ internal fun SettingsGroupScope.forkSettingsRows() {
         forkDisabledWhen(!animatedCanvas) {
             row(stringResource(R.string.fork_animated_covers), "fork", "apple", "animated", "cover") { ForkAnimatedCoversRow() }
             row(stringResource(R.string.fork_backdrop_clips), "fork", "spotify", "backdrop", "video") { ForkBackdropClipsRow() }
-        }
-        forkDisabledWhen(noServer) {
-            row(stringResource(R.string.fork_navidrome_scrobble), "fork", "navidrome", "scrobbling") { ForkNavidromeScrobbleRow() }
-            row(stringResource(R.string.fork_navidrome_home_shelves), "fork", "navidrome", "home", "shelves") { ForkNavidromeHomeShelvesRow() }
-            row(stringResource(R.string.fork_navidrome_yt_history), "fork", "navidrome", "youtube", "history") { ForkNavidromeYouTubeHistoryRow() }
+            forkMusicVideoCanvasRow()
         }
         row(stringResource(R.string.fork_clip_cache_size), "fork", "cache", "video", "clips") { ForkClipCacheSizeRow() }
         row(stringResource(R.string.fork_clear_backdrops), "fork", "cache", "backdrop") { ForkClearBackdropsRow() }
         row(stringResource(R.string.fork_clear_cover_clips), "fork", "cache", "cover") { ForkClearCoverClipsRow() }
-        row(stringResource(R.string.fork_clear_lyrics), "fork", "cache", "lyrics") { ForkClearLyricsRow() }
-        forkDisabledWhen(noServer) {
-            row(stringResource(R.string.fork_offline_mode), "fork", "navidrome", "offline") { ForkOfflineModeRow() }
-            row(stringResource(R.string.fork_offline_storage), "fork", "navidrome", "offline", "storage") { ForkOfflineStorageRow() }
-            row(stringResource(R.string.fork_download_mobile), "fork", "offline", "mobile") { ForkDownloadOnMobileRow() }
-            row(stringResource(R.string.fork_preload), "fork", "navidrome", "preload") { ForkPreloadRow() }
-        }
     }
 }
 
@@ -447,6 +494,7 @@ internal fun SettingsGroupScope.forkSystemBarsRow() {
             icon = Icons.Rounded.Fullscreen,
             title = title,
             subtitle = stringResource(R.string.fork_hide_system_bars_subtitle),
+            badge = ForkSettingsBadge.TEXT,
         )
         SegmentedControl(
             options = listOf(

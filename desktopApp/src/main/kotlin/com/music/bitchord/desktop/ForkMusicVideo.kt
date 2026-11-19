@@ -666,6 +666,6 @@ internal fun ForkMusicVideoSurface(videoId: String, fit: Boolean, onRenderedChan
 @Composable
 internal fun ForkMusicVideoSwitch() {
     val on by ForkMusicVideo.enabled.collectAsState()
-    SettingsToggle(ForkMusicVideo.TITLE, ForkMusicVideo.SUBTITLE, on, ForkMusicVideo::setEnabled)
+    ForkMarked { SettingsToggle(ForkMusicVideo.TITLE, ForkMusicVideo.SUBTITLE, on, ForkMusicVideo::setEnabled) }
 }
 

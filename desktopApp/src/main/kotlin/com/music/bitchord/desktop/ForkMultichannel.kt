@@ -502,7 +502,7 @@ internal data class ForkOpenedLine(val bytes: Int, val format: DesktopPcmFormat,
  * subtitle (sending 7.1, or folding to stereo and why). Greyed, never hidden, off Windows.
  */
 @Composable
-internal fun ForkMultichannelRow() {
+internal fun ForkMultichannelRow() = ForkMarked {
     val on by ForkMultichannel.enabled.collectAsState()
     val layout by ForkMultichannel.layout.collectAsState()
     val selected by DesktopAudioDevices.selected.collectAsState()

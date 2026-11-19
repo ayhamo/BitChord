@@ -61,9 +61,18 @@ object ForkSpotifyTotpToken {
     /** The extension's fallback when the page carries no version. */
     const val FALLBACK_CLIENT_VERSION = "1.2.87.27.ga2033a72"
 
-    /** The newest secret the YT Music Extension ships (`spotify.js`, `getSecretDict`), used when the list can't be fetched. */
-    val FALLBACK_SECRET: Pair<Int, IntArray> =
+    /** The secret the YT Music Extension's `spotify.js` (`getSecretDict`) ships, v12; kept for its known codes. */
+    val SECRET_V12: Pair<Int, IntArray> =
         12 to intArrayOf(107, 81, 49, 57, 67, 93, 87, 81, 69, 67, 40, 93, 48, 50, 46, 91, 94, 113, 41, 47)
+
+    /**
+     * The secret used when the live list can't be fetched: spotlib's v61, the one the canvas
+     * rulebook (§4.1) and the owner's phone extension use ([ForkSpotifyCanvasRules.SECRET_V61]).
+     * It was v12, which Spotify retired long before v61: an offline fallback that could no longer
+     * mint anything.
+     */
+    val FALLBACK_SECRET: Pair<Int, IntArray> =
+        ForkSpotifyCanvasRules.TOTP_VERSION to ForkSpotifyCanvasRules.SECRET_V61
 
     const val FAILURE_BACKOFF_MS = 10L * 60 * 1000
     private const val DEFAULT_LIFETIME_MS = 3_600_000L

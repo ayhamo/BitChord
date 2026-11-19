@@ -194,7 +194,7 @@ internal fun ForkAccentRow() {
     if (!settingsRowVisible(title, subtitle)) return
     val choice by ForkAccent.choice.collectAsState()
     Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
-        Text(title, fontWeight = FontWeight.Medium)
+        ForkSettingsTitle(title, fontWeight = FontWeight.Medium, fork = true)
         Text(subtitle, color = DesktopSecondary, style = MaterialTheme.typography.bodySmall)
         Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {

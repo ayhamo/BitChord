@@ -57,7 +57,7 @@ internal object ForkLyricsUnfocused {
 
 /** Settings > Lyrics, after "Blur unfocused lyrics". */
 @Composable
-internal fun ForkLyricsUnfocusedRow() {
+internal fun ForkLyricsUnfocusedRow() = ForkMarked {
     val on by ForkLyricsUnfocused.enabled.collectAsState()
     SettingsToggle(
         DesktopStrings["fork_lyrics_move_unfocused", "Keep lyrics moving when unfocused"],

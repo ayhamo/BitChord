@@ -1,5 +1,6 @@
 package com.music.bitchord.fork
 
+import com.music.bitchord.data.canvas.ForkSpotifyCanvasRules
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -16,36 +17,31 @@ object ForkSpotifyMatch {
     data class Hit(val uri: String, val name: String, val artists: String, val album: String?)
 
     /**
-     * The first item whose title and every requested artist match, or null.
+     * The first item that is the song (the canvas rulebook's rule 4.4, [ForkSpotifyCanvasRules.matchesHit]),
+     * or null: title words shared at least 0.75, the same artists or the same primary artist, and the
+     * album (when [album] is given) at least half the same.
      *
-     * A hit named exactly as asked is taken over one that only matches by [core], wherever each
-     * sits in the answer: Spotify ranks "Monody (Remix)" above "Monody" for some queries, and
-     * [core] strips the brackets off both, so the first pass alone played the remix's Canvas
-     * for the original. Only when no hit is named exactly does a [core] match count.
+     * This was the fork's own check: every requested artist credited and the title exact, else equal
+     * once brackets and a " - Remastered" tail were cut. That fallback let "Monody (Remix)" through as
+     * "Monody" when no exact hit came first; the word share keeps it out (one word of two is 0.5). It
+     * also keeps out "Song - Remastered 2011" and a guest named only in Spotify's title, which the old
+     * check took: the rulebook's choice (a different master often has a different Canvas). The album,
+     * when known, must share half its words. The phone extension and the PC take the same rule.
      */
-    fun pick(items: JsonArray?, title: String, artist: String): Hit? {
+    fun pick(items: JsonArray?, title: String, artist: String, album: String? = null): Hit? {
         items ?: return null
-        val wantTitle = normal(title)
-        val wantCore = core(title)
-        val wantArtists = split(artist)
-        if (wantArtists.isEmpty()) return null
-        var byCore: Hit? = null
         for (entry in items) {
             val data = data(entry) ?: continue
             val uri = text(data, "uri") ?: text(data, "id")?.let { "spotify:track:$it" } ?: continue
             val name = text(data, "name") ?: continue
             val artists = artistsOf(data)
             if (artists.isEmpty()) continue
-            val exact = normal(name) == wantTitle
-            if (!exact && (byCore != null || core(name) != wantCore)) continue
-            val got = artists.flatMap(::split).toSet()
-            if (!wantArtists.all { it in got }) continue
-            val album = (data["albumOfTrack"] as? JsonObject)?.let { text(it, "name") }
-            val hit = Hit(uri, name, artists.joinToString(", "), album)
-            if (exact) return hit
-            byCore = hit
+            val hitAlbum = (data["albumOfTrack"] as? JsonObject)?.let { text(it, "name") }
+            val hitMs = ((data["duration"] as? JsonObject)?.get("totalMilliseconds") as? JsonPrimitive)?.contentOrNull?.toLongOrNull()
+            if (!ForkSpotifyCanvasRules.matchesHit(title, artist, album, null, name, artists, hitAlbum, hitMs)) continue
+            return Hit(uri, name, artists.joinToString(", "), hitAlbum)
         }
-        return byCore
+        return null
     }
 
     /** The song Pathfinder just answered with named hits, none of them it; see [takeNamedMiss]. */

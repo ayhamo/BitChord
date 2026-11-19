@@ -24,7 +24,7 @@ import com.music.bitchord.data.canvas.normalizeTitleForMatch
  *
  * Spotify's clips re-tint the backdrop as they loop; the rest settle on their first frame.
  */
-enum class DesktopCanvasSource { SPOTIFY, OTHER }
+enum class DesktopCanvasSource { SPOTIFY, OTHER, VIDEO } // fork: + VIDEO, a loop cut from the song's music video (ForkDesktopCanvasSources)
 
 // ── Matching, shared by every provider ──────────────────────────────────────
 
@@ -460,8 +460,7 @@ internal object DesktopAppleMusicCanvas {
         payload(jwt)?.get("exp")?.jsonPrimitive?.contentOrNull?.toLongOrNull()?.times(1000)
 
     private fun isWebPlayerToken(jwt: String): Boolean =
-        payload(jwt)?.text("root_https_origin")?.contains("music.apple.com") == true ||
-            payload(jwt)?.get("root_https_origin")?.toString()?.contains("music.apple.com") == true
+        com.music.bitchord.data.canvas.ForkAppleCanvasRules.isWebPlayerToken(jwt) // fork: the canvas rulebook's rule 3.1 (header kid WebPlayKid or payload iss AMPWebPlay), as the phone; was the payload's root_https_origin naming music.apple.com
 
     private const val TOKEN_RETRY_MS = 30L * 60 * 1000
 }

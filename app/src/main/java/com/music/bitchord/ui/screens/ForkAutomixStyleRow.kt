@@ -8,6 +8,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.R
+import com.music.bitchord.data.ForkSettingsBadge
 import com.music.bitchord.fork.ForkSettings
 import com.music.bitchord.playback.smart.AutomixStyle
 import com.music.bitchord.ui.icons.SfIcons
@@ -44,6 +45,7 @@ internal fun ForkAutomixPhraseRow() {
                 else -> R.string.fork_automix_phrase_auto_detail
             },
         ),
+        badge = ForkSettingsBadge.TEXT,
     )
     SegmentedControl(
         options = listOf(
@@ -70,6 +72,7 @@ internal fun ForkAutomixStyleRow() {
                 AutomixStyle.V2 -> R.string.fork_automix_style_v2_subtitle
             },
         ),
+        badge = ForkSettingsBadge.TEXT,
     )
     SegmentedControl(
         options = listOf(

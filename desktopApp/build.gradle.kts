@@ -130,15 +130,15 @@ dependencies {
         }
     )
 
-    // fork: 3.5.2 (was 3.0.3), the version :shared's `api` brings: Gradle took 3.5.2 for every Ktor
+    // fork: 3.6.0 (3.5.2 before InnerTubeX v0.11.9 on 2026-11-19; was 3.0.3), the version :shared's `api` brings: Gradle took 3.5.2 for every Ktor
     // module :shared names and left the CIO engine and its ktor-network at 3.0.3, an engine running
     // on another release's ktor-io and ktor-utils. Ktor's modules are released and tested together.
-    implementation("io.ktor:ktor-client-core:3.5.2")
-    implementation("io.ktor:ktor-client-cio:3.5.2")
-    implementation("io.ktor:ktor-client-content-negotiation:3.5.2")
+    implementation("io.ktor:ktor-client-core:3.6.0")
+    implementation("io.ktor:ktor-client-cio:3.6.0")
+    implementation("io.ktor:ktor-client-content-negotiation:3.6.0")
     // Listen Together speaks over a WebSocket; the Discord gateway already uses the same engine.
-    implementation("io.ktor:ktor-client-websockets:3.5.2")
-    implementation("io.ktor:ktor-serialization-kotlinx-json:3.5.2")
+    implementation("io.ktor:ktor-client-websockets:3.6.0")
+    implementation("io.ktor:ktor-serialization-kotlinx-json:3.6.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.9.0")
     implementation("org.slf4j:slf4j-nop:2.0.16")

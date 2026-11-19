@@ -254,7 +254,7 @@ internal fun AndroidCanvasArtworkPlayer(
             // see that object's doc for why this matters far more here than
             // it would for a clip played once.
             .setMediaSourceFactory(
-                DefaultMediaSourceFactory(CanvasCache.dataSourceFactory(OkHttpDataSource.Factory(Http.client))),
+                DefaultMediaSourceFactory(androidx.media3.datasource.DefaultDataSource.Factory(context, CanvasCache.dataSourceFactory(OkHttpDataSource.Factory(Http.client)))), // fork: + DefaultDataSource, so a local file (a music-video loop) plays; http still goes through the cache
             )
             .build()
             .apply {
@@ -472,6 +472,7 @@ internal fun AndroidCanvasArtworkPlayer(
                 // visible underneath for the length of the fade.
                 isOpaque = false
                 this.alpha = 0f
+                com.music.bitchord.fork.ForkClipFraming.track(this) { url } // fork: a music-video loop's crop and bars, read by applyContentTransform
                 player.setVideoTextureView(this)
                 // setVideoTextureView installs ExoPlayer's own listener, and
                 // the player has to keep it — it is how the surface reaches
@@ -760,6 +761,7 @@ private fun TextureView.applyContentTransform(
             setScale(1f, viewAspect / clipAspect, pivotX, pivotY)
         }
     }
+    com.music.bitchord.fork.ForkClipFraming.frame(this, matrix, clipAspect, contentMode == CanvasContentMode.FIT_PORTRAIT && clipAspect < 1f) // fork: a music-video loop: its bars out of view, its crop where the action is
     setTransform(matrix)
     return true
 }

@@ -31,7 +31,7 @@ internal fun ForkAutomixStyleSetting() {
     val subtitle = "BitChord's own mixes, or the YouTube Music extension's Automix v2"
     val style by ForkDesktopAutomixStyle.style.collectAsState()
     if (settingsRowVisible(title, subtitle)) Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
-        Text(title, fontWeight = FontWeight.Medium)
+        ForkSettingsTitle(title, fontWeight = FontWeight.Medium, fork = true)
         Text(subtitle, color = DesktopSecondary, style = MaterialTheme.typography.bodySmall)
         Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

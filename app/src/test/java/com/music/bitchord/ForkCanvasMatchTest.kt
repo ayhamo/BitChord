@@ -36,32 +36,46 @@ class ForkCanvasMatchTest {
         assertTrue(ForkSpotifyMatch.carriesNames(answer))
     }
 
+    /**
+     * The canvas rulebook's match (rule 4.4): title words shared at least 0.75. A guest named only in
+     * the title or a " - Remastered 2011" tail is a word share under that, so those hits are no longer
+     * taken (the fork's own check took them); the rulebook's cases are the reference.
+     */
     @Test
-    fun featAndRemasterDifferencesStillMatch() {
+    fun theRulebookWordShareDecides() {
         val answer = items(Triple("spotify:track:a", "Sad Girls", listOf("Bebe Rexha", "David Guetta")))
-        assertEquals("spotify:track:a", ForkSpotifyMatch.pick(answer, "Sad Girls (feat. Someone)", "Bebe Rexha & David Guetta")?.uri)
+        assertEquals("spotify:track:a", ForkSpotifyMatch.pick(answer, "Sad Girls", "Bebe Rexha & David Guetta")?.uri)
+        assertNull(ForkSpotifyMatch.pick(answer, "Sad Girls (feat. Someone)", "Bebe Rexha & David Guetta"))
         val remaster = items(Triple("spotify:track:b", "Song - Remastered 2011", listOf("Band")))
-        assertEquals("spotify:track:b", ForkSpotifyMatch.pick(remaster, "Song", "Band")?.uri)
+        assertNull(ForkSpotifyMatch.pick(remaster, "Song", "Band"))
+        // a guest Spotify credits and the song doesn't: the same primary artist is enough
+        val guest = items(Triple("spotify:track:g", "Monody", listOf("TheFatRat", "Laura Brehm")))
+        assertEquals("spotify:track:g", ForkSpotifyMatch.pick(guest, "Monody", "TheFatRat")?.uri)
     }
 
     @Test
-    fun anExactlyNamedHitBeatsOneMatchingOnlyWithoutItsTail() {
-        // Spotify ranked the remix first; its name only matches once the brackets are off.
+    fun aRemixRankedFirstIsNotTheOriginal() {
+        // Spotify ranked the remix first: "Monody (Remix)" shares one word of two with "Monody".
         val answer = items(
             Triple("spotify:track:remix", "Monody (Remix)", listOf("TheFatRat")),
             Triple("spotify:track:original", "Monody", listOf("TheFatRat")),
         )
         assertEquals("spotify:track:original", ForkSpotifyMatch.pick(answer, "Monody", "TheFatRat")?.uri)
         assertEquals("spotify:track:remix", ForkSpotifyMatch.pick(answer, "Monody (Remix)", "TheFatRat")?.uri)
-        // With no exact name anywhere, the first tail-less match still counts.
-        val only = items(Triple("spotify:track:b", "Song - Remastered 2011", listOf("Band")))
-        assertEquals("spotify:track:b", ForkSpotifyMatch.pick(only, "Song", "Band")?.uri)
-        // A wrong artist's exact name is not an exact hit.
+        // A wrong artist's exact name is never taken.
         val cover = items(
             Triple("spotify:track:cover", "Monody", listOf("Some Cover Band")),
-            Triple("spotify:track:real", "Monody (feat. Laura Brehm)", listOf("TheFatRat", "Laura Brehm")),
+            Triple("spotify:track:real", "Monody", listOf("TheFatRat", "Laura Brehm")),
         )
         assertEquals("spotify:track:real", ForkSpotifyMatch.pick(cover, "Monody", "TheFatRat")?.uri)
+    }
+
+    @Test
+    fun aDifferentAlbumIsAnotherRecording() {
+        val answer = items(Triple("spotify:track:a", "Levels", listOf("Avicii")))
+        // the helper's album is "Album"
+        assertNull(ForkSpotifyMatch.pick(answer, "Levels", "Avicii", "True"))
+        assertEquals("spotify:track:a", ForkSpotifyMatch.pick(answer, "Levels", "Avicii", "Album")?.uri)
     }
 
     @Test
@@ -90,9 +104,9 @@ class ForkCanvasMatchTest {
     }
 
     @Test
-    fun creditsSplitOnWholeWordsAndPlus() {
+    fun creditsSplitOnWholeWords() {
         assertEquals(listOf("feather", "sia"), ForkSpotifyMatch.split("Feather feat. Sia"))
         val answer = items(Triple("spotify:track:f", "Dog Days Are Over", listOf("Florence + The Machine")))
-        assertEquals("spotify:track:f", ForkSpotifyMatch.pick(answer, "Dog Days Are Over", "Florence and the Machine")?.uri)
+        assertEquals("spotify:track:f", ForkSpotifyMatch.pick(answer, "Dog Days Are Over", "Florence + The Machine")?.uri)
     }
 }

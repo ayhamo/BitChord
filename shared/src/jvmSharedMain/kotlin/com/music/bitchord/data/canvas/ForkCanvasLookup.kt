@@ -74,6 +74,10 @@ object ForkCanvasLookup {
         @Volatile var failure: String? = null
             internal set
 
+        /** How many failures were reported, the first included; see [failureCount]. */
+        @Volatile var failures: Int = 0
+            internal set
+
         /** The latest time a provider in its own backoff ([coolingDown]) will try again; 0 for none. */
         @Volatile var retryAtMs: Long = 0L
             internal set
@@ -88,7 +92,15 @@ object ForkCanvasLookup {
     fun fail(reason: String) {
         val scope = current.get() ?: return
         if (scope.failure == null) scope.failure = reason
+        scope.failures++
     }
+
+    /**
+     * How many failures the running lookup's [Scope] has been told of so far (0 outside one). The
+     * lasting per-source cache ([ForkCanvasStore.cached]) compares it before and after one source,
+     * since [Scope.failure] keeps only the first reason and can't say whether a later source failed.
+     */
+    fun failureCount(): Int = current.get()?.failures ?: 0
 
     /** [fail], returning null, for a provider's `?: return ForkCanvasLookup.failed("…")`. */
     fun failed(reason: String): Nothing? {
@@ -105,6 +117,7 @@ object ForkCanvasLookup {
     fun coolingDown(reason: String, untilMs: Long): Nothing? {
         val scope = current.get() ?: return null
         if (scope.failure == null) scope.failure = reason
+        scope.failures++
         if (untilMs > scope.retryAtMs) scope.retryAtMs = untilMs
         return null
     }
@@ -119,11 +132,13 @@ object ForkCanvasLookup {
         val scope = current.get() ?: return block()
         val before = scope.failure
         val retryBefore = scope.retryAtMs
+        val countBefore = scope.failures
         return try {
             block()
         } finally {
             scope.failure = before
             scope.retryAtMs = retryBefore
+            scope.failures = countBefore
         }
     }
 

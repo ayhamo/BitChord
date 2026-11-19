@@ -113,7 +113,7 @@ internal class ForkBackdropPulseMeter {
 
 /** Appearance, after "Legacy mesh gradient": greyed while "Reduce animation" holds every backdrop still. */
 @Composable
-internal fun ForkBackdropPulseRow() {
+internal fun ForkBackdropPulseRow() = ForkMarked {
     val on by ForkBackdropPulseSetting.enabled.collectAsState()
     val reduceAnimation by DesktopAppearanceSettings.reduceAnimation.collectAsState()
     ForkDisabledWhen(reduceAnimation) {

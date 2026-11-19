@@ -29,12 +29,14 @@ import java.nio.file.Path
 internal fun ForkCacheFolderRow() {
     val folder = remember { DesktopMediaCache.directory }
     var failed by remember { mutableStateOf<String?>(null) }
-    SettingsRow(
-        Icons.Rounded.FolderOpen,
-        DesktopStrings["d_song_cache_folder", "Song cache folder"],
-        failed ?: folder.toString(),
-    ) {
-        failed = ForkCacheFolder.open(folder)
+    ForkMarked { // the PC's own row; the switch below is the phone's, so unmarked
+        SettingsRow(
+            Icons.Rounded.FolderOpen,
+            DesktopStrings["d_song_cache_folder", "Song cache folder"],
+            failed ?: folder.toString(),
+        ) {
+            failed = ForkCacheFolder.open(folder)
+        }
     }
     ForkShowCachedSongsRow() // the phone's "Show cached songs folder" (ForkCachedSongs.kt)
 }

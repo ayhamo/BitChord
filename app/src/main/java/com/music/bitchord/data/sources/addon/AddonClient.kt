@@ -263,10 +263,12 @@ class AddonClient(rawBaseUrl: String, private val pickedQuality: String? = null)
                 params[ATMOS_KEY] = atmosSetting.options
                     .mapNotNull { it.stringValue }
                     .firstOrNull { ATMOS_OFF.matches(it) }
-                    ?: ATMOS_NEVER
+                    ?: com.music.bitchord.data.sources.ForkAddonPick.ATMOS_FALSE // fork: the rulebook's value (was ATMOS_NEVER, "0")
             }
         } else {
-            atmosHint()?.let { params.putIfAbsent(ATMOS_KEY, it) }
+            val forkHint = atmosHint() // fork: held, so a declared setting is asked for stereo below
+            forkHint?.let { params.putIfAbsent(ATMOS_KEY, it) }
+            if (forkHint == null) declared.firstOrNull { it.key == ATMOS_KEY }?.let { s -> params[ATMOS_KEY] = com.music.bitchord.data.sources.ForkAddonPick.atmosOff(s.options.mapNotNull { it.stringValue }, s.defaultValue) } // fork: Atmos not wanted: a declared atmos setting is sent "off", not its default (ForkAddonPick.atmosOff)
         }
         return params
     }

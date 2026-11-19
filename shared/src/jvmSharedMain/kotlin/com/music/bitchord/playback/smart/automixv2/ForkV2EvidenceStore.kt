@@ -21,9 +21,11 @@ import kotlin.math.roundToInt
  * 400 Hz; pitch profiles 55 Hz-5 kHz; the K-weighting's shelf is near 1.5 kHz), so the values match
  * the extension's within the resampling's accuracy, but they are not bit-identical to it.
  *
- * Songs analysed before this store existed have no evidence until they are analysed again; the
- * planner then skips the rules that need it (no sub-bass veto, no beatless bridge, no loudness trim,
- * no key rules), as the extension does for an analysis made before them.
+ * Songs analysed before this store existed have no evidence until it is measured for them: the
+ * planner skips the rules that need it meanwhile (no sub-bass veto, no beatless bridge, no loudness
+ * trim, no key rules), as the extension does for an analysis made before them. Since 2026-11-19
+ * [ForkV2EvidenceBackfill] has each app measure it once, in the background, when Automix v2 plans a
+ * pair with such a song (an evidence-only decode, no models).
  *
  * Lookups ([get]) run on the players' threads every plan: a hit is a map read, a miss reads the
  * file once and remembers the answer (also "none"), so nothing is read twice.
@@ -51,6 +53,7 @@ object ForkV2EvidenceStore {
         cache.clear()
         none.clear()
         ForkV2Automix.evidence = ::get
+        ForkV2EvidenceBackfill.install()
     }
 
     /** [id]'s evidence, or null when it was never measured. */

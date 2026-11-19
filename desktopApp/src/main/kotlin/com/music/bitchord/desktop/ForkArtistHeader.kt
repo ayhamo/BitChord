@@ -119,7 +119,7 @@ internal object ForkArtistHeader {
 @Composable
 internal fun ForkArtistArtSwitch() {
     val on by ForkArtistHeader.enabled.collectAsState()
-    SettingsToggle(ForkArtistHeader.TITLE, ForkArtistHeader.SUBTITLE, on, ForkArtistHeader::set)
+    ForkMarked { SettingsToggle(ForkArtistHeader.TITLE, ForkArtistHeader.SUBTITLE, on, ForkArtistHeader::set) }
 }
 
 /**

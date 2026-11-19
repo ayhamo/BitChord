@@ -240,7 +240,7 @@ internal fun ForkCanvasAutoHideRow() {
     )
 }
 
-/** Storage: the phone's "Clear lyrics cache", after its clip rows. */
+/** The phone's "Clear lyrics cache", last on Settings > Navidrome (`ForkNavidromeSettingsPage`), as on the phone. */
 @Composable
 internal fun ForkClearLyricsRow() {
     val scope = rememberCoroutineScope()

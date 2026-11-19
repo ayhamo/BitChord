@@ -498,8 +498,6 @@ fun SettingsScreen(
                     )
                 }
             }
-            SearchableSettingsGroup(search, header = stringResource(R.string.navidrome)) { forkNavidromeRows() } // fork
-
             // The row that used to sit at the top of this group was called
             // "Lossless / HQ Audio" and toggled `SourceRegistry.setModuleEnabled` —
             // it switched the *module source* on and off, not lossless. Sources
@@ -1788,6 +1786,7 @@ fun SettingsScreen(
             }
         }
 
+        if (shows(SettingsCategory.NAVIDROME)) SearchableSettingsGroup(search, header = stringResource(R.string.navidrome)) { forkNavidromeRows() } // fork: the Navidrome page, its rows searched from the main page
         if (shows(SettingsCategory.FORK) && !searching) SearchableSettingsGroup(search, header = stringResource(R.string.fork_settings)) { forkSettingsRows() } // fork: browsed only, its rows are searched where they live
 
         // Read after every group above has had its turn at the query, which is
@@ -2604,6 +2603,7 @@ internal fun SettingsRow(
                     color = MaterialTheme.colorScheme.onBackground,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false), // fork: a long title ellipsizes before its badge; it squeezed the "Fork" badge to a column of letters, or to nothing
                 )
                 if (badge != null) {
                     Spacer(Modifier.width(8.dp))
@@ -2840,6 +2840,7 @@ enum class SettingsCategory(@param:StringRes val title: Int) {
     YOUR_DATA(R.string.your_data),
     MISCELLANEOUS(R.string.miscellaneous),
     LANGUAGE(R.string.language),
+    NAVIDROME(R.string.navidrome), // fork
     FORK(R.string.fork_settings), // fork
     ;
 
@@ -2855,6 +2856,7 @@ enum class SettingsCategory(@param:StringRes val title: Int) {
             YOUR_DATA -> SfIcons.YourData
             MISCELLANEOUS -> SfIcons.Miscellaneous
             LANGUAGE -> SfIcons.Language
+            NAVIDROME -> ForkNavidromeSettingsIcon // fork
             FORK -> SfIcons.Sliders // fork
         }
 }
@@ -2878,6 +2880,7 @@ private fun SettingsCategoryList(onOpen: (SettingsCategory) -> Unit) {
             SettingsRow(
                 icon = category.icon,
                 title = stringResource(category.title),
+                badge = category.forkBadge(), // fork: "Fork" on the fork's own pages
                 onClick = { onOpen(category) },
             )
         }

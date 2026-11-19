@@ -90,21 +90,7 @@ object CanvasRepository {
         val key = cacheKey("song|${song.videoId}", spotifyFirst)
 
         return resolve(key, album != null) {
-            if (spotifyFirst) {
-                firstHit(
-                    { SpotifyCanvas.search(title, artist, album) },
-                    { AppleMusicCanvas.search(title, artist, album) },
-                    { TidalCanvas.search(title, artist, album) },
-                    { CommunityCanvas.search(title, artist, album) },
-                ) { it.matches(title, artist, album) }
-            } else {
-                firstHit(
-                    { AppleMusicCanvas.search(title, artist, album) },
-                    { TidalCanvas.search(title, artist, album) },
-                    { CommunityCanvas.search(title, artist, album) },
-                    { SpotifyCanvas.search(title, artist, album) },
-                ) { it.matches(title, artist, album) }
-            }
+            firstHit(*com.music.bitchord.fork.ForkCanvasSources.song(song, title, artist, album, spotifyFirst)) { it.matches(title, artist, album) } // fork: the canvas rulebook's sources and order (+ the music video, anonymous Spotify, saved lookups); was Apple, Tidal, Community, Spotify (Spotify first when prioritised)
         }
     }
 
@@ -158,7 +144,7 @@ object CanvasRepository {
 
     /** Priority is part of the question, so a toggle never reuses the other order's answer. */
     private fun cacheKey(base: String, spotifyFirst: Boolean): String =
-        "$base|spotifyFirst=$spotifyFirst"
+        "$base|spotifyFirst=$spotifyFirst" + com.music.bitchord.fork.ForkCanvasSources.keySuffix() // fork: + the switches that decide which sources are asked
 
     private suspend fun resolve(
         key: String,

@@ -128,9 +128,13 @@ internal object ForkClipCache {
     private fun sizeOf(path: Path): Long = runCatching { Files.size(path) }.getOrDefault(0L)
 }
 
-/** After "Clear image cache" in Storage, as on the phone: clips aren't only the server's, so not in the "Navidrome" group. */
+/**
+ * After "Clear image cache" in Storage, as on the phone: clips aren't only the server's, so not on
+ * the Navidrome page. "Clear lyrics cache" followed them until it moved to that page (owner,
+ * 2026-11-19): it empties the server's lyrics. Each row carries the Fork mark ([ForkMarked]).
+ */
 @Composable
-internal fun ForkClipCacheRows() {
+internal fun ForkClipCacheRows() = ForkMarked {
     val mb by ForkNavidromeSettings.clipCacheMb.collectAsState()
     SettingsRow(
         Icons.Rounded.VideoLibrary,
@@ -142,7 +146,6 @@ internal fun ForkClipCacheRows() {
     }
     ForkClearClipsRow(ForkClipCache.Kind.BACKDROPS, "Clear backdrop videos")
     ForkClearClipsRow(ForkClipCache.Kind.COVER_CLIPS, "Clear animated covers")
-    ForkClearLyricsRow() // the phone's "Clear lyrics cache", after its clip rows (ForkPlayerSettings.kt)
 }
 
 /** Drops one kind of clip, showing what it holds now. */

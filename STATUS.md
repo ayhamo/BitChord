@@ -2,6 +2,24 @@
 
 Snapshot for picking the work up again. Plan: `FORK_PLAN.md`. Every touched upstream line: `FORK.md`.
 
+## Done 2026-11-19 (not committed): the week's list, items 1-5
+
+**Automix v2 follow-ups** (2026-11-19; not heard yet):
+- Songs analysed before Automix v2 get its evidence (sub-bass, bass/loudness curves, chroma, key strength) measured once in the background when v2 plans a pair with them: an evidence-only decode, no models, on each app's analysis thread (phone) or a lowest-priority thread (PC). Until it lands, that pair plans without the evidence rules as before.
+- **PC kick lock:** measured once per plan from 40 s before the ramp, from both decks' audio decoded at 12 kHz, and the incoming cue moved by the shift (the phone app's `kickLocked`). Only tested on synthetic kicks (a 25 ms offset found within 3 ms). The original's 1 ms hop is inexact at 44.1 kHz (4.8 %); the PC avoids it by its decode rate.
+- **Phone: no kick lock.** The standby player starts tens of ms off the beat, and upstream's phase lock (8 ms deadband) steers back onto the analysis grid, so a few-ms cue shift is neither kept nor exact.
+- Addons: a declared `atmos` setting is sent "off" when Atmos isn't wanted, as the rulebook's `paramsFor` expects.
+
+**Lossless upgrade without a cut on the phone (2026-11-19):** `ForkUpgradeCover` covers upstream's quality swap with the standby player (old copy from the cache on the standby, upstream's swap runs muted, new copy lined up and faded in over 550 ms). Cuts as before with bit-perfect output, in a party, on a speaker, paused, near a planned transition, on a second-pass upgrade, or when anything fails. Not verified on a device: the emulator's dev app has no addon. Check on the phone with an addon: `upgrade cover:` log lines, then listen. No offset fit for an addon's copy: an offset copy would be heard as a short doubling in the fade.
+
+**Canvas to the rulebook (2026-11-19):** all applicable canvas-cases groups pass (was appleScore 16/16, spotifyMatch 13/20, totp 0/4, 175 with no equivalent); 22 cases don't apply (art bleed, chromeWhite). Not tried on a device or the PC yet.
+
+**Settings: Navidrome page and Fork badges (2026-11-19).** Phone and PC each have Settings > Navidrome with every Navidrome setting (a Server row, the switches greyed while no server is set up, Clear lyrics cache moved from Storage); the phone keeps one Navidrome chevron next to Fork settings (both last, both badged) and the Fork page no longer repeats them; the PC's group is one row after Advanced. Every settings row the fork adds carries a "FORK" badge; PC ports of upstream phone settings stay unmarked (Loudness, Font, Player theme, Your data, Source matching and the like: say if those should be badged too). Tried on LDPlayer and the portable PC build by the helper.
+
+**InnerTubeX v0.7.0 → v0.11.9** (Ktor 3.6.0, serialization 1.12.0): no source changes; tests pass; playback smoke-run on the PC only.
+
+**Metrolist check (2026-11-19):** "My devices": Metrolist v14 Device Connect is the model (LAN mDNS `_metrolist-connect._tcp`, WebSocket, ECDH P-256 + AES-GCM, mutual code pairing, target plays and controllers mirror, IP:port for Tailscale); ~390 KB source; full port 4-6 d, reduced remote 2-3 d; the Listen Together route stays the ~1 d server-relayed option without pairing. Cast without Play Services (Google Cast/FCast/DLNA/Sonos, pure JVM, LAN proxy, JmDNS): would give the PC casting, ~3-4 d. Foreign backup import (InnerTune/ViMusic/Kreate/SimpMusic/Prism readers, androidx.sqlite): readers portable, writes need mapping to account likes/playlists + Replay stats, ~2 d.
+
 ## Next week (owner, 2026-11-14): plan only, nothing built
 
 Read-only survey done 2026-11-14; file:line references are from that day.

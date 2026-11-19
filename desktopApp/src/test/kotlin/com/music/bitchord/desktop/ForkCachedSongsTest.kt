@@ -122,7 +122,8 @@ class ForkCachedSongsTest {
         val sources = listOf("apple", "tidal", "community", "spotify")
         assertEquals(sources, ForkSpotifyCanvasFirst.ordered(sources, spotifyFirst = false))
         assertEquals(listOf("spotify", "apple", "tidal", "community"), ForkSpotifyCanvasFirst.ordered(sources, spotifyFirst = true))
-        assertEquals("song|x|spotifyFirst=true", ForkSpotifyCanvasFirst.key("song|x", spotifyFirst = true))
+        // + the switches that decide which sources are asked (ForkDesktopCanvasSources.keySuffix, the canvas rulebook's rule 1.3)
+        assertEquals("song|x|spotifyFirst=true" + ForkDesktopCanvasSources.keySuffix(), ForkSpotifyCanvasFirst.key("song|x", spotifyFirst = true))
         assertTrue(ForkSpotifyCanvasFirst.key("song|x", true) != ForkSpotifyCanvasFirst.key("song|x", false))
     }
 }

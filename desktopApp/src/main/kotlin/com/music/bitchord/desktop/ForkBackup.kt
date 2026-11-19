@@ -264,6 +264,7 @@ internal object ForkBackup {
         bool("crossfade_on_skip"),
         onOff("backdrop_clips", "backdrop_videos"),
         onOff("animated_covers", "animated_covers"),
+        onOff("music_video_canvas", "music_video_canvas"), // "Music video canvas" (ForkDesktopCanvasSources), both apps
         onOff("navidrome_yt_history", "youtube_history"),
         bool("navidrome_scrobble", "report_plays", navidromeFork),
         bool("navidrome_home_shelves", "home_shelves", navidromeFork),

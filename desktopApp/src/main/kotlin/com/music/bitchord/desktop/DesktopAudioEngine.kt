@@ -2148,6 +2148,7 @@ class DesktopPlaybackEngine(
         val duration = (track.decoder.durationUs ?: return) / 1_000
         if (duration <= 0) return
 
+        ForkDesktopKickLock.streams(track.song.videoId, track.stream, incoming.song.videoId, incoming.stream) // fork: the decks' copies, for Automix v2's kick lock (ForkDesktopKickLock)
         val plan = transitionPlan(track, incoming.song, (incoming.decoder.durationUs ?: 0L) / 1_000, positionMs, duration)
         publishTransitionWindow(track, plan, duration)
         forkMarkSeam(plan, incoming.song, positionMs, duration) // fork
