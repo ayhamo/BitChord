@@ -133,7 +133,23 @@ internal object ForkMixView {
             beats > 0 -> ", ${bars(beats)} bars / $beats beats$asked"
             plan.transitionBeats > 0 -> ", no trusted grid$asked"
             else -> ""
+        } + v2Note(plan)
+    }
+
+    /**
+     * Which planner made [plan]: Automix v2's kind and its reason, or nothing for upstream's. Without it
+     * a v2 crossfade hand-over and upstream's short fade log the same line (found 2026-11-19).
+     */
+    internal fun v2Note(plan: TransitionPlan): String {
+        val p = plan.forkV2?.plan ?: return ""
+        val kind = when {
+            p.handoff -> "handover"
+            p.bridge -> "bridge"
+            p.shape != null -> p.shape!!
+            p.glide != null -> "${p.style}-glide"
+            else -> p.style
         }
+        return ", Automix v2 $kind" + (if (p.fallback) " (fallback)" else "") + p.reason?.takeIf { it.isNotBlank() }?.let { ": $it" }.orEmpty()
     }
 
     /**
