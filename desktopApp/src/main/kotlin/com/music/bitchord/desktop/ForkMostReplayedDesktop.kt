@@ -39,6 +39,16 @@ internal object ForkMostReplayedDesktop {
         this.playingId = playingId
         this.position = position
         this.play = play
+        com.music.bitchord.data.canvas.ForkBestParts.player = bestPartPlayer
+    }
+
+    /** "Your best part"'s Now and Listen from here (canvas.md §14 rule 5), through the window's seek. */
+    private val bestPartPlayer = object : com.music.bitchord.data.canvas.ForkBestParts.Player {
+        override fun positionOf(songId: String): Long? = ForkMostReplayedDesktop.positionOf(songId)
+        override fun seek(songId: String, ms: Long) {
+            if (playingId() != songId || DesktopListenTogether.state.value.controlsLocked) return
+            ForkMostReplayedDesktop.seek?.invoke(ms)
+        }
     }
 
     /** Where [songId] is now while it plays; null otherwise. */
@@ -52,11 +62,13 @@ internal object ForkMostReplayedDesktop {
     fun playFromBestPart(song: Song) {
         scope.launch {
             val durationMs = com.music.bitchord.data.canvas.ForkMusicVideoMatch.lengthOf(song.durationText) * 1000
-            val ms = withContext(Dispatchers.IO) { runCatching { ForkMostReplayed.bestPart(song.videoId, durationMs) }.getOrNull() }
-            if (ms == null) {
-                ForkNotice.show(com.music.bitchord.data.canvas.ForkBestParts.NONE_KNOWN)
-                return@launch
+            // canvas.md §14 rule 6: 5 s to find it; without one, the song from the start, saying so.
+            val found = kotlinx.coroutines.withTimeoutOrNull(com.music.bitchord.data.canvas.ForkBestParts.FIND_MS) {
+                withContext(Dispatchers.IO) { runCatching { ForkMostReplayed.bestPart(song.videoId, durationMs) }.getOrNull() }
             }
+            if (found == null) ForkNotice.show(com.music.bitchord.data.canvas.ForkBestParts.FROM_START)
+            if (found == null && playingId() == song.videoId) return@launch
+            val ms = found ?: 0L
             if (DesktopListenTogether.state.value.controlsLocked) {
                 ForkNotice.show("Only the party host can change playback")
                 return@launch
@@ -72,7 +84,7 @@ internal object ForkMostReplayedDesktop {
                 }
                 if (playingId() != song.videoId) return@launch
             }
-            seek?.invoke(ms)
+            ForkMostReplayedDesktop.seek?.invoke(ms)
         }
     }
 

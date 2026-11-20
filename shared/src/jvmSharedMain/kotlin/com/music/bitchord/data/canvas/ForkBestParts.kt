@@ -61,16 +61,35 @@ object ForkBestParts {
         return timed[start].timeMs
     }
 
+    /** A song's beat grid, as Prism's `Tempo` (canvas.md §14 rule 2): its tempo, whether it holds, the first beat. */
+    data class Tempo(val bpm: Double, val steady: Boolean, val firstBeatMs: Long) {
+        val periodMs: Double get() = 60_000.0 / bpm
+    }
+
     /**
-     * Prism's `BestPart.snap`, without its beat grid: [targetMs] pulled to a lyric line beginning
-     * near it (up to 4 s before or 1.5 s after, one before preferred), 250 ms ahead of the line; with
-     * no line near, a second before. [lineStarts]: the song's synced line starts.
+     * Prism's `BestPart.snap` (canvas.md §14 rule 2): [targetMs] pulled to a lyric line beginning near
+     * it (up to 4 s before or 1.5 s after, a line after counting 1.5 s farther), 250 ms ahead of the
+     * line; with no line near, the bar line before it on a steady [tempo] grid; else a second before.
+     * [lineStarts]: the song's synced line starts. The apps pass no grid: BitChord has none for the
+     * playing song here (its Automix analysis is the mixer's), so the bar step is skipped (FORK.md).
      */
-    fun snap(targetMs: Long, lineStarts: List<Long>): Long {
+    fun snap(targetMs: Long, lineStarts: List<Long>, tempo: Tempo? = null): Long {
         lineStarts.filter { it in (targetMs - 4_000)..(targetMs + 1_500) }
             .minByOrNull { abs(it - targetMs) + if (it > targetMs) 1_500 else 0 }
             ?.let { return (it - 250).coerceAtLeast(0) }
+        if (tempo != null && tempo.bpm > 0 && tempo.steady && tempo.firstBeatMs >= 0) {
+            val bar = 4 * tempo.periodMs
+            val bars = ((targetMs - tempo.firstBeatMs) / bar).toLong()
+            if (bars >= 0) return (tempo.firstBeatMs + bars * bar).toLong()
+        }
         return (targetMs - 1_000).coerceAtLeast(0)
+    }
+
+    /** §14 rule 4: where the seek bar's mark sits (0..1), only for a part between 1% and 99% of the song. */
+    fun markAt(startMs: Long?, durationMs: Long): Float? {
+        if (startMs == null || durationMs <= 0) return null
+        val f = startMs.toFloat() / durationMs
+        return f.takeIf { it in 0.01f..0.99f }
     }
 
     /** The line starts [snap] takes from [lines]: timed, not gaps. */
@@ -184,6 +203,39 @@ object ForkBestParts {
         _current.value = value
     }
 
+    // ---- Your best part (§14 rule 5) ---------------------------------------------------------
+
+    /** The song whose "Your best part" editor is open (the player draws it), or null. */
+    private val _editing = MutableStateFlow<String?>(null)
+    val editing: StateFlow<String?> = _editing.asStateFlow()
+
+    /** Opens "Your best part" for [songId] (the song menu's row, a long press on the button). */
+    fun openEditor(songId: String) {
+        _editing.value = songId
+    }
+
+    fun closeEditor() {
+        _editing.value = null
+    }
+
+    /** What the editor needs of the app's player: where a song is while it plays, and a seek in it. */
+    interface Player {
+        /** Where [songId] is now (ms) while it plays; null otherwise. */
+        fun positionOf(songId: String): Long?
+
+        /** Seeks the playing [songId] to [ms] (nothing when another song plays or a party locks the controls). */
+        fun seek(songId: String, ms: Long)
+    }
+
+    /** Set by each app (the phone's MediaController, the PC's window). */
+    @Volatile var player: Player? = null
+
+    /**
+     * Where the editor opens (rule 5): the listener's own, else the automatic best part ([autoMs]),
+     * else where the song is now ([nowMs]), else 0.
+     */
+    fun editorStart(mineMs: Long?, autoMs: Long?, nowMs: Long?): Long = mineMs ?: autoMs ?: nowMs ?: 0L
+
     // ---- the button's setting ----------------------------------------------------------------
 
     private val _button = MutableStateFlow(true)
@@ -211,9 +263,22 @@ object ForkBestParts {
     const val CHIP = "Best part"
     const val CHIP_MINE = "Your best part"
     const val PLAY_FROM = "Play from the best part"
-    const val SET_MINE = "Set your best part here"
-    const val CLEAR_MINE = "Clear your best part"
     const val NONE_KNOWN = "No best part known for this song"
+
+    /** "Play from the best part" (§14 rule 6): how long the part is looked for, and what is said without one. */
+    const val FIND_MS = 5_000L
+    const val FROM_START = "No best part found; playing from the start"
+
+    /** "Your best part" (§14 rule 5): the menu row, the editor's title and its buttons. */
+    const val EDITOR_TITLE = "Your best part"
+    const val BACK_5 = "−5 s"
+    const val FORWARD_5 = "+5 s"
+    const val NOW = "Now"
+    const val LISTEN = "Listen from here"
+    const val SAVE = "Save"
+    const val FORGET = "Forget"
+    const val FORGET_TO_AUTO = "Back to the part people replay"
+    const val SAVED = "Your best part is saved"
 
     /** "1:23". */
     fun clock(ms: Long): String {

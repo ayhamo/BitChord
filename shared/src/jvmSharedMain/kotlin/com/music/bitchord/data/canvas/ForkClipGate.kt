@@ -20,8 +20,9 @@ import java.util.Locale
  *    Japanese and Chinese words), unless the song's own title has the word.
  *  - [playable]: a live stream or a private video is never cut.
  *
- * What fails [official] or [titleSays] is not the last word: the next candidates are tried, and with
- * none better the song's own video is taken as it is ([ForkVideoCanvas]), as Prism does.
+ * What fails [official] or [titleSays] is not the last word: one more search ("official video") and up
+ * to two of its videos are tried, and with none better the song's own video is taken as it is
+ * ([ForkVideoCanvas.findOn], canvas.md §5 rules 10-11), as Prism does.
  */
 object ForkClipGate {
 
@@ -84,8 +85,12 @@ object ForkClipGate {
         return (if (lyricsOk) SCRIPT - LYRIC_SCRIPT else SCRIPT).any { it in video && it !in song }
     }
 
-    /** Why a video was turned away, Prism's `NoClip` names; [SEARCH_AGAIN] sends the finder to the next one. */
-    enum class Refusal { NOT_OFFICIAL, TITLE, NOT_PLAYABLE, NO_STREAM, STILL, FLASHING }
+    /**
+     * Why a song has no loop, Prism's `NoClip` names (canvas.md §5 rules 7-8): not a song, no video
+     * found, not the official type, a title saying it is something else, not playable (`RESTRICTED`),
+     * no stream, a still picture, flashing. [SEARCH_AGAIN] sends the finder to the second search.
+     */
+    enum class Refusal { NOT_A_SONG, NO_VIDEO, NOT_OFFICIAL, TITLE, RESTRICTED, NO_STREAM, STILL, FLASHING }
 
     /** A first video refused for these is not the last word: another is tried. */
     val SEARCH_AGAIN = setOf(Refusal.NOT_OFFICIAL, Refusal.TITLE)

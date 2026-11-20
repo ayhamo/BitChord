@@ -2,6 +2,14 @@
 
 Snapshot for picking the work up again. Plan: `FORK_PLAN.md`. Every touched upstream line: `FORK.md`.
 
+## Done 2026-11-20 (not committed): canvas rulebook batch 3 (extension e77ab64, 7b900a5, 94be5bf, fb048c2, 0c6485b)
+
+- **Clip finding (§5 rule 10), phone and PC:** a refused first video (type or title) runs one more search, "title artist official video", and tries up to 2 of its videos; none passing, the first as it is; no music video, the artist's lyric video. `ForkVideoCanvas.findOn` (Prism's `ClipFinder.findOn`), refusals renamed to the spec's (`RESTRICTED`).
+- **Song menu (§15), phone and PC:** a switch per source for the song (checked only for the loop that shows), Pick another part (the part playing and up to 4 others; the part itself is kept, in its video), Pick another video (search order, 10, minus turned-away videos, with stills; "No videos found for this song"; a pick is cut first and, if it can't make a loop, "That video can't make a loop" and the old loop stays), Use, Not this video (turned away for good, its loops deleted). Choices file line v2; older lines read as all off. What the lookup found is a note in memory, not a choice.
+- **Best part (§14):** "Your best part" editor (−5 s / Now / +5 s, Listen from here, Save, Forget) replaces Set/Clear, from the menu row or a long press / right click on the button; the best part's mark under the bar; Play from the best part waits 5 s, else plays from the start and says so. "Best part button" was already on by default and in the phone backup.
+- **Tests:** ForkCanvasCasesTest all groups pass, the 8 new ones included (chorus 5, titleGate 17, clipFind 16, snap 8, bestPartButton 6, songMenu 7, pickPart 4, videoChoices 6).
+- **Not tried on a device or the PC:** every new menu row and dialog, the editor and its Listen/seek, the mark, the second search on real videos, a pick's test cut and its hand-over to the lookup, Not this video deleting loops. Kept differences in FORK.md ("Canvas settings, kept as they are"): no pairing, no beat grid, parts as times, text chip, artist images on by default, §14 rule 7 not built.
+
 ## Done 2026-11-20 (not committed): addon rulebook batch 2 (extension a6322d5, 37ee7b4, a6edfe9, 41c4acc)
 
 - **Lossy floor and pass (8.2.1), phone and PC** (`ForkAddonFloor`, shared): an addon's lossy copy under YouTube's kbps + 96 (160 when unknown) doesn't win the race; once a lossy addon copy plays, every other addon is asked once for lossless; a cached addon copy below the tier asked (phone: a 16-bit `#alt` file at the top tier) asks only the addons above it. pick-cases qualityRank 7/7, floorVerdict 7/7, upgradeWanted 7/7.

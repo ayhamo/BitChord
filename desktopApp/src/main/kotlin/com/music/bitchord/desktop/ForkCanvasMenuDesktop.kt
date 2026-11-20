@@ -1,69 +1,105 @@
 package com.music.bitchord.desktop
 
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Animation
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.ContentCut
-import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material.icons.rounded.Star
-import androidx.compose.material.icons.rounded.StarOutline
+import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.VideoLibrary
 import androidx.compose.material.icons.rounded.Wallpaper
+import androidx.compose.material.icons.rounded.Whatshot
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import com.music.bitchord.data.canvas.ForkBestParts
 import com.music.bitchord.data.canvas.ForkCanvasChoices
+import com.music.bitchord.data.canvas.ForkCanvasRules
 import com.music.bitchord.data.canvas.ForkCanvasSettings
 import com.music.bitchord.data.canvas.ForkClipGate
-import com.music.bitchord.data.canvas.ForkMostReplayed
 import com.music.bitchord.data.canvas.ForkMusicVideoMatch
 import com.music.bitchord.data.canvas.ForkVideoCanvas
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.ui.player.ForkCanvasSwitch
+import com.music.bitchord.ui.player.ForkVideoChoiceRow
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Fork: Prism's per-song canvas menu and best-part rows in the PC player's song menu (after "Jump to
- * the most replayed part", [ForkMostReplayedRow]), as on the phone (`ForkCanvasMenuRows`):
+ * Fork: one song's canvas in the PC player's song menu (canvas.md §15; after "Jump to the most
+ * replayed part", [ForkMostReplayedRow]), as on the phone (`ForkCanvasMenuRows`), in the menu's own
+ * rows with the lists opening under their row:
  *
- * - "Canvas for this song" on/off ([ForkCanvasChoices.setOff]);
- * - for a music-video loop: "Pick another part", "Pick another video" (the song's other videos,
- *   listed under the row) and "Not this video";
- * - "Set your best part here" / "Clear your best part" ([ForkBestParts.setMine]).
+ * - a switch per source for this song ("Music video canvas", "Spotify canvas", "Animated cover");
+ * - "Pick another part" (the part playing and up to 4 others), "Pick another video" (the search as
+ *   found, with pictures; a pick that can't make a loop leaves the song as it was), "Use",
+ *   "Not this video";
+ * - "Your best part" (§14 rule 5): opens the editor the player draws.
  */
 @Composable
 internal fun ForkCanvasMenuRowsDesktop(song: Song, onDismiss: () -> Unit) {
     if (!ForkClipGate.isSong(song)) return
     val generation by ForkCanvasSettings.generation.collectAsState()
-    val choice = remember(song.videoId, generation) { ForkCanvasChoices.of(song.videoId) }
     val backdrops by ForkCanvasSwitch.backdrops.collectAsState()
+    val covers by ForkCanvasSwitch.covers.collectAsState()
     val videos by ForkCanvasSwitch.videos.collectAsState()
-    var picking by remember(song.videoId) { mutableStateOf(false) }
-
-    DesktopMenuRow(Icons.Rounded.Wallpaper, ForkCanvasChoices.OFF_TITLE, value = if (choice.off) "Off" else "On") {
-        ForkCanvasChoices.setOff(song.videoId, !choice.off)
+    val choice = remember(song.videoId, generation) { ForkCanvasChoices.of(song.videoId) }
+    val note = remember(song.videoId, generation) { ForkCanvasChoices.noteOf(song.videoId) }
+    val rows = remember(choice, note, backdrops, covers, videos) {
+        ForkCanvasChoices.rows(choice, note, isSong = true, canvasOn = backdrops,
+            order = ForkCanvasSettings.effectiveOrder(backdrops, covers).filter { it != ForkCanvasRules.Source.YOUTUBE_MUSIC_VIDEO || videos })
     }
-    if (!choice.off && choice.video != null) {
-        DesktopMenuRow(Icons.Rounded.ContentCut, ForkCanvasChoices.PART_TITLE) {
-            ForkCanvasChoices.nextPart(song.videoId)
-            onDismiss()
+    var open by remember(song.videoId) { mutableStateOf<String?>(null) }
+    fun flip(list: String) { open = if (open == list) null else list }
+
+    @Composable
+    fun switchRow(source: ForkCanvasRules.Source, shown: Boolean, checked: Boolean) {
+        if (!shown) return
+        DesktopMenuRow(
+            if (source == ForkCanvasRules.Source.APPLE_MUSIC) Icons.Rounded.Animation else Icons.Rounded.Wallpaper,
+            ForkCanvasChoices.switchTitle(source),
+            value = if (checked) "On" else "Off",
+        ) { ForkCanvasChoices.toggle(song.videoId, source, rows) }
+    }
+    switchRow(ForkCanvasRules.Source.YOUTUBE_MUSIC_VIDEO, rows.loopSwitch, rows.loopChecked)
+    switchRow(ForkCanvasRules.Source.SPOTIFY, rows.spotifySwitch, rows.spotifyChecked)
+    switchRow(ForkCanvasRules.Source.APPLE_MUSIC, rows.coverSwitch, rows.coverChecked)
+
+    if (rows.pickPart) {
+        DesktopMenuRow(Icons.Rounded.ContentCut, ForkCanvasChoices.PART_TITLE, selected = open == "part") { flip("part") }
+        val start = note.startMs
+        if (open == "part" && start != null) {
+            (listOf(start) + note.others.take(ForkCanvasChoices.MAX_OTHER_PARTS)).forEach { ms ->
+                DesktopMenuRow(
+                    Icons.Rounded.PlayCircle,
+                    ForkBestParts.clock(ms),
+                    value = if (ms == start) ForkCanvasChoices.PART_PLAYING else "",
+                    selected = ms == start,
+                ) {
+                    ForkCanvasChoices.pickPart(song.videoId, ms)
+                    onDismiss()
+                }
+            }
         }
     }
-    if (!choice.off && backdrops && videos && ForkMostReplayed.eligible(song.videoId)) {
-        DesktopMenuRow(Icons.Rounded.VideoLibrary, ForkCanvasChoices.VIDEO_TITLE, selected = picking) { picking = !picking }
-        if (picking) {
+    if (rows.pickVideo) {
+        DesktopMenuRow(Icons.Rounded.VideoLibrary, ForkCanvasChoices.VIDEO_TITLE, selected = open == "video") { flip("video") }
+        if (open == "video") {
             val found by produceState<List<ForkMusicVideoMatch.Video>?>(null, song.videoId) {
                 value = withContext(Dispatchers.IO) {
-                    runCatching {
-                        ForkVideoCanvas.choices(song.title, song.artist, ForkMusicVideoMatch.lengthOf(song.durationText), choice.rejected)
-                    }.getOrDefault(emptyList())
+                    runCatching { ForkVideoCanvas.choices(song.title, song.artist, choice.rejected) }.getOrDefault(emptyList())
                 }
             }
             val list = found
@@ -71,43 +107,48 @@ internal fun ForkCanvasMenuRowsDesktop(song: Song, onDismiss: () -> Unit) {
                 list == null -> DesktopMenuRow(Icons.Rounded.VideoLibrary, "Looking for videos", busy = true, enabled = false) {}
                 list.isEmpty() -> DesktopMenuRow(Icons.Rounded.VideoLibrary, ForkCanvasChoices.NO_VIDEOS, enabled = false) {}
                 else -> list.forEach { v ->
-                    DesktopMenuRow(
-                        Icons.Rounded.PlayCircle,
-                        v.title,
-                        value = v.lengthSec.takeIf { it > 0 }?.let { ForkBestParts.clock(it * 1000) }.orEmpty(),
-                        selected = v.id == choice.video,
-                    ) {
-                        ForkCanvasChoices.pick(song.videoId, v.id)
-                        onDismiss()
+                    androidx.compose.foundation.layout.Box(Modifier.padding(horizontal = 8.dp)) {
+                        ForkVideoChoiceRow(v, inUse = v.id == note.video, accent = MaterialTheme.colorScheme.primary) {
+                            onDismiss()
+                            if (v.id == note.video) return@ForkVideoChoiceRow
+                            ForkNotice.show(ForkCanvasChoices.TRYING)
+                            pickScope.launch {
+                                if (!ForkDesktopCanvasSources.tryPick(song, v.id)) ForkNotice.show(ForkCanvasChoices.CANT_LOOP)
+                            }
+                        }
                     }
                 }
             }
         }
     }
-    if (!choice.off && choice.video != null) {
+    if (rows.use) {
+        DesktopMenuRow(Icons.Rounded.SwapHoriz, ForkCanvasChoices.USE_TITLE, value = ForkCanvasChoices.useName(rows.showing), selected = open == "use") { flip("use") }
+        if (open == "use") {
+            (rows.useOptions + listOf<ForkCanvasRules.Source?>(null)).forEach { source ->
+                DesktopMenuRow(Icons.Rounded.PlayCircle, ForkCanvasChoices.useName(source), selected = source != null && source == rows.showing) {
+                    ForkCanvasChoices.setUse(song.videoId, source)
+                    open = null
+                }
+            }
+        }
+    }
+    if (rows.notThisVideo) {
         DesktopMenuRow(Icons.Rounded.Block, ForkCanvasChoices.NOT_THIS_TITLE) {
-            ForkCanvasChoices.reject(song.videoId)
+            ForkDesktopCanvasSources.rejectVideo(song)
             onDismiss()
         }
     }
 
-    var mineVersion by remember { mutableIntStateOf(0) }
-    val mine = remember(song.videoId, mineVersion) { ForkBestParts.mine(song.videoId) }
-    DesktopMenuRow(Icons.Rounded.Flag, ForkBestParts.SET_MINE) {
-        ForkMostReplayedDesktop.positionOf(song.videoId)?.let { at ->
-            ForkBestParts.setMine(song.videoId, at)
-            mineVersion++
-            ForkNotice.show("${ForkBestParts.CHIP_MINE}: ${ForkBestParts.clock(at)}")
-        }
+    // Your best part (§14 rule 5): the editor, drawn by the player.
+    val mine = remember(song.videoId, generation) { ForkBestParts.mine(song.videoId) }
+    DesktopMenuRow(Icons.Rounded.Whatshot, ForkBestParts.EDITOR_TITLE, value = mine?.let(ForkBestParts::clock).orEmpty()) {
+        ForkBestParts.openEditor(song.videoId)
         onDismiss()
     }
-    if (mine != null) {
-        DesktopMenuRow(Icons.Rounded.StarOutline, ForkBestParts.CLEAR_MINE, value = ForkBestParts.clock(mine)) {
-            ForkBestParts.setMine(song.videoId, null)
-            mineVersion++
-        }
-    }
 }
+
+/** Where a picked video is cut: outlives the menu, which closes on the click. */
+private val pickScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
 /** "Play from the best part", in any song's menu beside "Play next" (Prism's row). */
 @Composable

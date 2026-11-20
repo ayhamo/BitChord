@@ -41,7 +41,19 @@ object ForkMostReplayedPhone {
     fun Attach(controller: Player?) {
         DisposableEffect(controller) {
             ForkMostReplayedPhone.controller = controller
+            com.music.bitchord.data.canvas.ForkBestParts.player = bestPartPlayer // "Your best part" seeks and reads the position here
             onDispose { if (ForkMostReplayedPhone.controller === controller) ForkMostReplayedPhone.controller = null }
+        }
+    }
+
+    /** "Your best part"'s Now and Listen from here (canvas.md §14 rule 5), through the controller. */
+    private val bestPartPlayer = object : com.music.bitchord.data.canvas.ForkBestParts.Player {
+        override fun positionOf(songId: String): Long? = ForkMostReplayedPhone.positionOf(songId)
+        override fun seek(songId: String, ms: Long) {
+            val c = controller ?: return
+            if (c.currentMediaItem?.mediaId != songId || ListenTogether.state.value.controlsLocked) return
+            c.seekTo(ms)
+            if (!c.isPlaying) c.play()
         }
     }
 
@@ -78,17 +90,18 @@ object ForkMostReplayedPhone {
     fun playFromBestPart(context: Context, songId: String, durationMs: Long, playNext: () -> Unit) {
         val app = context.applicationContext
         scope.launch {
-            val ms = withContext(Dispatchers.IO) { runCatching { ForkMostReplayed.bestPart(songId, durationMs) }.getOrNull() }
-            if (ms == null) {
-                Toast.makeText(app, com.music.bitchord.data.canvas.ForkBestParts.NONE_KNOWN, Toast.LENGTH_SHORT).show()
-                return@launch
+            // canvas.md §14 rule 6: 5 s to find it; without one, the song from the start, saying so.
+            val found = kotlinx.coroutines.withTimeoutOrNull(com.music.bitchord.data.canvas.ForkBestParts.FIND_MS) {
+                withContext(Dispatchers.IO) { runCatching { ForkMostReplayed.bestPart(songId, durationMs) }.getOrNull() }
             }
+            if (found == null) Toast.makeText(app, com.music.bitchord.data.canvas.ForkBestParts.FROM_START, Toast.LENGTH_SHORT).show()
             if (ListenTogether.state.value.controlsLocked) {
                 Toast.makeText(app, "Only the host can seek in this party", Toast.LENGTH_SHORT).show()
                 return@launch
             }
             val c = controller ?: return@launch
-            if (c.currentMediaItem?.mediaId == songId) { c.seekTo(ms); return@launch }
+            if (c.currentMediaItem?.mediaId == songId) { found?.let(c::seekTo); return@launch }
+            val ms = found ?: 0L
             playNext()
             // The queue is changed by the service; wait (up to 5 s) for the song to be next.
             repeat(25) {

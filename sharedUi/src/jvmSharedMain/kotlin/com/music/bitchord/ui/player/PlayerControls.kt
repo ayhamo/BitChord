@@ -242,6 +242,7 @@ internal fun PlayerScrubber(
                 // so pull the labels back up under it.
                 .offset(y = -SCRUBBER_LABEL_LIFT),
         ) {
+            ForkBestPartMark(durationMs) // fork: the best part's mark under the bar (canvas.md §14 rule 4)
             // Drawn like the artist line: the same white, added the same way.
             val timeColor = chromeWhite(0.55f)
             Row(

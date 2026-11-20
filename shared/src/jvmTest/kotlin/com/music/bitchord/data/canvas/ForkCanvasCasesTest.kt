@@ -367,6 +367,99 @@ class ForkCanvasCasesTest {
                     else -> check(g, c, false, "unknown kind ${c.str("kind")}")
                 }
             }
+            // §6 rule 11: the chorus from synced lyrics (Prism's BestPart.chorusMs).
+            "chorus" -> {
+                val i = c.obj("input")
+                val lines = i.arr("lines").map { l ->
+                    val o = l as JsonObject
+                    com.music.bitchord.data.lyrics.LyricLine(o.lng("timeMs"), o.str("text").orEmpty())
+                }
+                val got = ForkBestParts.chorusMs(lines, i.lng("durationMs"))
+                check(g, c, if (isNull(want)) got == null else got == Math.round(num(want)), got)
+            }
+            // §5 rule 9: a title saying it is something else (Prism's ClipGate.titleSays).
+            "titleGate" -> {
+                val i = c.obj("input")
+                val got = ForkClipGate.titleSays(i.str("songTitle").orEmpty(), i.str("videoTitle").orEmpty())
+                check(g, c, got == (want as JsonPrimitive).booleanOrNull, got)
+            }
+            // §5 rules 7-12 on a fake network: the finder's order (ForkVideoCanvas.findOn).
+            "clipFind" -> {
+                val i = c.obj("input")
+                val song = i.obj("song")
+                val videos = i.obj("videos")
+                fun video(id: String): ForkMusicVideoMatch.Video {
+                    val v = videos[id] as? JsonObject
+                    return ForkMusicVideoMatch.Video(id, v?.str("title").orEmpty(), "", 0, v?.str("type"))
+                }
+                val gate = { v: ForkMusicVideoMatch.Video, own: Boolean ->
+                    val m = videos[v.id] as JsonObject
+                    when {
+                        !own && !ForkClipGate.official(m.str("type")) -> ForkVideoCanvas.Gated.Refused(ForkClipGate.Refusal.NOT_OFFICIAL)
+                        !own && ForkClipGate.titleSays(song.str("title").orEmpty(), m.str("title").orEmpty()) -> ForkVideoCanvas.Gated.Refused(ForkClipGate.Refusal.TITLE)
+                        m.str("status") != "OK" -> ForkVideoCanvas.Gated.Refused(ForkClipGate.Refusal.RESTRICTED)
+                        m.bool("still") -> ForkVideoCanvas.Gated.Refused(ForkClipGate.Refusal.STILL)
+                        else -> ForkVideoCanvas.Gated.Pass(v.id)
+                    }
+                }
+                // the song's choice as clip() reads it: a picked video turned away later is not asked
+                val choice = song["choice"] as? JsonObject
+                val rejected = (choice?.get("rejected") as? JsonArray)?.map { (it as JsonPrimitive).content }.orEmpty()
+                val lyricFirst = i.bool("lyricFirst") // the search found no music video, only the lyric one
+                val got = ForkVideoCanvas.findOn(
+                    songTitle = song.str("title").orEmpty(),
+                    isSong = !song.bool("notASong"),
+                    picked = choice?.str("picked")?.takeIf { it !in rejected }?.let(::video),
+                    first = i.str("first")?.takeIf { !lyricFirst }?.let(::video),
+                    otherSearch = { i.arr("others").map { video((it as JsonPrimitive).content) } },
+                    lyricFallback = { i.str("first")?.takeIf { lyricFirst }?.let(::video) },
+                    gate = gate,
+                    onlyPicked = choice?.bool("only") == true,
+                )
+                val ex = want as JsonObject
+                val ok = got.videoId == ex.str("videoId") && got.value == ex.str("videoId") &&
+                    got.why?.name == ex.str("why") && got.otherSearches.toLong() == ex.lng("otherSearches")
+                check(g, c, ok, "${got.videoId} ${got.why} ${got.otherSearches}")
+            }
+            // §14 rule 2: the snap (Prism's BestPart.snap).
+            "snap" -> {
+                val i = c.obj("input")
+                val tempo = (i["tempo"] as? JsonObject)?.let { t -> ForkBestParts.Tempo(t.num("bpm"), t.bool("steady"), t.lng("firstBeatMs")) }
+                val got = ForkBestParts.snap(i.lng("targetMs"), i.arr("lineStarts").map { Math.round(num(it)) }, tempo)
+                check(g, c, got == Math.round(num(want)), got)
+            }
+            // §14 rule 3: when the Best part button shows (Prism's BestPartButton.shows).
+            "bestPartButton" -> {
+                val i = c.obj("input")
+                val got = ForkBestParts.shows(i.lng("atMs"), i.lng("startMs"), i.lng("knownAtMs"))
+                check(g, c, got == (want as JsonPrimitive).booleanOrNull, got)
+            }
+            // §15 rules 1, 3, 5, 8: which of the song menu's canvas rows show.
+            "songMenu" -> {
+                val i = c.obj("input")
+                val m = ForkCanvasChoices.menu(i.bool("canvasOn"), i.bool("useVideos"), i.bool("isSong"), i.bool("hasLoop"), i.bool("loopOff"), i.bool("loopShows"))
+                val ex = want as JsonObject
+                val ok = m.canvasSwitch == ex.bool("canvasSwitch") && m.pickVideo == ex.bool("pickVideo") &&
+                    m.pickPart == ex.bool("pickPart") && m.notThisVideo == ex.bool("notThisVideo")
+                check(g, c, ok, m)
+            }
+            // §15 rule 4: the parts after a pick (Prism's ClipRepository.pickPart).
+            "pickPart" -> {
+                val i = c.obj("input")
+                val (start, others) = ForkCanvasChoices.pickPart(i.lng("startMs"), i.arr("others").map { Math.round(num(it)) }, i.lng("pickMs"))
+                val ex = want as JsonObject
+                check(g, c, start == ex.lng("startMs") && others == ex.arr("others").map { Math.round(num(it)) }, "$start $others")
+            }
+            // §15 rule 5: the videos "Pick another video" offers.
+            "videoChoices" -> {
+                val i = c.obj("input")
+                val got = ForkCanvasChoices.videoChoices(
+                    i.str("pairing"),
+                    i.arr("found").map { (it as JsonPrimitive).content },
+                    i.arr("rejected").map { (it as JsonPrimitive).content }.toSet(),
+                ) { it }
+                check(g, c, got == (want as JsonArray).map { (it as JsonPrimitive).content }, got)
+            }
             else -> check(g, c, false, "unknown group")
         }
     }
