@@ -98,9 +98,14 @@ internal object ForkLoudness {
 /** The arithmetic, apart from settings and lookups so it can be tested. */
 internal object ForkLoudnessMath {
 
-    /** The phone's bounds (`MIN_LOUDNESS_GAIN_MB` / `MAX_LOUDNESS_GAIN_MB`): -15 dB to +3 dB. */
+    /**
+     * -15 dB to 0 dB: the phone's floor (`MIN_LOUDNESS_GAIN_MB`), and a cut only at the top. The phone's
+     * +3 dB ceiling went with the rulebook's level rule (5ece86d) for YouTube's figure, and the owner's
+     * rule (2026-11-20) takes it off the Navidrome ReplayGain and the file's RG/R128 tags too: never a
+     * boost, whichever figure sets the level.
+     */
     const val MIN_GAIN_DB = -15.0
-    const val MAX_GAIN_DB = 3.0
+    const val MAX_GAIN_DB = 0.0
 
     /**
      * ReplayGain 2.0 levels to -18 LUFS; YouTube's figure is against about -14 LUFS. Raised by the difference so
@@ -111,7 +116,7 @@ internal object ForkLoudnessMath {
     /** R128 tags (Opus) level to -23 LUFS. */
     const val R128_TO_YOUTUBE_DB = 9.0
 
-    /** The gain in dB, bounded; null when no source has a figure. */
+    /** The gain in dB, bounded to a cut ([MIN_GAIN_DB]..[MAX_GAIN_DB]); null when no source has a figure. */
     fun gainDb(serverReplayGainDb: Double?, youtubeLoudnessDb: Double?, tagGainDb: Double?): Double? {
         val raw = serverReplayGainDb?.takeIf { it.isFinite() }?.plus(REPLAYGAIN_TO_YOUTUBE_DB)
             ?: youtubeLoudnessDb?.takeIf { it.isFinite() }?.let { com.music.bitchord.data.innertube.ForkLoudnessCut.gainDb(it) } // a cut only, as on the phone

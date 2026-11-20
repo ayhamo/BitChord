@@ -1427,6 +1427,7 @@ class PlaybackService : MediaLibraryService() {
                 mediaIdIn(dataSpec.uri)?.let { id -> runBlocking(about) { DirectSourceGate.awaitOpen(id) } }
                 val directYouTube =
                     dataSpec.uri.getQueryParameter(DIRECT_YOUTUBE_PARAMETER) == "1"
+                if (!directYouTube) mediaIdIn(dataSpec.uri)?.let { id -> runBlocking(about) { com.music.bitchord.fork.ForkReadAhead.awaitOpen(id, row = true) } } // fork: the rulebook's 25 s read-ahead (8.1.3) in normal mode too
                 val stream = runBlocking(about) {
                     withTimeout(RESOLVE_TIMEOUT_MS) {
                         if (directYouTube) {
@@ -1685,6 +1686,7 @@ class PlaybackService : MediaLibraryService() {
                     .setHttpRequestHeaders(headers)
                     .build()
             }
+            runBlocking(about) { com.music.bitchord.fork.ForkReadAhead.awaitOpen(videoId) } // fork: no addon /stream for the next song before its 25 s window (rulebook 8.1.3)
             val won = runBlocking(about) {
                 resolveWithModulePriority(
                     videoId = videoId,
@@ -4728,6 +4730,7 @@ class PlaybackService : MediaLibraryService() {
         // answers are discarded. The manifest is intentionally unaffected.
         SourceRegistry.clearCompletedAddonTrackCalls()
         QualityUpgrade.askByHand(mediaId)
+        com.music.bitchord.fork.ForkUpgradeByHand.asked(mediaId, player.currentMediaItem?.localConfiguration?.uri) // fork: its cached files and choice go too (rulebook 8.1.7)
         TrackLog.d("BitChord", "upgrade asked for by hand for $mediaId", about = mediaId)
         lookForBetterCopy(player)
     }
@@ -6661,6 +6664,7 @@ class PlaybackService : MediaLibraryService() {
             if (crossfade?.isTransitioning() == true) spare?.currentMediaItem?.mediaId?.let(::add)
         }
         if (DirectSourceGate.onPlaying(audible)) AudioCache.cancelDirect()
+        com.music.bitchord.fork.ForkReadAhead.drive(exoPlayer, audible, exoPlayer.currentMediaItem?.mediaId?.let { crossfade?.plannedTransitionFor(it) }, SystemClock.elapsedRealtime() - lastSeekAt >= SEEK_SETTLE_MS) // fork: normal mode's 25 s read-ahead window (rulebook 8.1.3)
         if (!DirectSourceGate.isActive() || !exoPlayer.isPlaying) return
         if (SystemClock.elapsedRealtime() - lastSeekAt < SEEK_SETTLE_MS) return
         val current = exoPlayer.currentMediaItem ?: return

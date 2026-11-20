@@ -2,6 +2,14 @@
 
 Snapshot for picking the work up again. Plan: `FORK_PLAN.md`. Every touched upstream line: `FORK.md`.
 
+## Done 2026-11-20 (not committed): addon rulebook batch 2 (extension a6322d5, 37ee7b4, a6edfe9, 41c4acc)
+
+- **Lossy floor and pass (8.2.1), phone and PC** (`ForkAddonFloor`, shared): an addon's lossy copy under YouTube's kbps + 96 (160 when unknown) doesn't win the race; once a lossy addon copy plays, every other addon is asked once for lossless; a cached addon copy below the tier asked (phone: a 16-bit `#alt` file at the top tier) asks only the addons above it. pick-cases qualityRank 7/7, floorVerdict 7/7, upgradeWanted 7/7.
+- **25 s read-ahead (8.1.3)**: the phone's normal mode now holds the next song's race (no addon `/stream`) until 25 s before the transition, like Direct mode (`ForkReadAhead`); the PC arms 25 s ahead (was 15 s).
+- **Upgrade quality (8.1.7)**: the phone also drops the song's cache entries and choice once it stops playing (`ForkUpgradeByHand`). **Quality picker (8.4.2)**: upstream's picker on both apps already followed the rule; the phone's audio cache key now carries the pick (`ForkAddonQualityKey`).
+- **PC level**: never a boost (`MAX_GAIN_DB` 0): Navidrome ReplayGain and file tags cut only. 41c4acc changes nothing for BitChord (it streams; `loudnessDb` cut only).
+- Not tried on a device or the PC yet: the held next-song race in normal mode (gapless and crossfade into an addon song), the cached 16-bit pass, the picker-keyed cache, the PC's pass after a lossy addon copy.
+
 ## Done 2026-11-20 (not committed): level cut only (spec 5ece86d)
 
 - YouTube's `loudnessDb` now only turns a loud song down; a quiet one is no longer raised (phone `loudnessGainMb`, PC `ForkLoudnessMath.gainDb`, shared `ForkLoudnessCut`). pick-cases `loudnessGain` 6/6. The PC's Navidrome ReplayGain and file tags can still raise a song.

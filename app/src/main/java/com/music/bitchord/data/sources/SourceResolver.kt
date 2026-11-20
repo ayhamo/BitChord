@@ -293,7 +293,7 @@ object SourceResolver {
         val active = SourceRegistry.activeForPlayback()
         val youtube = active.firstOrNull { it.kind == SourceKind.YOUTUBE } ?: return null
         val request = requestForNow()
-        val (source, stream) = bestAcross(rankedAbove(youtube.configId, active), target, request)
+        val (source, stream) = bestAcross(rankedAbove(youtube.configId, active), target, request, accept = com.music.bitchord.fork.ForkAddonFloorPhone::raceAccepts) // fork: the rulebook's lossy floor is part of the race (8.2.1)
             ?: return null
         // Says what was found, not what the caller will do with it. This
         // line used to read "substituted" unconditionally, including for
@@ -383,6 +383,7 @@ object SourceResolver {
                 driftSec = upgradeSlackSec(),
                 lengthLater = length?.let { pending -> { pending.await() } },
                 checkFileLength = true,
+                accept = com.music.bitchord.fork.ForkAddonFloorPhone::raceAccepts, // fork: the rulebook's lossy floor (8.2.1)
             )
         } finally {
             length?.cancel()
@@ -515,6 +516,7 @@ object SourceResolver {
         target: TrackMatcher.Target,
         playing: StreamFormat? = null,
         servedBy: String? = null,
+        forkLook: com.music.bitchord.fork.ForkAddonFloorPhone.Look? = null, // fork: the rulebook's pass after a copy plays (8.2.1)
     ): SourceStream? {
         if (target.title.isBlank() || target.durationSec == null || target.isVideo) return null
         val request = requestForNow()
@@ -549,7 +551,7 @@ object SourceResolver {
         // and the seam then landed mid-song rather than near its start. Raced,
         // the same swap happens inside a second.
         val (source, chosen) = bestAcross(
-            rankedAbove(youtube.configId, active).filterNot { it.configId == servedBy },
+            com.music.bitchord.fork.ForkAddonFloorPhone.sources(forkLook, rankedAbove(youtube.configId, active), servedBy), // fork: was rankedAbove(…).filterNot { it.configId == servedBy }
             target,
             request,
             waitForAll = true,
@@ -557,7 +559,7 @@ object SourceResolver {
             requireSharedArtist = true,
             driftSec = upgradeSlackSec(),
         ) { candidate, stream ->
-            worthSwapping(stream.format, playing).also { worth ->
+            com.music.bitchord.fork.ForkAddonFloorPhone.worth(forkLook, stream.format, playing) { worthSwapping(stream.format, playing) }.also { worth -> // fork: was worthSwapping(stream.format, playing)
                 // Named rather than skipped silently. This is the one refusal
                 // in the upgrade path that discards a stream already found,
                 // matched and length-checked, and a silent skip reads in the log

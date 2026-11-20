@@ -232,6 +232,58 @@ class ForkRulebookTest {
         report("loudnessGain", cases.size, failures)
     }
 
+    // ── The lossy floor and the pass (protocol.md 8.2.1, a6322d5): ForkAddonFloor ──
+
+    private fun factsOf(st: JsonObject) = ForkAddonFloor.Facts(
+        codec = st["codec"]?.textOrNull(),
+        tier = st["tier"]?.textOrNull(),
+        bitDepth = st["bitDepth"]?.numOrNull()?.toInt(),
+        sampleRate = st["sampleRate"]?.numOrNull()?.toInt(),
+        bitrate = st["bitrate"]?.numOrNull()?.toInt(),
+    )
+
+    @Test
+    fun qualityRankCases() {
+        val cases = read("pick-cases.json").getValue("qualityRank").jsonArray.map { it.jsonObject }
+        val failures = cases.mapNotNull { c ->
+            val got = ForkAddonFloor.qualityRank(factsOf(c.getValue("stream").jsonObject))
+            val want = c.getValue("expect").jsonPrimitive.content.toInt()
+            "${c.str("name")}: got $got, want $want".takeIf { got != want }
+        }
+        report("qualityRank", cases.size, failures)
+    }
+
+    /** `expect` is true (kept) or the refusal's text, which [ForkAddonFloor.floorVerdict] gives word for word. */
+    @Test
+    fun floorVerdictCases() {
+        val cases = read("pick-cases.json").getValue("floorVerdict").jsonArray.map { it.jsonObject }
+        val failures = cases.mapNotNull { c ->
+            val got = ForkAddonFloor.floorVerdict(factsOf(c.getValue("stream").jsonObject), c["ytKbps"]?.numOrNull()?.toInt())
+            val e = c.getValue("expect").jsonPrimitive
+            val want = if (e.booleanOrNull == true) null else e.content
+            "${c.str("name")}: got ${got ?: true}, want ${want ?: true}".takeIf { got != want }
+        }
+        report("floorVerdict", cases.size, failures)
+    }
+
+    @Test
+    fun upgradeWantedCases() {
+        val cases = read("pick-cases.json").getValue("upgradeWanted").jsonArray.map { it.jsonObject }
+        val failures = cases.mapNotNull { c ->
+            val got = ForkAddonFloor.upgradeWanted(
+                factsOf(c.getValue("stream").jsonObject),
+                c["tier"]?.textOrNull(),
+                c["cached"]?.flagOrNull() ?: false,
+            )
+            val e = c["expect"]
+            val want = (e as? JsonObject)?.let {
+                ForkAddonFloor.Pass(it["aboveOnly"]?.flagOrNull() ?: false, it.getValue("minRank").jsonPrimitive.content.toInt())
+            }
+            "${c.str("name")}: got $got, want $want".takeIf { got != want }
+        }
+        report("upgradeWanted", cases.size, failures)
+    }
+
     private fun report(what: String, n: Int, failures: List<String>) {
         println("$what: ${n - failures.size}/$n pass")
         if (failures.isNotEmpty()) fail("$what: ${failures.size} of $n differ\n" + failures.joinToString("\n"))

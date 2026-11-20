@@ -29,9 +29,19 @@ class ForkLoudnessTest {
     fun serverFirstThenYoutubeThenTags() {
         near(-4.0, ForkLoudnessMath.gainDb(-8.0, 5.0, 1.0)) // ReplayGain -8 dB to -18 LUFS is -4 dB to -14
         near(-5.0, ForkLoudnessMath.gainDb(null, 5.0, 1.0))
-        near(1.0, ForkLoudnessMath.gainDb(null, null, 1.0))
+        near(0.0, ForkLoudnessMath.gainDb(null, null, 1.0)) // a tag that would raise the song: never a boost
+        near(-2.0, ForkLoudnessMath.gainDb(null, null, -2.0))
         assertNull(ForkLoudnessMath.gainDb(null, null, null))
         near(-5.0, ForkLoudnessMath.gainDb(Double.NaN, 5.0, null))
+    }
+
+    /** The owner's rule (2026-11-20): no figure raises a song, the server's ReplayGain and the tags included. */
+    @Test
+    fun neverABoostFromAnyFigure() {
+        near(0.0, ForkLoudnessMath.gainDb(-1.0, null, null)) // ReplayGain -1 dB is +3 dB to YouTube's level: held at 0
+        near(0.0, ForkLoudnessMath.gainDb(2.0, 5.0, null)) // the server's figure still wins, and is held at 0
+        near(-6.0, ForkLoudnessMath.gainDb(-10.0, null, null))
+        near(0.0, ForkLoudnessMath.gainDb(null, null, ForkLoudnessMath.r128Tag("-1024"))) // R128 -4 dB is +5 dB here
     }
 
     @Test

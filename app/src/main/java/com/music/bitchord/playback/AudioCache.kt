@@ -466,7 +466,7 @@ object AudioCache {
                 when {
                     rendition != null -> "$videoId#$rendition"
                     SourceResolver.canSubstituteForYouTube() ->
-                        "$videoId#alt${atmosKeySuffix()}".let { completeSibling(videoId, it) ?: it }
+                        "$videoId#alt${atmosKeySuffix()}${com.music.bitchord.fork.ForkAddonQualityKey.suffix()}".let { completeSibling(videoId, it) ?: it } // fork: the addon quality picks are part of the key (rulebook 8.4.2)
                     else -> completeSibling(videoId, videoId) ?: videoId
                 }
             }
@@ -483,7 +483,7 @@ object AudioCache {
                     // shared one may hold the Atmos mix the addon used to send
                     // for it — see [SourceResolver.MIX_PARAM].
                     val stereo = uri.getQueryParameter(SourceResolver.MIX_PARAM) == SourceResolver.MIX_STEREO
-                    val base = if (stereo) "$source|$track#stereo" else "$source|$track"
+                    val base = (if (stereo) "$source|$track#stereo" else "$source|$track") + com.music.bitchord.fork.ForkAddonQualityKey.rowSuffix(source) // fork: the addon's quality pick is part of the key (rulebook 8.4.2)
                     QualityUpgrade.cacheTag(uri)?.let { "$base#$it" } ?: base
                 } else {
                     null
@@ -552,6 +552,8 @@ object AudioCache {
      * this one, and a track replayed from disk after a restart is never
      * resolved at all.
      */
+    internal fun forkMetaOf(uri: Uri, name: String): String? = if (!::cache.isInitialized) null else runCatching { cache.getContentMetadata(keyFactory.buildCacheKey(DataSpec(uri))).get(name, null as String?) }.getOrNull() // fork: ForkAddonFloorPhone reads which addon a cached copy came from
+
     fun originOf(uri: Uri): Origin? {
         if (!::cache.isInitialized || uri.scheme != "bitchord") return null
         val key = keyFactory.buildCacheKey(DataSpec(uri))
@@ -790,6 +792,7 @@ object AudioCache {
                     if (usedByPlayback) mutations.set(META_PLAYBACK, "1") else mutations.set(META_ANALYSIS, "1")
                     if (played) mutations.set(META_PLAYED, "1")
                     describe(mutations, song, spec.uri)
+                    com.music.bitchord.fork.ForkAddonFloorPhone.tagSource(mutations, spec.uri, mediaId) // fork: which addon wrote it (rulebook 8.2.1's pass after a cached copy)
                 },
             )
         }.onFailure {

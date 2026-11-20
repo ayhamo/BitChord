@@ -380,7 +380,7 @@ internal object DesktopSourceRegistry {
         val lookup = scope.async {
             withTimeoutOrNull(SUBSTITUTE_TIMEOUT_MS) { firstSubstitute(higher, song, quality, forkDirect) } // fork: forkDirect
         }
-        val fallback = scope.async { youtube.resolve(song, quality).getOrNull() }
+        val fallback = scope.async { youtube.resolve(song, quality).getOrNull().also(ForkAddonFloorPc::seenYouTube) } // fork: YouTube's bitrate for the rulebook's lossy floor
 
         val quick: DesktopStream? = if (ForkDirectSource.active()) ForkDirectSource.awaitAddon(lookup) else select { // fork: Direct Source Stream waits for the addons
             lookup.onAwait { it }
@@ -421,6 +421,7 @@ internal object DesktopSourceRegistry {
         // fork (PC-Continued 18b6b3ae): with Atmos wanted a lossless copy still leaves the mix question
         // open, and every other source is asked, whatever its rung (ForkAtmos)
         val chasingAtmos = ForkAtmos.wanted() && !ForkAtmos.isAtmos(playing)
+        ForkAddonFloorPc.lossyPass(playing, song.videoId, candidates, quality) { it.config }?.let { (sources, minRank) -> return if (sources.isEmpty()) null else scope.async { withTimeoutOrNull(UPGRADE_TIMEOUT_MS) { firstSubstitute(sources, song, quality, forkMinRank = minRank) } } } // fork: the rulebook's lossless pass after a lossy addon copy (8.2.1)
         if (playing.format.isLossless && !chasingAtmos) return null
         val winnerRank = configs().firstOrNull { it.id == playing.sourceId }?.kind?.rank
             ?: DesktopSourceKind.YOUTUBE.rank
@@ -445,10 +446,11 @@ internal object DesktopSourceRegistry {
         song: Song,
         quality: String?,
         forkDirect: Boolean = false, // fork: held to Direct Source Stream's checks, see openBest
+        forkMinRank: Int = 0, // fork: the rulebook's pass takes only copies this high (ForkAddonFloorPc)
     ): DesktopStream? = coroutineScope {
         val running = sources
             .map { source ->
-                async { openBest(source, song, quality, forkDirect) }
+                async { openBest(source, song, quality, forkDirect, forkMinRank = forkMinRank) } // fork: forkDirect, forkMinRank
             }
             .toMutableList()
         // fork (PC-Continued 18b6b3ae): with Atmos wanted, a stereo copy that answers first is held for
@@ -535,6 +537,7 @@ internal object DesktopSourceRegistry {
         val playingRank = configs().firstOrNull { it.id == playing?.sourceId }?.kind?.rank
             ?: DesktopSourceKind.YOUTUBE.rank
         val forkPin = ForkSourcePins.of(song.videoId) // fork: an upgrade from a source the listener turned down is not one they asked for
+        ForkAddonFloorPc.lossyPass(playing, song.videoId, playbackAdapters(quality).filter { forkPin == null || it.config.id == forkPin }, quality) { it.config }?.let { (sources, minRank) -> return if (sources.isEmpty()) null else withTimeoutOrNull(UPGRADE_TIMEOUT_MS) { firstSubstitute(sources, song, quality, forkMinRank = minRank) } } // fork: the rulebook's lossless pass after a lossy addon copy (8.2.1)
         val better = playbackAdapters(quality).filter {
             (forkPin == null || it.config.id == forkPin) && // fork
             it.config.kind != DesktopSourceKind.YOUTUBE &&
@@ -562,6 +565,7 @@ internal object DesktopSourceRegistry {
         quality: String?,
         forkDirect: Boolean = false, // fork: v1.9.1's Direct Source Stream checks (ForkDirectSourceCheck)
         forkNoteHandoff: Boolean = true, // fork: false for a download's legs, which would overwrite what played the song
+        forkMinRank: Int = 0, // fork: the rulebook's pass takes only copies this high (ForkAddonFloorPc)
     ): DesktopStream? {
         val matches = source.matches(song).let { if (forkDirect) ForkDirectSourceCheck.strict(source.descriptor.name, it, song) else it } // fork: held to the length tolerance and a credited artist
         if (matches.isEmpty()) {
@@ -576,6 +580,7 @@ internal object DesktopSourceRegistry {
         for (match in ForkDesktopAddonLimits.cachedFirst(source.config, preferred(matches, song, wantsLossless)).take(STREAM_ATTEMPTS)) { // fork: cached rows first within a tier
             val stream = source.resolve(match, quality).getOrNull() ?: continue
             if (!playableHere(source, stream)) continue
+            if (!ForkAddonFloorPc.admits(source.config, stream, forkMinRank, floor = forkNoteHandoff)) continue // fork: the rulebook's lossy floor inside the race, and the pass's rank (8.2.1); a download's legs keep their own rule
             if (forkDirect && ForkDirectSourceCheck.cutShort(source.descriptor.name, match, stream, song)) continue // fork: a preview or cut-off file is not the recording
             if (forkNoteHandoff) ForkHandoffDesktop.noteOpened(song, source.config.id, match.videoId) // fork: which row this source served, for the handoff note
             val served = stream.format

@@ -370,7 +370,7 @@ object QualityUpgrade {
         // an Atmos mix can be replayed from disk, and [cachedFloor] describes it
         // only by bitrate: judged as lossy, it would have a stereo FLAC cut in
         // over the mix the listener chose.
-        if (NerdStats.isLosslessMime(playingMime) || NerdStats.isDolbyAtmosMime(playingMime)) {
+        if ((NerdStats.isLosslessMime(playingMime) || NerdStats.isDolbyAtmosMime(playingMime)) && !com.music.bitchord.fork.ForkAddonFloorPhone.cachedLookWanted(mediaId, uri, playingMime)) { // fork: an addon's cached copy below the tier asked still gets the pass (rulebook 8.2.1)
             asked += mediaId
             // The codec is named because this line is a dead end — the track is
             // in [asked] by now and will never be offered an upgrade again — and
@@ -387,7 +387,7 @@ object QualityUpgrade {
             asked += mediaId
             return false
         }
-        pending[mediaId] = Pending(target, inFlight = null, playing = playing)
+        pending[mediaId] = Pending(target, inFlight = null, playing = com.music.bitchord.fork.ForkAddonFloorPhone.cachedPlaying(mediaId, uri, playingMime, playing)) // fork: the decoder's codec, depth and rate too; was playing = playing
         NerdStats.onLosslessRaceStart(mediaId)
         TrackLog.d(
             TAG,
@@ -515,6 +515,7 @@ object QualityUpgrade {
                 waiting.target.copy(durationSec = effectiveDurationSec),
                 playing = waiting.playing,
                 servedBy = waiting.servedBy,
+                forkLook = com.music.bitchord.fork.ForkAddonFloorPhone.passFor(mediaId, waiting.playing, waiting.servedBy), // fork: the rulebook's pass (8.2.1)
             ).also {
                 found = it
                 if (it != null && needsLosslessFollowUp(it.format)) {

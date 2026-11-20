@@ -2322,7 +2322,7 @@ class DesktopPlaybackEngine(
         } else {
             duration - transitionSecondsFor(song) * 1_000L
         }
-        if (startMs - positionMs > ForkDirectSource.armLeadMs(ADDON_ARM_LEAD_MS)) return // fork: Direct Source Stream's 25 s window
+        if (startMs - positionMs > ForkDirectSource.armLeadMs(com.music.bitchord.data.sources.ForkReadAheadWindow.LEAD_MS)) return // fork: the rulebook's 25 s read-ahead (8.1.3), Direct Source Stream's window too; was ADDON_ARM_LEAD_MS (15 s)
         // Whichever of this thread and a newer [prepareNext] gets there first owns it.
         if (!awaitingArm.compareAndSet(song, null)) return
         DesktopTrackLog.log(
