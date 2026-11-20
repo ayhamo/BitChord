@@ -187,6 +187,7 @@ object SourceResolver {
         album = uri.getQueryParameter("l"),
         isExplicit = uri.getQueryParameter("e")?.let { it == "1" },
         isVideo = uri.getQueryParameter("m") == "1",
+        isrc = ForkAddonStream.songIsrc(uri.getQueryParameter("v")), // fork: ISRC first during playback too (ForkAddonStream.songIsrc)
     )
 
     /**
