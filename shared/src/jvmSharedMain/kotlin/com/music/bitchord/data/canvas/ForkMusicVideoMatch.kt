@@ -55,9 +55,13 @@ object ForkMusicVideoMatch {
     private const val LOOSE_S = 150
     private const val TIGHT_S = 4
 
-    /** The artists named in YouTube Music's artist line ("A & B", "A, B", "A x B", "A feat. B"). */
+    /**
+     * The artists named in YouTube Music's artist line ("A & B", "A, B", "A x B", "A feat. B").
+     * Split on , & × x featuring feat. ft. with ("featuring" before "feat"), never on "and": it is part
+     * of names like "The Head and the Heart" (canvas.md §5 rule 13).
+     */
     fun artists(line: String?): List<String> =
-        line.orEmpty().split(Regex("""(?i)\s*(,|&|\band\b|\bx\b|\bfeat\.?|\bft\.?|\bwith\b)\s*"""))
+        line.orEmpty().split(Regex("""(?i)\s*(,|&|×|\bx\b|\bfeaturing\b|\bfeat\.?|\bft\.?|\bwith\b)\s*"""))
             .filter { norm(it).isNotEmpty() }
             .map { it.trim() }
 

@@ -108,12 +108,14 @@ class ForkLyricsRulesTest {
 
     @Test
     fun json3IsAskedForAndParsed() {
-        assertEquals("https://x/t?v=1&fmt=json3", ForkYouTubeCaptions.json3Url("https://x/t?v=1&fmt=srv3"))
-        assertEquals("https://x/t?v=1&fmt=json3", ForkYouTubeCaptions.json3Url("https://x/t?v=1"))
+        val www = "https://www.youtube.com/api/timedtext?v=1&fmt=json3"
+        assertEquals(www, ForkYouTubeCaptions.json3Url("https://www.youtube.com/api/timedtext?v=1&fmt=srv3"))
+        assertEquals(www, ForkYouTubeCaptions.json3Url("https://music.youtube.com/api/timedtext?v=1"))
+        assertEquals(www, ForkYouTubeCaptions.json3Url("/api/timedtext?v=1"))
         val lines = ForkYouTubeCaptions.parseJson3(
-            """{"events":[{"tStartMs":1000,"dDurationMs":2000,"segs":[{"utf8":"♪ hello"}]},{"tStartMs":500,"segs":[{"utf8":"\n"}]}]}""",
+            """{"events":[{"tStartMs":1000,"dDurationMs":2000,"segs":[{"utf8":"♪ hello ♪ there\n♫"}]},{"tStartMs":500,"segs":[{"utf8":"\n"}]}]}""",
         )
-        assertEquals(listOf(LyricLine(1_000, "hello", sungUntilMs = 3_000)), lines)
+        assertEquals(listOf(LyricLine(1_000, "hello there", sungUntilMs = 3_000)), lines)
         assertNull(ForkYouTubeCaptions.parseJson3("{}"))
     }
 }

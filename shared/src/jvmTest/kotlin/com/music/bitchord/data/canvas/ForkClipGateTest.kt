@@ -59,4 +59,11 @@ class ForkClipGateTest {
         assertEquals(emptyList(), ForkMusicVideoMatch.candidates("Song", listOf("Artist"), 200, listOf(lyric)))
         assertEquals(listOf(lyric), ForkMusicVideoMatch.candidates("Song", listOf("Artist"), 200, listOf(lyric), lyricsOk = true))
     }
+
+    @Test
+    fun artistLineNeverSplitsOnAnd() {
+        assertEquals(listOf("The Head and the Heart"), ForkMusicVideoMatch.artists("The Head and the Heart"))
+        assertEquals(listOf("A", "B", "C", "D"), ForkMusicVideoMatch.artists("A & B, C feat. D"))
+        assertEquals(listOf("A", "B", "C"), ForkMusicVideoMatch.artists("A featuring B × C"))
+    }
 }

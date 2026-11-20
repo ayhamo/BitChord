@@ -460,6 +460,11 @@ class ForkCanvasCasesTest {
                 ) { it }
                 check(g, c, got == (want as JsonArray).map { (it as JsonPrimitive).content }, got)
             }
+            // §5 rule 13: the artist line split, never on "and".
+            "videoArtists" -> {
+                val got = ForkMusicVideoMatch.artists(c.obj("input").str("artist"))
+                check(g, c, got == (want as JsonArray).map { (it as JsonPrimitive).content }, got)
+            }
             else -> check(g, c, false, "unknown group")
         }
     }

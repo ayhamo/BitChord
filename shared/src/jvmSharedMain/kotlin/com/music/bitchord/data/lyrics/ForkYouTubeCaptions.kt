@@ -68,15 +68,21 @@ object ForkYouTubeCaptions {
             .take(MAX_TRACKS)
     }
 
-    /** The track's URL asking for `json3`, replacing a format it already names. */
-    fun json3Url(baseUrl: String): String =
-        if (Regex("[?&]fmt=").containsMatchIn(baseUrl)) {
-            baseUrl.replace(Regex("([?&])fmt=[^&]*"), "$1fmt=json3")
+    /**
+     * The track's URL on www.youtube.com asking for `json3`, replacing a format it already names.
+     * A relative `/api/timedtext` or one on music.youtube.com answers with the app's HTML page
+     * (found in the extension's PC live run), so the host is always YouTube's own.
+     */
+    fun json3Url(baseUrl: String): String {
+        val url = baseUrl.replace(Regex("""^(https?:)?(//[^/]*)?(?=/)"""), "https://www.youtube.com")
+        return if (Regex("[?&]fmt=").containsMatchIn(url)) {
+            url.replace(Regex("([?&])fmt=[^&]*"), "$1fmt=json3")
         } else {
-            baseUrl + (if ('?' in baseUrl) "&" else "?") + "fmt=json3"
+            url + (if ('?' in url) "&" else "?") + "fmt=json3"
         }
+    }
 
-    /** A `json3` caption file as lines: `tStartMs`, `dDurationMs`, the `segs`' text; music notes trimmed. */
+    /** A `json3` caption file as lines: `tStartMs`, `dDurationMs`, the `segs`' text; music notes removed. */
     fun parseJson3(body: String): List<LyricLine>? {
         val root = runCatching { lyricsJson.parseToJsonElement(body) as? JsonObject }.getOrNull() ?: return null
         val events = root["events"] as? JsonArray ?: return null
@@ -87,7 +93,7 @@ object ForkYouTubeCaptions {
             val segs = event["segs"] as? JsonArray ?: return@mapNotNull null
             val text = segs.joinToString("") { seg ->
                 ((seg as? JsonObject)?.get("utf8") as? JsonPrimitive)?.contentOrNull.orEmpty()
-            }.replace('\n', ' ').trim().trim('♪', '♫').trim()
+            }.replace(Regex("""[♪♫\s]+"""), " ").trim()
             text.takeIf { it.isNotEmpty() }?.let {
                 LyricLine(start, it, sungUntilMs = (start + duration).takeIf { duration > 0 })
             }
