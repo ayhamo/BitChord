@@ -465,6 +465,25 @@ class ForkCanvasCasesTest {
                 val got = ForkMusicVideoMatch.artists(c.obj("input").str("artist"))
                 check(g, c, got == (want as JsonArray).map { (it as JsonPrimitive).content }, got)
             }
+            // §15 rule 10: Reset this song's canvas shows only while the song keeps a choice.
+            "songReset" -> {
+                val j = c.obj("input").obj("choice")
+                val part = j["part"] as? JsonObject
+                val choice = ForkCanvasChoices.Choice(
+                    loopOff = j.bool("loopOff"), spotifyOff = j.bool("spotifyOff"), coverOff = j.bool("coverOff"),
+                    picked = j.str("picked"),
+                    partMs = part?.lng("startMs"), partVideo = part?.str("video"),
+                    rejected = (j["rejected"] as? JsonArray).orEmpty().map { (it as JsonPrimitive).content }.toSet(),
+                    use = when (j.str("use")) {
+                        null -> null
+                        "video" -> ForkCanvasRules.Source.YOUTUBE_MUSIC_VIDEO
+                        "spotify" -> ForkCanvasRules.Source.SPOTIFY
+                        else -> ForkCanvasRules.Source.APPLE_MUSIC
+                    },
+                )
+                val got = ForkCanvasChoices.hasChoice(choice)
+                check(g, c, got == ((want as JsonPrimitive).booleanOrNull == true), got)
+            }
             else -> check(g, c, false, "unknown group")
         }
     }

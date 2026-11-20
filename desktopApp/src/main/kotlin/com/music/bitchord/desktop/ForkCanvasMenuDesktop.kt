@@ -6,6 +6,7 @@ import androidx.compose.material.icons.rounded.Animation
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.ContentCut
 import androidx.compose.material.icons.rounded.PlayCircle
+import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.VideoLibrary
@@ -45,7 +46,7 @@ import kotlinx.coroutines.withContext
  * - a switch per source for this song ("Music video canvas", "Spotify canvas", "Animated cover");
  * - "Pick another part" (the part playing and up to 4 others), "Pick another video" (the search as
  *   found, with pictures; a pick that can't make a loop leaves the song as it was), "Use",
- *   "Not this video";
+ *   "Not this video", "Reset this song's canvas" (§15 rule 10, while the song keeps any choice);
  * - "Your best part" (§14 rule 5): opens the editor the player draws.
  */
 @Composable
@@ -135,6 +136,12 @@ internal fun ForkCanvasMenuRowsDesktop(song: Song, onDismiss: () -> Unit) {
     if (rows.notThisVideo) {
         DesktopMenuRow(Icons.Rounded.Block, ForkCanvasChoices.NOT_THIS_TITLE) {
             ForkDesktopCanvasSources.rejectVideo(song)
+            onDismiss()
+        }
+    }
+    if (ForkCanvasChoices.hasChoice(choice)) {
+        DesktopMenuRow(Icons.Rounded.RestartAlt, ForkCanvasChoices.RESET_TITLE) {
+            ForkCanvasChoices.reset(song.videoId)
             onDismiss()
         }
     }

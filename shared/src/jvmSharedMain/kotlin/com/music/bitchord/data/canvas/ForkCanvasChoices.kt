@@ -350,6 +350,16 @@ object ForkCanvasChoices {
         return v
     }
 
+    /** Whether the song keeps any choice (§15 rules 9-10): "Reset this song's canvas" shows only then. */
+    fun hasChoice(choice: Choice): Boolean = choice != Choice()
+
+    /**
+     * "Reset this song's canvas" (§15 rule 10): every choice of the song is forgotten at once, so its
+     * canvas is looked up as for a song nobody chose anything for and the row goes away. The only way
+     * back from Not this video and the picks.
+     */
+    fun reset(songId: String) = update(songId) { Choice() }
+
     /**
      * The loop's key suffix for [songId]: the picked video, the picked part and the turned-away videos,
      * so each choice is its own saved answer (§15 rule 9). Empty for a song with none of them.
@@ -407,6 +417,7 @@ object ForkCanvasChoices {
     const val VIDEO_TITLE = "Pick another video"
     const val VIDEO_IN_USE = "In use"
     const val NOT_THIS_TITLE = "Not this video"
+    const val RESET_TITLE = "Reset this song's canvas"
     const val USE_TITLE = "Use"
     const val NO_VIDEOS = "No videos found for this song"
     const val CANT_LOOP = "That video can't make a loop"

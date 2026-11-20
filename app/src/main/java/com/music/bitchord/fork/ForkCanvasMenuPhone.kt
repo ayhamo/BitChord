@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Animation
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.ContentCut
+import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.VideoLibrary
@@ -63,6 +64,7 @@ import kotlinx.coroutines.withContext
  *   with their pictures; a pick is cut first, and one that can't make a loop leaves the song as it
  *   was ("That video can't make a loop");
  * - "Use": which source a song with two shows; "Not this video";
+ * - "Reset this song's canvas" (§15 rule 10), while the song keeps any choice: forgets them all;
  * - "Your best part" (§14 rule 5): opens the editor the player draws (`ForkBestPartEditor`).
  *
  * The rows are worked out in [ForkCanvasChoices.rows]; each change is a new question for the player
@@ -110,6 +112,12 @@ internal fun ForkCanvasMenuRows(song: Song, accent: Color, onDone: () -> Unit) {
     if (rows.notThisVideo) {
         ActionRow(icon = Icons.Rounded.Block, label = ForkCanvasChoices.NOT_THIS_TITLE, value = null, accent = accent) {
             ForkCanvasSources.rejectVideo(song)
+            onDone()
+        }
+    }
+    if (ForkCanvasChoices.hasChoice(choice)) {
+        ActionRow(icon = Icons.Rounded.RestartAlt, label = ForkCanvasChoices.RESET_TITLE, value = null, accent = accent) {
+            ForkCanvasChoices.reset(song.videoId)
             onDone()
         }
     }
