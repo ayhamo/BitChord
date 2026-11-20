@@ -342,7 +342,7 @@ internal fun DesktopSongMenu(
         if (pickingLyricsOffset && onSetLyricsOffset != null) {
             DesktopMenuHeader(DesktopStrings["d_lyrics_offset", "Lyrics offset"]) { pickingLyricsOffset = false }
             DesktopMenuDivider()
-            DesktopLyricsOffsetControl(lyricsOffsetMs) { onSetLyricsOffset(it) }
+            ForkDesktopLyricsOffsetControl(song.videoId) // fork: this song's and the global offset (lyrics.md §3); was DesktopLyricsOffsetControl(lyricsOffsetMs) { onSetLyricsOffset(it) }
             return@DesktopMenuSurface
         }
         if (pickingSleepTimer) {
@@ -424,6 +424,7 @@ internal fun DesktopSongMenu(
         ForkRemoveRows(song, onDismiss) // fork: Remove from cache / Remove from history, after Download as on the phone
         if (!com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(song.videoId)) DesktopMenuRow(Icons.Rounded.Radio, if (com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(song.videoId)) "Start radio (Instant Mix)" else DesktopStrings["start_radio", "Start radio"], onClick = onStartRadio)
         DesktopMenuRow(Icons.AutoMirrored.Rounded.PlaylistPlay, DesktopStrings["play_next", "Play next"], onClick = onPlayNext)
+        ForkPlayFromBestPartRowDesktop(song, onDismiss) // fork: "Play from the best part" (Prism, ForkCanvasMenuDesktop.kt)
         DesktopMenuRow(Icons.AutoMirrored.Rounded.QueueMusic, DesktopStrings["add_to_queue", "Add to queue"], onClick = onAddToQueue)
         // What the player's content column shows, and the ways of reading the
         // lyrics: one row switches the column between the sheet and the queue,
@@ -461,7 +462,7 @@ internal fun DesktopSongMenu(
                 DesktopMenuRow(
                     icon = Icons.Rounded.Tune,
                     label = DesktopStrings["d_lyrics_offset", "Lyrics offset"],
-                    value = if (lyricsOffsetMs != 0) formatLyricsOffset(lyricsOffsetMs) else "",
+                    value = forkDesktopLyricsOffsetLabel(song.videoId), // fork: both offsets, rule sign; was formatLyricsOffset(lyricsOffsetMs)
                 ) { pickingLyricsOffset = true }
             }
             // fork: the player's menu is the one passed onSetLyricsOffset (the phone's player no longer passes onSwitchLyricsQueue, which hid these)

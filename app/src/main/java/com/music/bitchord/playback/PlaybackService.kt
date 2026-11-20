@@ -4883,6 +4883,7 @@ class PlaybackService : MediaLibraryService() {
             // The audition takes seconds, long enough for the ceiling to drop
             // under it; treated as a failed one, so nothing is cut.
             ?.takeIf { SourceRegistry.permitsForPlayback(stream.sourceConfigId) }
+            ?.takeIf { ForkWindowCheckPhone.passes(mediaId, at.uri, at.position, upgradedUri, stream) } // fork: the rulebook's 12 s window check; no match is a failed audition
         if (warmedThrough == null) {
             // Nothing was cut, so there is nothing to put back: the listener
             // keeps the stream they already had and never learns this
@@ -5036,9 +5037,9 @@ class PlaybackService : MediaLibraryService() {
                 ?: "Upgrade"
             NerdStats.onSourceStream(mediaId, stream.format, upgradedSourceName)
             NerdStats.recordSource(mediaId, upgradedSourceName)
-            player.seekTo(player.currentMediaItemIndex, now.position)
+            player.seekTo(player.currentMediaItemIndex, ForkWindowCheckPhone.swapAtMs(now.uri, upgradedUri, now.position)) // fork: was now.position; plus the window check's offset
             player.prepare()
-            forkCover?.land(upgradedUri) // fork: fades back once the new copy plays
+            forkCover?.land(upgradedUri, ForkWindowCheckPhone.landShiftMs(now.uri, upgradedUri)) // fork: fades back once the new copy plays
             QualityUpgrade.unshelve(mediaId)
             TrackLog.d("BitChord", "upgraded to ${stream.format.summary} at ${now.position}ms ($upgradedSourceName)")
             watchUpgrade(mediaId, now.uri, now.position, now.duration, previousFormat)
@@ -7456,7 +7457,7 @@ class PlaybackService : MediaLibraryService() {
         ) return null
         val id = mediaId?.takeIf { it.isNotBlank() } ?: return null
         val loudnessDb = StreamResolver.loudnessDbFor(id) ?: return null
-        return (-loudnessDb * 100.0).roundToInt().coerceIn(MIN_LOUDNESS_GAIN_MB, MAX_LOUDNESS_GAIN_MB)
+        return (com.music.bitchord.data.innertube.ForkLoudnessCut.gainDb(loudnessDb) * 100.0).roundToInt().coerceIn(MIN_LOUDNESS_GAIN_MB, MAX_LOUDNESS_GAIN_MB) // fork: cut only, never a boost (ForkLoudnessCut; was -loudnessDb both ways)
     }
 
     /**

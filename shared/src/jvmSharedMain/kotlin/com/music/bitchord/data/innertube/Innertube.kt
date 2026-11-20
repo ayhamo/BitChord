@@ -619,6 +619,7 @@ object Innertube {
             put("isAudioOnly", true)
         }
 
+    suspend fun forkCaptionsPlayer(videoId: String): JsonObject = postMusic("player") { put("videoId", videoId); put("contentCheckOk", true); put("racyCheckOk", true) } // fork: the caption tracks for ForkYouTubeCaptions (lyrics.md §11.2)
     /** Timed caption transcript used as a last-resort lyrics source. */
     suspend fun transcript(videoId: String): JsonObject = postMusic("get_transcript") {
         // get_transcript expects a tiny protobuf: field 1, length, video id.

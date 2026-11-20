@@ -114,7 +114,7 @@ internal object ForkLoudnessMath {
     /** The gain in dB, bounded; null when no source has a figure. */
     fun gainDb(serverReplayGainDb: Double?, youtubeLoudnessDb: Double?, tagGainDb: Double?): Double? {
         val raw = serverReplayGainDb?.takeIf { it.isFinite() }?.plus(REPLAYGAIN_TO_YOUTUBE_DB)
-            ?: youtubeLoudnessDb?.takeIf { it.isFinite() }?.let { -it }
+            ?: youtubeLoudnessDb?.takeIf { it.isFinite() }?.let { com.music.bitchord.data.innertube.ForkLoudnessCut.gainDb(it) } // a cut only, as on the phone
             ?: tagGainDb?.takeIf { it.isFinite() }
             ?: return null
         return raw.coerceIn(MIN_GAIN_DB, MAX_GAIN_DB)

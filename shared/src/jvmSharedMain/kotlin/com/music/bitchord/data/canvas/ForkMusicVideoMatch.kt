@@ -16,8 +16,14 @@ import java.util.Locale
  */
 object ForkMusicVideoMatch {
 
-    /** A search result: its video id, title, channel and length (s; 0 unknown). */
-    data class Video(val id: String, val title: String, val channel: String, val lengthSec: Long)
+    /**
+     * A search result: its video id, title, channel and length (s; 0 unknown), and YouTube Music's
+     * word for it when the result says ([type], `MUSIC_VIDEO_TYPE_OMV` for the official video).
+     */
+    data class Video(val id: String, val title: String, val channel: String, val lengthSec: Long, val type: String? = null)
+
+    /** Lyric videos' words, let through by [candidates] `lyricsOk` (a song with no other video). */
+    private val LYRIC = setOf("lyric", "lyrics", "letra", "letras", "paroles", "testo")
 
     private val NEVER = listOf(
         "lyric", "lyrics", "letra", "letras", "paroles", "testo", "traducida", "traducción",
@@ -66,32 +72,44 @@ object ForkMusicVideoMatch {
      * The first of [videos] (in search order) that is the song's music video, or null. [durationSec]
      * 0: the song's length is unknown, and lengths aren't checked.
      */
-    fun pick(songTitle: String, artistNames: List<String>, durationSec: Long, videos: List<Video>): Video? {
+    fun pick(songTitle: String, artistNames: List<String>, durationSec: Long, videos: List<Video>): Video? =
+        candidates(songTitle, artistNames, durationSec, videos).firstOrNull()
+
+    /**
+     * Every one of [videos] [pick] would take, best first: the artist's own uploads (in search
+     * order), then, for a song naming a session or show, that very recording. [pick] is the first;
+     * the rest are what the canvas tries next when the first is refused (Prism's second try,
+     * canvas.md 5.6). [lyricsOk]: a lyric video by the artist counts (only for a song with no
+     * other video; the rulebook's [pick] never takes one).
+     */
+    fun candidates(songTitle: String, artistNames: List<String>, durationSec: Long, videos: List<Video>, lyricsOk: Boolean = false): List<Video> {
         val artists = artistNames.map(::norm).filter { it.isNotEmpty() }
-        if (norm(songTitle).isEmpty() || artists.isEmpty()) return null
+        if (norm(songTitle).isEmpty() || artists.isEmpty()) return emptyList()
         val song = songTitle.lowercase(Locale.ROOT)
         // the source the song names in its brackets ("SiriusXM Session" -> "siriusxm"), without the generic words
         val source = LinkedHashSet<String>()
         for (m in BRACKETS.findAll(song)) {
             for (w in m.value.split(Regex("""[^\p{L}\p{N}]+"""))) if (w.length > 2 && w !in GENERIC) source += w
         }
+        val banned = if (lyricsOk) NEVER.filter { it !in LYRIC } else NEVER
         val candidates = videos.filter { v ->
-            sameTitle(songTitle, artistNames, v.title, v.channel) && !never(v.title.lowercase(Locale.ROOT), song) &&
-                (ownChannel(v.channel, artists) || !never(v.channel.lowercase(Locale.ROOT), song))
+            sameTitle(songTitle, artistNames, v.title, v.channel) && !never(banned, v.title.lowercase(Locale.ROOT), song) &&
+                (ownChannel(v.channel, artists) || !never(banned, v.channel.lowercase(Locale.ROOT), song))
         }
         // the artist's own upload first: their channel (VEVO and "Official" ones too), or their record label's
-        candidates.firstOrNull { v ->
+        val own = candidates.filter { v ->
             (ownChannel(v.channel, artists) || byLabel(v.title, v.channel, artists)) && within(durationSec, v, LOOSE_S) &&
                 !has(OTHER_TAKE, v.title.lowercase(Locale.ROOT), song)
-        }?.let { return it }
-        if (source.isEmpty()) return null
+        }
+        if (source.isEmpty() || lyricsOk) return own
         // a song from a named session or show: that very recording, posted by whoever made it
-        return candidates.firstOrNull { v ->
+        val session = candidates.filter { v ->
             val words = v.title.lowercase(Locale.ROOT)
             val where = words + " " + v.channel.lowercase(Locale.ROOT)
             within(durationSec, v, TIGHT_S) && durationSec > 0 && v.lengthSec > 0 &&
                 artists.any { norm(words).contains(it) } && source.any { where.contains(it) }
         }
+        return (own + session).distinctBy { it.id }
     }
 
     private fun within(durationSec: Long, v: Video, slack: Int): Boolean =
@@ -111,8 +129,8 @@ object ForkMusicVideoMatch {
     }
 
     /** A lyric video, a lesson, a re-tuned copy and the like (unless the song's own title says so). */
-    private fun never(text: String, song: String): Boolean =
-        has(NEVER, text, song) || HZ.containsMatchIn(text) && !HZ.containsMatchIn(song)
+    private fun never(words: List<String>, text: String, song: String): Boolean =
+        has(words, text, song) || HZ.containsMatchIn(text) && !HZ.containsMatchIn(song)
 
     private fun sameTitle(songTitle: String, artistNames: List<String>, videoTitle: String, channel: String): Boolean {
         val want = core(songTitle, emptyList())

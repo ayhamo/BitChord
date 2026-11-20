@@ -146,7 +146,7 @@ class WordSyncTest {
                 LyricAlignment.End,
                 LyricAlignment.Start,
                 // Sung by everyone, so it belongs to neither side.
-                LyricAlignment.Start,
+                LyricAlignment.Center, // fork: a group is centred (lyrics.md §5.2); was Start
             ),
             sides,
         )
@@ -265,7 +265,7 @@ class WordSyncTest {
                 LyricAlignment.End,
                 LyricAlignment.End,
                 LyricAlignment.Start,
-                LyricAlignment.Start,
+                LyricAlignment.Center, // fork: a group is centred (lyrics.md §5.2); was Start
             ),
             sides,
         )
@@ -286,7 +286,7 @@ class WordSyncTest {
         ).filterNot { it.isGap }.map { it.alignment }
         // A group line stays left; without the alias it would read as a person
         // and start the alternation.
-        assertEquals(listOf(LyricAlignment.Start), sides)
+        assertEquals(listOf(LyricAlignment.Center), sides) // fork: a group is centred (lyrics.md §5.2); was Start
     }
 
     @Test

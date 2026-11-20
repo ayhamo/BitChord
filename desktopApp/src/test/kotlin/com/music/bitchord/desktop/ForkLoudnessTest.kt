@@ -16,12 +16,12 @@ class ForkLoudnessTest {
     @Test
     fun youtubeFigureIsTheNegatedLoudnessAsOnThePhone() {
         near(-5.0, ForkLoudnessMath.gainDb(null, 5.0, null))
-        near(2.5, ForkLoudnessMath.gainDb(null, -2.5, null))
+        near(0.0, ForkLoudnessMath.gainDb(null, -2.5, null)) // a quiet song is not boosted (spec 5ece86d)
     }
 
     @Test
     fun boundedToThePhonesRange() {
-        near(3.0, ForkLoudnessMath.gainDb(null, -10.0, null))
+        near(0.0, ForkLoudnessMath.gainDb(null, -10.0, null))
         near(-15.0, ForkLoudnessMath.gainDb(null, 30.0, null))
     }
 

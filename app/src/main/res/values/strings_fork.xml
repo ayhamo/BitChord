@@ -124,6 +124,24 @@
     <string name="fork_automix_phrase_8_detail">Mixes over exactly 8 bars, both edges on the beat grid</string>
     <string name="fork_automix_phrase_16_detail">Mixes over exactly 16 bars, both edges on the beat grid</string>
     <string name="fork_automix_style">Automix style</string>
+    <!-- The lyrics rulebook's settings (ForkLyricsSettingsRows.kt) -->
+    <string name="fork_lyrics_real_timing">Lyrics by real timing</string>
+    <string name="fork_lyrics_real_timing_subtitle">Each line lights up on its own start instead of 0.66 s ahead, and the panel scrolls with no lead</string>
+    <string name="fork_lyrics_auto_scroll">Auto-scroll lyrics</string>
+    <string name="fork_lyrics_auto_scroll_subtitle">The lyrics follow the song. Scrolling by hand stops following until you tap Follow lyrics or a line</string>
+    <string name="fork_lyrics_duet_sides">Duet sides</string>
+    <string name="fork_lyrics_duet_sides_subtitle">Each singer\'s lines on their own side, lines sung together centred</string>
+    <string name="fork_lyrics_text_size">Lyrics text size</string>
+    <string name="fork_lyrics_text_size_subtitle">Size of the synced lyrics</string>
+    <string name="fork_lyrics_line_spacing">Lyrics line spacing</string>
+    <string name="fork_lyrics_line_spacing_subtitle">Height of a lyric line, in times the text size</string>
+    <string name="fork_lyrics_romanized_main">Romanized as main</string>
+    <string name="fork_lyrics_romanized_main_subtitle">With romanization on, the romanized line is the big one</string>
+    <string name="fork_lyrics_keep_original">Keep the original under it</string>
+    <string name="fork_lyrics_keep_original_subtitle">The original script stays under the romanized line</string>
+    <string name="fork_lyrics_roman_languages">Romanized languages</string>
+    <string name="fork_lyrics_roman_languages_all">All 14 languages</string>
+    <string name="fork_lyrics_roman_languages_none">None</string>
     <string name="fork_automix_style_bitchord">BitChord</string>
     <string name="fork_automix_style_v2">Automix v2</string>
     <string name="fork_automix_style_bitchord_subtitle">BitChord\'s own Automix</string>

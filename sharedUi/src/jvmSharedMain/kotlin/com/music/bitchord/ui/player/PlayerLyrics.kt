@@ -682,7 +682,7 @@ internal class LyricPlayhead(
 
 @Composable
 internal fun rememberLyricPlayhead(position: PlaybackPosition): LyricPlayhead {
-    val offset = PlayerSettings.lyricsOffsetMs.collectAsStateWithLifecycle()
+    val offset = forkCombinedLyricsOffset() // fork: the global and the song's offset (lyrics.md §3, ForkLyricsOffsets); was PlayerSettings.lyricsOffsetMs
     return remember(position, offset) { LyricPlayhead(position, offset) }
 }
 
@@ -1800,6 +1800,8 @@ internal fun LyricsPanel(
     centerFocus: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    val (lines, subLines) = forkMainAndSub(lines, subLines) // fork: "Romanized as main" (lyrics.md §9.2, ForkLyricsView)
+    val forkView = rememberForkLyricsView() // fork: the lyrics settings the panel reads (ForkLyricsView)
     val panelPlaying = isPlaying && active
     val clock = rememberLyricClock(trackKey, playhead, panelPlaying)
     val subReveal = rememberSubLyricsReveal(subLines, trackKey)
@@ -1808,11 +1810,11 @@ internal fun LyricsPanel(
     // Only a song that actually names a second voice is laid out as one. A
     // single-voice song has every line on the left already, so splitting the
     // panel into lanes for it would just be a narrower panel.
-    val duet = remember(lines) { lines.any { it.alignment == LyricAlignment.End } }
+    val duet = remember(lines) { lines.any { it.alignment == LyricAlignment.End } } && forkView.sides // fork: + the sides setting (lyrics.md §5.2)
 
     val activeRows by remember(lines, isSynced) {
         derivedStateOf {
-            if (!isSynced) emptyList() else activeLyricRows(lines, clock.longValue)
+            if (!isSynced) emptyList() else forkPanelActiveRows(lines, clock.longValue) // fork: the early highlight (lyrics.md §2.1-2.2, §6.2); was activeLyricRows
         }
     }
     // The uppermost unfinished vocal owns the scroll anchor until its end,
@@ -1831,7 +1833,7 @@ internal fun LyricsPanel(
                 -1
             } else {
                 val now = clock.longValue
-                activeLyricRows(lines, now + scrollLead(lines, now)).firstOrNull() ?: -1
+                activeLyricRows(lines, now + forkScrollLead(scrollLead(lines, now))).firstOrNull() ?: -1 // fork: no scroll lead with "real timing" (lyrics.md §2.6)
             }
         }
     }
@@ -1850,6 +1852,9 @@ internal fun LyricsPanel(
     }
     val keepScroll = remember(listState) { keepScrollInList(listState) }
     var browsingByDrag by remember { mutableStateOf(false) }
+    val onSeekToLine: (Long) -> Unit = { browsingByDrag = false; onSeekToLine(it) } // fork: a tap on a line follows again (lyrics.md §4.3)
+    LaunchedEffect(active) { if (active) browsingByDrag = false } // fork: shown again, the panel follows again (lyrics.md §4.3)
+    val forkFollowStop = rememberForkFollowStop { browsingByDrag = true } // fork: a wheel or trackpad scroll stops following too (lyrics.md §4.2)
     // While picking lines, the panel must not auto-scroll — the reader needs
     // the list to stay put so they can tap the lines they want.
     val forkHold = remember { ForkLyricsHold() } // fork: a line under a finger holds the panel too
@@ -1909,14 +1914,14 @@ internal fun LyricsPanel(
     // Paused, there is no song to follow back to, so a hand scroll should sit
     // wherever it was left rather than snapping back on these timers.
     LaunchedEffect(browsingByDrag, activeOnScreen, listState.isScrollInProgress, panelPlaying) {
-        if (panelPlaying && browsingByDrag && activeOnScreen && !listState.isScrollInProgress) {
+        if (FORK_FOLLOW_TIMERS && panelPlaying && browsingByDrag && activeOnScreen && !listState.isScrollInProgress) { // fork: no timer brings following back (lyrics.md §4.3)
             delay(600)
             browsingByDrag = false
         }
     }
 
     LaunchedEffect(browsingByDrag, listState.isScrollInProgress, panelPlaying) {
-        if (panelPlaying && browsingByDrag && !listState.isScrollInProgress) {
+        if (FORK_FOLLOW_TIMERS && panelPlaying && browsingByDrag && !listState.isScrollInProgress) { // fork: no timer brings following back (lyrics.md §4.3)
             delay(5_000)
             browsingByDrag = false
         }
@@ -1962,8 +1967,8 @@ internal fun LyricsPanel(
     // browse on their own terms.
     // A newer line replaces an unfinished automatic scroll. Only a user's
     // browsing gesture should suspend following, not our own animation.
-    LaunchedEffect(focusLine, browsing, forkHold.held, controlsOpen, active) { // fork: + forkHold.held
-        if (active && isSynced && !browsing && !forkHold.held && // fork: `!forkHold.held &&`, only the follow pauses (not the blur, dimming or sweep `browsing` also drives)
+    LaunchedEffect(focusLine, browsing, forkHold.held, controlsOpen, active, forkView.autoScroll) { // fork: + forkHold.held, + the auto-scroll setting (lyrics.md §4.1)
+        if (active && isSynced && !browsing && !forkHold.held && forkView.autoScroll && // fork: `!forkHold.held &&`, only the follow pauses (not the blur, dimming or sweep `browsing` also drives); `forkView.autoScroll &&` (lyrics.md §4.1)
             focusLine >= 0 && focusLine in lines.indices
         ) {
             // Centred, the top padding is half the viewport, and it only exists
@@ -1996,7 +2001,7 @@ internal fun LyricsPanel(
                 // given the run-up's own duration and curve instead of the
                 // list's default spring.
                 visible != null -> {
-                    val span = scrollLead(lines, clock.longValue).toInt()
+                    val span = forkScrollSpan(scrollLead(lines, clock.longValue)).toInt() // fork: at most 450 ms (lyrics.md §2.5)
                     val distance = (visible.offset - focusOffset(visible.size)).toFloat()
                     run = ScrollRun(run.id + 1, distance, span)
                     // The same curve the rows catch up on. Two different
@@ -2048,10 +2053,12 @@ internal fun LyricsPanel(
         return
     }
 
+    ForkLyricsFollowBox(modifier, showButton = browsingByDrag && !picking && isSynced && forkView.autoScroll, onFollow = { browsingByDrag = false }) { forkFill -> // fork: the "Follow lyrics" button (lyrics.md §4.3)
     LazyColumn(
         state = listState,
-        modifier = modifier
+        modifier = forkFill // fork: the follow box takes the caller's modifier; was modifier
             .bleedHorizontally(PLAYER_GUTTER)
+            .nestedScroll(forkFollowStop) // fork: a wheel or trackpad stops following (lyrics.md §4.2)
             .nestedScroll(controlsOnScroll)
             .nestedScroll(keepScroll)
             // Browsing leaves taps to each lyric row's seek action throughout
@@ -2150,7 +2157,7 @@ internal fun LyricsPanel(
                 // dots lighting in turn across the interlude, so a long one
                 // reads as time running down instead of a symbol parked on
                 // screen waiting for the singing to come back.
-                val until = lines.getOrNull(index + 1)?.timeMs ?: line.endMs
+                val until = line.sungUntilMs ?: lines.getOrNull(index + 1)?.timeMs ?: line.endMs // fork: the rule's gap end first (lyrics.md §6.1)
                 // How far through the break the song is, held at 0 before it and
                 // 1 after: the dots read the clock only while it is running, so
                 // a break that is not playing never redraws — see SweptLyricLine.
@@ -2232,17 +2239,18 @@ internal fun LyricsPanel(
                 }
             } else {
                 val alignEnd = duet && line.alignment == LyricAlignment.End
+                val forkCentre = forkView.centred(line) // fork: a group's line is centred (lyrics.md §5.2)
                 val style = if (isSynced) {
                     MaterialTheme.typography.headlineLarge.copy(
-                        fontSize = 34.sp,
-                        lineHeight = 41.sp,
+                        fontSize = forkView.fontSize, // fork: the text size setting (lyrics.md §8.1); was 34.sp
+                        lineHeight = forkView.lineHeight, // fork: the line spacing setting (lyrics.md §8.2); was 41.sp
                         fontWeight = FontWeight.ExtraBold,
                         textAlign = if (alignEnd) TextAlign.End else TextAlign.Start,
                     )
                 } else {
                     MaterialTheme.typography.headlineMedium.copy(
-                        fontSize = 30.sp,
-                        lineHeight = 38.sp,
+                        fontSize = forkView.plainFontSize, // fork: scaled with the text size (lyrics.md §8); was 30.sp
+                        lineHeight = forkView.plainLineHeight, // fork: was 38.sp
                         fontWeight = FontWeight.ExtraBold,
                         textAlign = if (alignEnd) TextAlign.End else TextAlign.Start,
                     )
@@ -2297,12 +2305,12 @@ internal fun LyricsPanel(
                     // it is actually written from.
                     .padding(
                         start = if (duet && alignEnd) DUET_LANE else 0.dp,
-                        end = if (duet && !alignEnd) DUET_LANE else 0.dp,
+                        end = if (duet && !alignEnd && !forkCentre) DUET_LANE else 0.dp, // fork: `&& !forkCentre`, no lane on a centred line
                     )
                     .graphicsLayer {
                         scaleX = scale
                         scaleY = scale
-                        transformOrigin = TransformOrigin(if (alignEnd) 1f else 0f, 0.5f)
+                        transformOrigin = TransformOrigin(if (alignEnd) 1f else if (forkCentre) 0.5f else 0f, 0.5f) // fork: + a centred line
                         alpha = lineAlpha
                         // Held back against the list's own movement: the list
                         // has already taken this row part of the way, so giving
@@ -2382,8 +2390,8 @@ internal fun LyricsPanel(
                 // seeks to the same place.
                 val sub = subReveal.lines?.getOrNull(index)
                 val subStyle = style.copy(
-                    fontSize = SUB_LYRIC_FONT_SIZE,
-                    lineHeight = SUB_LYRIC_LINE_HEIGHT,
+                    fontSize = forkView.subFontSize, // fork: 0.64 of the line (lyrics.md §9.2, §10.3); was SUB_LYRIC_FONT_SIZE
+                    lineHeight = forkView.subLineHeight, // fork: was SUB_LYRIC_LINE_HEIGHT
                     fontWeight = FontWeight.Bold,
                 )
                 // The answering voice is only on screen while it is being sung,
@@ -2434,7 +2442,7 @@ internal fun LyricsPanel(
                     PanelVoice(
                         line = line,
                         clock = clock,
-                        style = voiceStyle(style, line.text, alignEnd, duet),
+                        style = voiceStyle(style, line.text, alignEnd, duet).forkCentre(forkCentre), // fork: + centred
                         isActive = isActive,
                         sung = sung,
                         synced = isSynced,
@@ -2443,7 +2451,7 @@ internal fun LyricsPanel(
                         room = GLOW_ROOM,
                         alignEnd = alignEnd,
                         laneLocked = duet,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().forkCentreIn(forkCentre), // fork: + centred
                     )
                     // A line the service handed back unchanged ("falling
                     // down" in a Korean song) gets no second copy of itself.
@@ -2451,7 +2459,7 @@ internal fun LyricsPanel(
                         PanelVoice(
                             line = subLine,
                             clock = clock,
-                            style = voiceStyle(subStyle, subLine.text, alignEnd, duet),
+                            style = voiceStyle(subStyle, subLine.text, alignEnd, duet).forkCentre(forkCentre), // fork: + centred
                             isActive = isActive,
                             sung = sung,
                             synced = isSynced,
@@ -2468,13 +2476,13 @@ internal fun LyricsPanel(
                                 if (isSynced) abs(index - focusLine) <= 1 else index < 4
                             },
                             modifier = Modifier
-                                .fillMaxWidth()
+                                .fillMaxWidth().forkCentreIn(forkCentre) // fork: + centred
                                 .revealBelow(subReveal.progress)
                                 // Tucked up into the lead's glow inset so the
                                 // pair reads as one line in two scripts.
                                 .padding(start = GLOW_ROOM, end = GLOW_ROOM, bottom = GLOW_ROOM)
                                 .offset(y = -SUB_LYRIC_TUCK)
-                                .graphicsLayer { alpha = SUB_LYRIC_ALPHA },
+                                .graphicsLayer { alpha = forkView.subAlpha(subReveal.lines, isActive) }, // fork: romanized 0.8, translated 0.7 / 0.3 (lyrics.md §9.2, §10.3); was SUB_LYRIC_ALPHA
                         )
                     }
                     line.background?.let { backing ->
@@ -2487,9 +2495,9 @@ internal fun LyricsPanel(
                                 line = backing.withoutBracketPunctuation(),
                                 clock = clock,
                                 style = voiceStyle(style.copy(
-                                    fontSize = BACKING_FONT_SIZE,
-                                    lineHeight = BACKING_LINE_HEIGHT,
-                                ), backing.text, alignEnd, duet),
+                                    fontSize = forkView.backingFontSize, // fork: scaled with the text size (lyrics.md §8); was BACKING_FONT_SIZE
+                                    lineHeight = forkView.backingLineHeight, // fork: was BACKING_LINE_HEIGHT
+                                ), backing.text, alignEnd, duet).forkCentre(forkCentre), // fork: + centred
                                 isActive = isActive,
                                 sung = sung,
                                 synced = isSynced,
@@ -2504,7 +2512,7 @@ internal fun LyricsPanel(
                                 laneLocked = duet,
                                 rise = false,
                                 modifier = Modifier
-                                    .fillMaxWidth()
+                                    .fillMaxWidth().forkCentreIn(forkCentre) // fork: + centred
                                     // No top inset: the lead's own bottom room is
                                     // the gap, which leaves the two voices closer
                                     // to each other than to the rows either side.
@@ -2545,6 +2553,7 @@ internal fun LyricsPanel(
             }
         }
     }
+    } // fork: ForkLyricsFollowBox
 }
 
 /**
@@ -3232,7 +3241,7 @@ internal fun rememberLyricsTranslation(
                         )
                     ) {
                         is LyricsRomanizationResult.Romanized -> {
-                            romanizationState = LyricsTranslationUiState.Ready(result.lines)
+                            romanizationState = LyricsTranslationUiState.Ready(forkRomanized(source, result.lines)) // fork: only the languages switched on (lyrics.md §9.1); was result.lines
                             lyricsDisplayMode = LyricsDisplayMode.Romanized
                             translationTransition++
                             haptics.play(Haptic.ToggleOn)

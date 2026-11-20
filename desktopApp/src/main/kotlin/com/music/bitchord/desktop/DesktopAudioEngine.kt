@@ -384,11 +384,12 @@ class DesktopPlaybackEngine(
                 windowed = stream.windowedReads,
                 transport = stream.transport,
             ).map {
-                if (startAtMs > 0) decoder.seek(startAtMs * 1_000)
+                val forkSource = ForkWindowCheckPc.onYouTubeClock(decoder, stream.url) // fork: a copy with a measured offset is read on YouTube's clock (ForkWindowCheckPc)
+                if (startAtMs > 0 || forkSource !== decoder) forkSource.seek(startAtMs * 1_000) // fork: was decoder.seek, only when startAtMs > 0
                 // From here the decoder belongs to its own read-ahead thread: the audio thread only
                 // ever takes what has already been decoded, so a slow network read is not a gap.
                 val ahead = DesktopDecodeAhead(
-                    source = decoder,
+                    source = forkSource, // fork: was decoder
                     outputFormat = decoder.outputFormat,
                     durationUs = decoder.durationUs,
                     measuredFormat = decoder.measuredFormat,
@@ -481,6 +482,7 @@ class DesktopPlaybackEngine(
             "upgrading '${song.title}' to ${better.format.summary.ifBlank { "another rendition" }}" +
                 " from ${DesktopMusicSources.sourceNameFor(better)}",
         )
+        if (!ForkWindowCheckPc.passes(song, forkPlayingStream(song.videoId), better, current.positionMs)) return false // fork: the rulebook's 12 s window check; no match stays on what plays
         ForkUpgradeLength.expect(better) // fork: swapStream checks this copy's decoded length
         forkTaken = song.videoId to better // fork: see worthSwapping above
         swapStream(song, better, current.positionMs)
@@ -498,6 +500,7 @@ class DesktopPlaybackEngine(
                         return@fold
                     }
                     if (ForkUpgradeLength.refuses(song, stream, track.decoder.durationUs, latest.durationMs)) { track.decoder.close(); return@fold } // fork: the phone's audition length check
+                    if (ForkWindowCheckPc.fakeLossless(song, stream, track.decoder.measuredFormat)) { track.decoder.close(); return@fold } // fork: the audition's decoder check (protocol.md §8.3.1)
                     // Resolving and opening the better rendition can take a few seconds. Hand it
                     // over at the live playhead rather than jumping back to the position at which
                     // the upgrade was first offered.

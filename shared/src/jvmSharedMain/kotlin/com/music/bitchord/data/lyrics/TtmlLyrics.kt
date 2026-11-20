@@ -72,11 +72,11 @@ object TtmlLyrics {
         for (i in 0 until paragraphs.length) {
             val paragraph = paragraphs.item(i) as? Element ?: continue
             val line = lineFrom(paragraph) ?: continue
-            sung += line to paragraph.qualified("ttm:agent").takeIf { it.isNotEmpty() }
+            sung += line to (paragraph.qualified("ttm:agent").takeIf { it.isNotEmpty() } ?: ForkLyricsRules.inheritedAgent(paragraph)) // fork: a div's singer is inherited (lyrics.md §5.1)
         }
         sung.sortBy { it.first.timeMs }
 
-        val sides = lineAlignments(sung.map { it.second }, agentTypes(document))
+        val sides = ForkLyricsRules.alignments(sung.map { it.second }, agentTypes(document)) // fork: the rulebook's sides, a group centred (lyrics.md §5.2); was lineAlignments
         sung.mapIndexed { index, (line, _) -> line.copy(alignment = sides[index]) }
             .withInstrumentalGaps()
     }.getOrDefault(emptyList())

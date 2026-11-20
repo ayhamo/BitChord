@@ -147,7 +147,7 @@ internal object ForkDesktopCanvas {
         val found = runCatching {
             var hit: DesktopCanvasArtwork? = null
             var threw: Throwable? = null
-            for ((_, ask) in ForkDesktopCanvasSources.backdrops(song, title, artist, song.albumName)) {
+            for ((_, ask) in ForkDesktopCanvasSources.backdropsBeside(song, title, artist, song.albumName)) {
                 val r = runCatching { ask() }
                 r.exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it; threw = it }
                 hit = r.getOrNull()?.takeIf { it.matches(title, artist, song.albumName) }

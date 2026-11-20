@@ -120,6 +120,7 @@ internal object ForkArtistHeader {
 internal fun ForkArtistArtSwitch() {
     val on by ForkArtistHeader.enabled.collectAsState()
     ForkMarked { SettingsToggle(ForkArtistHeader.TITLE, ForkArtistHeader.SUBTITLE, on, ForkArtistHeader::set) }
+    ForkArtistVideoRows() // canvas.md 13.8: artist videos and their quality
 }
 
 /**
@@ -145,7 +146,9 @@ internal fun rememberForkAppleArt(key: String, name: String, revision: Any?, cat
     // covers" on (the phone's `canvasEnabled`), and then with the clip's own colours.
     val animated by DesktopPlayerSettings.animatedCanvas.collectAsState()
     val covers by ForkCanvasSwitch.covers.collectAsState()
-    val motion = animated && covers
+    // canvas.md 13.8: "Artist videos", which follows "Artist Art" (the images) until set.
+    val videos by com.music.bitchord.data.canvas.ForkCanvasSettings.artistVideos.collectAsState()
+    val motion = animated && covers && (videos ?: on)
     return remember(art, motion) { art?.forMotion(motion) }.takeIf { on }
 }
 
@@ -175,7 +178,19 @@ internal fun ForkAppleArtistArt.forMotion(plays: Boolean): ForkAppleArtistArt = 
  */
 @Composable
 private fun ForkArtistMotion(url: String, modifier: Modifier) {
-    val canvas = remember(url) { CanvasArtwork(url = url) }
+    // canvas.md 13.8: the rendition "Artist video quality" picks from Apple's HLS master list.
+    val quality by com.music.bitchord.data.canvas.ForkCanvasSettings.artistVideoQuality.collectAsState()
+    val playUrl by produceState<String?>(null, url, quality) {
+        value = withContext(Dispatchers.IO) {
+            com.music.bitchord.data.canvas.ForkCanvasSettings.variantUrl(url, quality.cap) { u ->
+                okhttp3.Request.Builder().url(u).build().let { r ->
+                    com.music.bitchord.data.Http.client.newCall(r).execute().use { if (it.isSuccessful) it.body?.string() else null }
+                }
+            }
+        }
+    }
+    val resolved = playUrl ?: return
+    val canvas = remember(resolved) { CanvasArtwork(url = resolved) }
     CanvasArtworkPlayer(
         canvas = canvas,
         isPlaying = forkPageClipMayPlay(),

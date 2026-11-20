@@ -3,4 +3,11 @@
 <resources>
     <!-- A Home shelf's See all page could not be loaded (ForkShelfMore.kt); %1$s is the shelf's title. -->
     <string name="fork_shelf_more_failed">Could not open %1$s</string>
+    <!-- The lyrics panel's button while it is not following the song (ForkLyricsView.kt, lyrics.md §4.3). -->
+    <string name="fork_follow_lyrics">Follow lyrics</string>
+    <!-- The lyrics offset drawer (ForkLyricsOffsetSheet.kt, lyrics.md §3). -->
+    <string name="fork_lyrics_offset_description">Positive values show the lyrics earlier. Changes apply at once</string>
+    <string name="fork_lyrics_offset_song">This song</string>
+    <string name="fork_lyrics_offset_global">All songs</string>
+    <string name="fork_lyrics_offset_field">Exact offset in ms</string>
 </resources>

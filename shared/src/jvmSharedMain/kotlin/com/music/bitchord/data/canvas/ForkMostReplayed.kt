@@ -39,16 +39,37 @@ object ForkMostReplayed {
     /** Whether [videoId] is a YouTube id, the only kind with a "Most replayed" curve. */
     fun eligible(videoId: String): Boolean = YOUTUBE_ID.matches(videoId)
 
-    /** The jump for a curve already read: [ForkBestPart.partStart] on the curve's own length. */
-    fun outcomeOf(markers: List<ForkBestPart.Marker>?): Outcome {
+    /**
+     * The jump for a curve already read: [ForkBestPart.partStart] on the curve's own length, pulled
+     * back to where a line of the song's synced [lines] begins ([ForkBestParts.snap]; audit
+     * 2026-11-20 C 8: the jump landed mid-word). Without lyrics, the curve's own segment start.
+     */
+    fun outcomeOf(markers: List<ForkBestPart.Marker>?, lines: List<com.music.bitchord.data.lyrics.LyricLine> = emptyList()): Outcome {
         if (markers == null) return Outcome.NoCurve
         val at = ForkBestPart.partStart(markers, 0)
-        return if (at < 0) Outcome.NothingStandsOut else Outcome.Jump(at)
+        if (at < 0) return Outcome.NothingStandsOut
+        val starts = ForkBestParts.starts(lines)
+        return Outcome.Jump(if (starts.isEmpty()) at else ForkBestParts.snap(at, starts))
     }
 
-    /** Looks the curve up for [videoId] and picks the part. Blocking (a network call the first time): off the main thread. */
+    /**
+     * Looks the curve up for [videoId] and picks the part, snapped to the lyrics the player had for
+     * it. Blocking (a network call the first time): off the main thread.
+     */
     fun find(videoId: String): Outcome =
-        if (!eligible(videoId)) Outcome.NoCurve else outcomeOf(ForkVideoCanvas.heatmap(videoId))
+        if (!eligible(videoId)) Outcome.NoCurve else outcomeOf(ForkVideoCanvas.heatmap(videoId), ForkBestParts.lines(videoId))
+
+    /**
+     * The song's best part for "Play from the best part" and the button: the listener's own, else
+     * the most replayed part, else the chorus in the lyrics the player had, snapped to a line; null
+     * for none. Blocking: off the main thread. [durationMs]: the song's length (0 unknown).
+     */
+    fun bestPart(videoId: String, durationMs: Long): Long? {
+        val lines = ForkBestParts.lines(videoId)
+        ForkBestParts.mine(videoId)?.let { return it }
+        val peak = if (eligible(videoId)) ForkBestPart.partStart(ForkVideoCanvas.heatmap(videoId), 0) else -1L
+        return ForkBestParts.start(null, peak, lines, durationMs)
+    }
 
     /** The message after a jump to [ms]: "Most replayed part, 1:23", as the patch's toast. */
     fun jumped(ms: Long): String {

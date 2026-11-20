@@ -115,6 +115,7 @@ object ForkSettings {
         _preloadSongs.value = prefs.getInt(KEY_PRELOAD_SONGS, 0)
         _offlineMode.value = prefs.getBoolean(KEY_OFFLINE_MODE, false)
         _coverFade.value = prefs.getBoolean(KEY_COVER_FADE, false)
+        ForkLyricsSettings.init(context) // the lyrics rulebook's settings and per-song offsets
         readAutomix()
         // Automix v2's whole-song evidence, measured by TrackAnalyzer beside its analyses (ForkV2EvidenceStore).
         com.music.bitchord.playback.smart.automixv2.ForkV2EvidenceStore.install(context.filesDir)
@@ -128,6 +129,10 @@ object ForkSettings {
         // The canvas rulebook's saved lookups (ForkCanvasStore) and the music-video loops (ForkCanvasSources)
         com.music.bitchord.data.canvas.ForkCanvasStore.init(context.filesDir)
         ForkCanvasSources.videoDir = java.io.File(context.cacheDir, "fork_canvas_video")
+        // The canvas rulebook's settings (canvas.md 13), the per-song canvas choices and best parts.
+        com.music.bitchord.data.canvas.ForkCanvasChoices.init(context.filesDir)
+        com.music.bitchord.data.canvas.ForkBestParts.init(context.filesDir)
+        loadCanvasSettings()
         // Canvas controls stay up until tapped away (upstream hides them after 5 s). Once, so the
         // owner can turn auto-hide back on in Settings.
         if (!prefs.getBoolean(KEY_CANVAS_MANUAL_SET, false)) {
@@ -149,6 +154,23 @@ object ForkSettings {
     fun setMusicVideoCanvas(value: Boolean) {
         _musicVideoCanvas.value = value
         prefs.edit().putBoolean(KEY_MUSIC_VIDEO_CANVAS, value).apply()
+        // The source list's music-video switch is this switch (canvas.md 13.2).
+        com.music.bitchord.data.canvas.ForkCanvasSettings.setOn(com.music.bitchord.data.canvas.ForkCanvasRules.Source.YOUTUBE_MUSIC_VIDEO, value)
+    }
+
+    /** The canvas settings' values, kept as strings in the fork prefs. */
+    private val canvasStore = object : com.music.bitchord.data.canvas.ForkCanvasSettings.Store {
+        override fun get(key: String): String? = prefs.getString(key, null)
+        override fun put(key: String, value: String?) {
+            prefs.edit().apply { if (value == null) remove(key) else putString(key, value) }.apply()
+        }
+    }
+
+    /** Reads the canvas settings and the Best part button; "Music video canvas" then follows the list. */
+    private fun loadCanvasSettings() {
+        com.music.bitchord.data.canvas.ForkCanvasSettings.load(canvasStore, _musicVideoCanvas.value)
+        _musicVideoCanvas.value = com.music.bitchord.data.canvas.ForkCanvasSettings.videoOn()
+        com.music.bitchord.data.canvas.ForkBestParts.loadSettings(canvasStore)
     }
 
     fun setNavidromeScrobble(value: Boolean) {
@@ -249,6 +271,9 @@ object ForkSettings {
      * What a backup carries ([ForkBackup]): the switches, not the device's state. Offline mode is
      * left out (it describes this phone's network right now), and so is the one-off canvas flag.
      */
+    /** The canvas settings (canvas.md 13) and the Best part button, all strings. Before [BACKED_UP], which adds them. */
+    private val CANVAS_KEYS = com.music.bitchord.data.canvas.ForkCanvasSettings.KEYS + com.music.bitchord.data.canvas.ForkBestParts.KEY_BUTTON
+
     private val BACKED_UP = listOf(
         KEY_CROSSFADE_ON_SKIP, KEY_BACKDROP_CLIPS, KEY_ANIMATED_COVERS, KEY_MUSIC_VIDEO_CANVAS, KEY_NAVIDROME_SCROBBLE,
         KEY_NAVIDROME_HOME_SHELVES, KEY_CLIP_CACHE_MB, KEY_NAVIDROME_YT_HISTORY, KEY_DOWNLOAD_ON_MOBILE,
@@ -256,7 +281,7 @@ object ForkSettings {
         // Automix style and what goes with it (the PC maps the same keys, ForkBackup.FORK there).
         // A backup's "automix_key_aware" (a removed switch) is not read: Automix v2 always weighs the keys.
         KEY_AUTOMIX_STYLE, KEY_AUTOMIX_PHRASE_BARS, KEY_AUTOMIX_PAIR_PICKS, KEY_AUTOMIX_OVERRIDES,
-    )
+    ) + CANVAS_KEYS
 
     /**
      * Parts of an imported backup's fork section this phone doesn't use (the PC's own settings),
@@ -302,6 +327,7 @@ object ForkSettings {
         _preloadSongs.value = prefs.getInt(KEY_PRELOAD_SONGS, 0)
         _coverFade.value = prefs.getBoolean(KEY_COVER_FADE, false)
         readAutomix()
+        loadCanvasSettings()
         ForkClipCache.applyLimit(_clipCacheMb.value)
     }
 
@@ -322,6 +348,7 @@ object ForkSettings {
         // Both read leniently (ForkV2OverrideStore): a line or a pair it can't read is dropped, the rest kept.
         KEY_AUTOMIX_PAIR_PICKS -> value as? String
         KEY_AUTOMIX_OVERRIDES -> value as? String
+        in CANVAS_KEYS -> value as? String
         in BACKED_UP -> value as? Boolean
         else -> null
     }

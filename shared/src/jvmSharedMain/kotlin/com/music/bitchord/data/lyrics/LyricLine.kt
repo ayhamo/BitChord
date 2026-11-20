@@ -119,7 +119,7 @@ data class LyricSyllable(
  * single-voice song ever uses — see `TtmlLyrics` for how the sides are worked
  * out from the agents, which is not simply "one agent per side".
  */
-enum class LyricAlignment { Start, End }
+enum class LyricAlignment { Start, End, Center } // fork: + Center, a group's line (lyrics.md §5.2, ForkLyricsRules.alignments)
 
 /**
  * One synced line. [timeMs] is when it starts; a blank [text] is an

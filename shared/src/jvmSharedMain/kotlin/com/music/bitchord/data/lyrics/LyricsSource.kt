@@ -84,7 +84,7 @@ enum class LyricsSource(
         label = "SimpMusic",
         detail = "Matched on the video, so never the wrong edit",
         wordSynced = true,
-        hidden = true,
+        hidden = false, // fork: asked again, the rulebook's source (lyrics.md §11.1); was true
     ),
     UNISON(
         label = "Unison",

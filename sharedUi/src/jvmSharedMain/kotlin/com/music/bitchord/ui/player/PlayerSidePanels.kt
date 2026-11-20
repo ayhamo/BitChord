@@ -47,8 +47,10 @@ fun LyricsSidePanel(
     onSeek: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val lyrics = forkLyricsForView(lyrics) // fork: the rulebook's instrumental gaps (lyrics.md §6.1)
+    ForkTrackLyricsOffset(song.videoId) // fork: this song's lyrics offset applies (lyrics.md §3)
     val haptics = rememberHaptics()
-    val lyricsOffsetMs by PlayerSettings.lyricsOffsetMs.collectAsStateWithLifecycle()
+    val lyricsOffsetMs by forkCombinedLyricsOffset() // fork: + the song's offset (lyrics.md §3); was PlayerSettings.lyricsOffsetMs
     val lyricsPlayhead = rememberLyricPlayhead(position)
     val seekToLyric: (Long) -> Unit = { lineTimeMs ->
         onSeek(adjustedLyricsSeekTarget(lineTimeMs, lyricsOffsetMs))

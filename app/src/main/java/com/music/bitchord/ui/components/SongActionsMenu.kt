@@ -323,6 +323,7 @@ fun SongActionsMenu(
             accent = palette.accent,
             onClick = onPlayNext,
         )
+        com.music.bitchord.fork.ForkPlayFromBestPartRow(song, palette.accent, onPlayNext) // fork: "Play from the best part" (Prism)
         ActionRow(
             icon = SfIcons.PlayLast,
             label = stringResource(R.string.add_to_queue),

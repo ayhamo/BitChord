@@ -395,12 +395,13 @@ fun DetailScreen(
     // confirmed by a shared title in both catalogues — so it waits for the
     // page's songs. Null until (and unless) it arrives; the YouTube header
     // stands in meanwhile.
-    var appleArt by remember(page.browseId) {
-        mutableStateOf(if (isArtist) AppleArtistArtRepository.cached(page.browseId) else null)
+    val forkArtistImages = com.music.bitchord.fork.ForkArtistArt.imagesOn() // fork: canvas.md 13.8 "Artist images"
+    var appleArt by remember(page.browseId, forkArtistImages) { // fork: + forkArtistImages
+        mutableStateOf(if (isArtist && forkArtistImages) AppleArtistArtRepository.cached(page.browseId) else null) // fork: + forkArtistImages
     }
     val songsLoading = page.songs is UiState.Loading
-    LaunchedEffect(page.browseId, page.title, songsLoading) {
-        if (isArtist && !songsLoading) {
+    LaunchedEffect(page.browseId, page.title, songsLoading, forkArtistImages) { // fork: + forkArtistImages
+        if (isArtist && forkArtistImages && !songsLoading) { // fork: + forkArtistImages
             appleArt = AppleArtistArtRepository.artFor(page.browseId, page.title) { page.appleCatalogue() } ?: appleArt
         }
     }
@@ -511,7 +512,7 @@ fun DetailScreen(
         canvas = CanvasRepository.canvasForAlbum(page.title, credit) ?: canvas
     }
     // An artist's clip comes with the same Apple lookup as its photograph.
-    val artistVideo = appleArt?.videoUrl
+    val artistVideo = com.music.bitchord.fork.ForkArtistArt.video(appleArt?.videoUrl) // fork: canvas.md 13.8 "Artist videos" and their quality
     LaunchedEffect(artistVideo, canvasEnabled) {
         if (isArtist) canvas = artistVideo?.takeIf { canvasEnabled }?.let { CanvasArtwork(url = it) }
     }

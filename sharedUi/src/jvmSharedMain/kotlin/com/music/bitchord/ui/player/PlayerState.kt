@@ -54,9 +54,10 @@ internal fun rememberCanvasArtwork(song: Song): CanvasArtwork? {
     // which is the flicker. A different song keys differently and starts
     // clean; the same-titled-impostor case is guarded where the clip is
     // adopted, by [CanvasArtwork.matches].
-    var canvas by remember(song.title, song.artist) { mutableStateOf<CanvasArtwork?>(null) }
+    val forkCanvasGen by com.music.bitchord.data.canvas.ForkCanvasSettings.generation.collectAsStateWithLifecycle() // fork: a changed canvas setting or song choice asks again at once (canvas.md 13.10)
+    var canvas by remember(song.title, song.artist, forkCanvasGen) { mutableStateOf<CanvasArtwork?>(null) } // fork: + forkCanvasGen
     val forkBackdrops by ForkCanvasSwitch.backdrops.collectAsStateWithLifecycle() // fork: turning backdrops on mid-song looks one up
-    LaunchedEffect(song.videoId, song.albumName, canvasAllowedNow, prioritizeSpotifyCanvas, forkBackdrops) {
+    LaunchedEffect(song.videoId, song.albumName, canvasAllowedNow, prioritizeSpotifyCanvas, forkBackdrops, forkCanvasGen) { // fork: + forkCanvasGen
         if (!canvasAllowedNow) {
             canvas = null
             return@LaunchedEffect

@@ -44,12 +44,10 @@ import kotlin.math.abs
  * between copies of one recording at the same point (the first between the same copy twice), whose
  * sum is coherent, so equal power would swell by up to 3 dB in the middle.
  *
- * Position: the copies are lined up on the players' clocks only, as upstream's swap seeks the new
- * copy to the old one's position. The fork has no offset fit for an addon's copy (the
- * [VersionAudioAligner][com.music.bitchord.playback.smart.VersionAudioAligner] measures two video
- * ids' openings, and returns 0 for one id); the resolver's runtime tolerance (`SourceResolver`
- * `SAME_RECORDING_SEC`, `upgradeSlackSec`) is what keeps a different cut out. A copy offset by a
- * few hundred ms is heard as a short doubling in the fade instead of a jump after a gap.
+ * Position: the copies are lined up on the players' clocks plus the offset the window check
+ * measured between them ([ForkWindowCheckPhone], `land`'s shiftMs), which also keeps a different
+ * cut out before the swap. A copy the check could not read (HLS/DASH) is lined up on the clocks
+ * alone, as before; one offset by a few hundred ms is heard as a short doubling in the fade.
  *
  * Every case [ForkUpgradeCoverPlan.decide] turns down, and every failure on the way (the cover not
  * ready in time, a skip, a seek, a pause, the new copy not playing in time), leaves upstream's swap
@@ -201,16 +199,19 @@ internal class ForkUpgradeCover(
             }
         }
 
-        /** Called right after upstream's `replaceMediaItem`/`seekTo`/`prepare` on [p]. */
-        fun land(upgradedUri: String) {
+        /**
+         * Called right after upstream's `replaceMediaItem`/`seekTo`/`prepare` on [p]. [shiftMs] is the
+         * new copy's time less the old one's at the same moment (the window check's offsets).
+         */
+        fun land(upgradedUri: String, shiftMs: Long = 0L) {
             if (landed) return
             landed = true
             deadline.cancel()
             p.volume = 0f
-            scope.launch { runLand(upgradedUri) }
+            scope.launch { runLand(upgradedUri, shiftMs) }
         }
 
-        private suspend fun runLand(upgradedUri: String) {
+        private suspend fun runLand(upgradedUri: String, shiftMs: Long) {
             var userSeek = false
             var ownSeek = false
             val listener = object : Player.Listener {
@@ -244,7 +245,7 @@ internal class ForkUpgradeCover(
                 // Upstream seeked to where the song was when the swap began; the cover has played on
                 // since. A near seek into the copy the audition warmed, while it is still silent.
                 ownSeek = true
-                p.seekTo(p.currentMediaItemIndex, s.currentPosition)
+                p.seekTo(p.currentMediaItemIndex, (s.currentPosition + shiftMs).coerceAtLeast(0L))
                 ownSeek = false
                 if (!await(ForkUpgradeCoverPlan.RESYNC_TIMEOUT_MS, { p.volume = 0f; ok() }) {
                         p.playbackState == Player.STATE_READY && p.isPlaying
@@ -253,7 +254,7 @@ internal class ForkUpgradeCover(
                     TrackLog.d(TAG, "upgrade cover: the new copy did not line up; cutting over", about = mediaId)
                     return
                 }
-                val apart = abs(s.currentPosition - p.currentPosition)
+                val apart = abs(s.currentPosition + shiftMs - p.currentPosition)
                 if (!fade(ForkUpgradeCoverPlan.LAND_FADE_MS, ok) { inGain ->
                         p.volume = inGain
                         s.volume = 1f - inGain

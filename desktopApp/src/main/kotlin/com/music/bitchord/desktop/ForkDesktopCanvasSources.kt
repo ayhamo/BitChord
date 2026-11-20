@@ -6,7 +6,11 @@ import androidx.compose.runtime.getValue
 import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.canvas.CanvasSource
 import com.music.bitchord.data.canvas.ForkAnonymousSpotifyCanvas
+import com.music.bitchord.data.canvas.ForkBestParts
+import com.music.bitchord.data.canvas.ForkCanvasChoices
 import com.music.bitchord.data.canvas.ForkCanvasRules
+import com.music.bitchord.data.canvas.ForkCanvasSettings
+import com.music.bitchord.data.canvas.ForkClipGate
 import com.music.bitchord.data.canvas.ForkCanvasStore
 import com.music.bitchord.data.canvas.ForkDownloadedCanvas
 import com.music.bitchord.data.canvas.ForkMusicVideoMatch
@@ -46,34 +50,72 @@ internal object ForkDesktopCanvasSources {
     private const val KEY_VIDEOS = "music_video_canvas"
     private val prefs = java.util.prefs.Preferences.userRoot().node("com/music/bitchord/navidrome_fork")
 
-    /** The saved lookups and the loops' folder, and the "Music video canvas" switch; from `ForkNavidrome.install`. */
+    /** The canvas settings (§13), kept beside the other fork settings in this node. */
+    private val store = object : ForkCanvasSettings.Store {
+        override fun get(key: String): String? = prefs.get(key, null)
+        override fun put(key: String, value: String?) {
+            if (value == null) prefs.remove(key) else prefs.put(key, value)
+            runCatching { prefs.flush() } // a failed write stays queued (ForkFilePreferences retries it)
+        }
+    }
+
+    /**
+     * The saved lookups, the per-song choices and own best parts, the loops' folder, the "Music video
+     * canvas" switch and the canvas settings; from `ForkNavidrome.install`.
+     */
     fun install() {
         val dir = DesktopMediaCache.directory.resolve("fork_canvas").toFile()
         dir.mkdirs()
         ForkCanvasStore.init(dir)
+        ForkCanvasChoices.init(dir)
+        ForkBestParts.init(dir)
         videoDir = File(dir, "video")
         ForkCanvasSwitch.videos.value = prefs.get(KEY_VIDEOS, null) != "off"
+        ForkCanvasSettings.load(store, ForkCanvasSwitch.videos.value)
+        ForkCanvasSwitch.videos.value = ForkCanvasSettings.videoOn()
+        ForkBestParts.loadSettings(store)
     }
 
+    /** "Music video canvas", the music video's switch in the sources list too. */
     fun setVideos(on: Boolean) {
         ForkCanvasSwitch.videos.value = on
         prefs.put(KEY_VIDEOS, if (on) "on" else "off")
         runCatching { prefs.flush() } // a failed write stays queued (ForkFilePreferences retries it)
+        ForkCanvasSettings.setOn(ForkCanvasRules.Source.YOUTUBE_MUSIC_VIDEO, on)
     }
 
-    /** The switches that change which sources are asked, for the client's in-memory key. */
+    /**
+     * The switches and settings that change which sources are asked, for the client's in-memory key:
+     * the canvas settings' generation too (rule 13.10: a change is asked at once).
+     */
     fun keySuffix(): String =
-        "|fork=${ForkCanvasSwitch.backdrops.value}${ForkCanvasSwitch.videos.value}${ForkCanvasSwitch.covers.value}"
+        "|fork=${ForkCanvasSwitch.backdrops.value}${ForkCanvasSwitch.videos.value}${ForkCanvasSwitch.covers.value}" +
+            ForkCanvasSettings.keySuffix()
+
+    /** The order the sources are asked in now (rules 1-2 and 13.1-13.2). */
+    private fun order(spotifyFirst: Boolean = false): List<ForkCanvasRules.Source> =
+        ForkCanvasSettings.effectiveOrder(ForkCanvasSwitch.backdrops.value, ForkCanvasSwitch.covers.value, spotifyFirst)
+
+    /** Whether [song] gets a canvas at all: a song ([ForkClipGate.isSong]) not switched off for ([ForkCanvasChoices]). */
+    fun wanted(song: Song): Boolean = ForkClipGate.isSong(song) && !ForkCanvasChoices.of(song.videoId).off
 
     /** The client's sources for [song] ([title], [artist], [album] already cleaned); see the class comment. */
     fun song(song: Song, title: String, artist: String, album: String?): Array<suspend () -> DesktopCanvasArtwork?> {
+        if (!wanted(song)) return emptyArray()
         val covers = covers(song, title, artist, album)
-        val backdrops = backdrops(song, title, artist, album)
-        val video = backdrops.filter { it.first == ForkCanvasRules.Source.YOUTUBE_MUSIC_VIDEO }.map { it.second }
+        val spotifyFirst = ForkSpotifyCanvasFirst.prioritized.value
+        val backdrops = backdrops(song, title, artist, album, order(spotifyFirst))
+        // The client's firstHit moves the last source to the front when Spotify is prioritised, so
+        // Spotify goes last then (the same order it asks in: Spotify, the video, the covers).
         val spotify = backdrops.filter { it.first == ForkCanvasRules.Source.SPOTIFY }.map { it.second }
-        // The saved-by-id answers go first; with Spotify prioritised the client's firstHit moves the
-        // last source (Spotify, which reads its own id key) in front of them, which is the same order.
-        return (savedById(song) + if (ForkSpotifyCanvasFirst.prioritized.value) video + covers + spotify else covers + video + spotify).toTypedArray()
+        val others = backdrops.filter { it.first != ForkCanvasRules.Source.SPOTIFY }.map { it.second }
+        return (savedById(song) + if (spotifyFirst) others + covers + spotify else covers + backdrops.map { it.second }).toTypedArray()
+    }
+
+    /** The backdrops worth asking beside a cover clip already shown (those ordered before the cover). */
+    fun backdropsBeside(song: Song, title: String, artist: String, album: String?): List<Pair<ForkCanvasRules.Source, suspend () -> DesktopCanvasArtwork?>> {
+        if (!wanted(song)) return emptyList()
+        return backdrops(song, title, artist, album, ForkCanvasSettings.backdropsBesideCover(order()))
     }
 
     /**
@@ -93,12 +135,17 @@ internal object ForkDesktopCanvasSources {
     private fun downloaded(song: Song): Boolean =
         song.videoId.isNotBlank() && !NavidromeSettings.isNavidromeId(song.videoId) && DesktopDownloadManager.isSaved(song)
 
-    /** Apple, Tidal, the community index, while "Animated covers" is on; a downloaded song's art clip is kept by its id. */
+    /**
+     * Apple, Tidal, the community index, while "Animated covers" is on and the list has Apple on; a
+     * downloaded song's art clip is kept by its id. Apple's clip is the rendition "Animated cover
+     * quality" asks for (rule 13.5), saved under a key with that quality.
+     */
     fun covers(song: Song, title: String, artist: String, album: String?): List<suspend () -> DesktopCanvasArtwork?> {
-        if (!ForkCanvasSwitch.covers.value) return emptyList()
+        if (!ForkCanvasSwitch.covers.value || ForkCanvasRules.Source.APPLE_MUSIC !in order()) return emptyList()
         val idKey = if (downloaded(song)) ForkCanvasRules.downloadedKey(song.videoId) else null
+        val appleKey = ForkCanvasRules.appleKey(title, artist) + ForkCanvasSettings.appleKeySuffix()
         return listOf<suspend () -> DesktopCanvasArtwork?>(
-            { byId(idKey, title, artist, album) { cached(ForkCanvasRules.appleKey(title, artist), saveMiss = album != null) { DesktopAppleMusicCanvas.search(title, artist, album) } } },
+            { byId(idKey, title, artist, album) { cached(appleKey, saveMiss = album != null) { DesktopAppleMusicCanvas.search(title, artist, album)?.let(::rendition) } } },
             { byId(idKey, title, artist, album) { DesktopTidalCanvas.search(title, artist, album) } },
             { byId(idKey, title, artist, album) { DesktopCommunityCanvas.search(title, artist, album) } },
         )
@@ -108,16 +155,30 @@ internal object ForkDesktopCanvasSources {
     private suspend fun byId(key: String?, title: String, artist: String, album: String?, lookUp: suspend () -> DesktopCanvasArtwork?): DesktopCanvasArtwork? =
         ForkDownloadedCanvas.through(key, { it.toDesktop().matches(title, artist, album) }) { lookUp()?.toShared() }?.toDesktop()
 
-    /** The backdrop sources in the rulebook's order (the video, then Spotify), while "Backdrop videos" is on. */
-    fun backdrops(song: Song, title: String, artist: String, album: String?): List<Pair<ForkCanvasRules.Source, suspend () -> DesktopCanvasArtwork?>> {
-        val order = ForkCanvasRules.order(
-            enabled = buildSet {
-                if (ForkCanvasSwitch.videos.value && song.videoId.isNotBlank()) add(ForkCanvasRules.Source.YOUTUBE_MUSIC_VIDEO)
-                add(ForkCanvasRules.Source.SPOTIFY)
-            },
-            canvasOn = ForkCanvasSwitch.backdrops.value,
-        )
-        return order.map { source ->
+    /** Apple's clip as the rendition rule 13.5 picks from its HLS master list (the master when it can't be read). */
+    private fun rendition(art: DesktopCanvasArtwork): DesktopCanvasArtwork {
+        val cap = ForkCanvasSettings.coverQuality.value.cap
+        val read = { url: String -> runCatching { readText(url) }.getOrNull() }
+        fun pick(url: String?) = url?.let { ForkCanvasSettings.variantUrl(it, cap, read) }
+        return art.copy(url = pick(art.url) ?: art.url, fallbackUrl = pick(art.fallbackUrl))
+    }
+
+    private fun readText(url: String): String? {
+        val request = okhttp3.Request.Builder().url(url).build()
+        return com.music.bitchord.data.Http.client.newCall(request).execute().use { if (it.isSuccessful) it.body?.string() else null }
+    }
+
+    /**
+     * The backdrop sources in [order] (the video, then Spotify, unless the list says otherwise), while
+     * "Backdrop videos" is on; the video only for a song with an id and with "Music video canvas" on.
+     */
+    fun backdrops(
+        song: Song, title: String, artist: String, album: String?,
+        order: List<ForkCanvasRules.Source> = order(),
+    ): List<Pair<ForkCanvasRules.Source, suspend () -> DesktopCanvasArtwork?>> {
+        val backdrops = order.filter { it.canvas }
+            .filter { it != ForkCanvasRules.Source.YOUTUBE_MUSIC_VIDEO || (ForkCanvasSwitch.videos.value && song.videoId.isNotBlank()) }
+        return backdrops.map { source ->
             val ask: suspend () -> DesktopCanvasArtwork? = when (source) {
                 ForkCanvasRules.Source.YOUTUBE_MUSIC_VIDEO -> { { video(song, title, artist, album) } }
                 else -> { { spotify(song, title, artist, album) } }
@@ -126,13 +187,24 @@ internal object ForkDesktopCanvasSources {
         }
     }
 
+    /** The music video's loop, keyed by the song's id plus the settings and choices asking for it (rules 13.6-13.7). */
     private suspend fun video(song: Song, title: String, artist: String, album: String?): DesktopCanvasArtwork? {
         val dir = videoDir ?: return null
-        return cached(ForkCanvasRules.videoKey(song.videoId)) {
+        val suffix = ForkCanvasSettings.videoKeySuffix() + ForkCanvasChoices.keySuffix(song.videoId)
+        return cached(ForkCanvasRules.videoKey(song.videoId) + suffix) {
             val songMs = ForkMusicVideoMatch.lengthOf(song.durationText) * 1000
-            when (val r = ForkVideoCanvas.clip(song.videoId, title, artist, songMs, dir, 1080, ForkDesktopVideoCanvas)) {
-                is ForkVideoCanvas.Result.Clip ->
+            val wish = ForkVideoCanvas.Wish(
+                height = ForkCanvasSettings.videoQuality.value.height,
+                full = ForkCanvasSettings.videoMode.value == ForkCanvasSettings.VideoMode.FULL,
+                choice = ForkCanvasChoices.of(song.videoId),
+                chorusMs = ForkBestParts.chorusMs(ForkBestParts.lines(song.videoId), songMs),
+                tag = ForkVideoCanvas.tagOf(suffix),
+            )
+            when (val r = ForkVideoCanvas.clip(song.videoId, title, artist, songMs, dir, 1080, ForkDesktopVideoCanvas, wish)) {
+                is ForkVideoCanvas.Result.Clip -> {
+                    ForkCanvasChoices.noteVideo(song.videoId, r.videoId)
                     DesktopCanvasArtwork(url = r.file.absolutePath, title = title, artist = artist, album = album, source = DesktopCanvasSource.VIDEO)
+                }
                 ForkVideoCanvas.Result.None -> null
             }
         }

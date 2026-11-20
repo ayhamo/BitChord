@@ -341,6 +341,32 @@ class ForkCanvasCasesTest {
                 }
                 else -> skip(g, "chromeWhite: run in sharedUi ForkCanvasBackdropCasesTest against PlayerChrome's chromeWhite")
             }
+            // §13 Settings: the stored order and sources-on strings, and Apple's rendition pick.
+            "settings" -> {
+                val i = c.obj("input")
+                when (c.str("kind")) {
+                    "settingsOrder" -> {
+                        val got = ForkCanvasSettings.parseOrder(i.str("stored")).map(ForkCanvasSettings::id)
+                        val expect = (want as JsonArray).map { (it as JsonPrimitive).content }
+                        check(g, c, got == expect, got)
+                    }
+                    "settingsEnabled" -> {
+                        val got = ForkCanvasSettings.parseEnabled(i.str("stored")).map(ForkCanvasSettings::id)
+                        val expect = (want as JsonArray).map { (it as JsonPrimitive).content }
+                        check(g, c, got == expect, got)
+                    }
+                    "appleVariant" -> {
+                        val variants = i.arr("variants").map { v ->
+                            val a = v as JsonArray
+                            ForkCanvasSettings.Variant(num(a[0]).toInt(), num(a[1]).toInt(), Math.round(num(a[2])))
+                        }
+                        val cap = i.orNull("cap")?.toInt()
+                        val got = ForkCanvasSettings.pickVariant(variants, cap)
+                        check(g, c, got.toLong() == Math.round(num(want)), got)
+                    }
+                    else -> check(g, c, false, "unknown kind ${c.str("kind")}")
+                }
+            }
             else -> check(g, c, false, "unknown group")
         }
     }

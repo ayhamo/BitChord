@@ -869,6 +869,8 @@ fun NowPlayingScreen(
     onLiveCanvasChanged: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    val lyrics = forkLyricsForView(lyrics) // fork: the rulebook's instrumental gaps (lyrics.md §6.1)
+    ForkTrackLyricsOffset(song.videoId) // fork: this song's lyrics offset applies (lyrics.md §3)
     val density = LocalDensity.current
     val haptics = rememberHaptics()
 
@@ -877,6 +879,7 @@ fun NowPlayingScreen(
     // its own extraction.
     val remoteArt = rememberRemoteArtworkUrl(song)
     ForkPreloadCovers(queue, song) // fork: next covers warmed, no black player at a track change
+    ForkBestPartFollow(song, lyrics) // fork: the song's synced lyrics and best part for the canvas, menus and the Best part button (ForkBestPartChip.kt)
     // This is produced by the palette's existing 128 px decode and cache. It
     // samples the upper band rather than the whole sleeve because that is what
     // lies beneath the status bar when the player expands to full bleed.
@@ -914,7 +917,7 @@ fun NowPlayingScreen(
     val openListenTogetherMembers: () -> Unit = { showListenTogetherMembers = true }
 
     val syncedLyricsEnabled by PlayerSettings.syncedLyrics.collectAsStateWithLifecycle()
-    val lyricsOffsetMs by PlayerSettings.lyricsOffsetMs.collectAsStateWithLifecycle()
+    val lyricsOffsetMs by forkCombinedLyricsOffset() // fork: + the song's offset (lyrics.md §3); was PlayerSettings.lyricsOffsetMs
     // A lambda, not a value: read by the lyric strip and panel in scopes of
     // their own, so a tick recomposes them and not the player around them.
     val lyricsPlayhead = rememberLyricPlayhead(position)
@@ -1744,7 +1747,7 @@ fun NowPlayingScreen(
             )
         }
         if (lyricsOffsetOpen) {
-            LyricsOffsetSheet(
+            ForkLyricsOffsetSheet( // fork: this song's and the global offset (lyrics.md §3); was LyricsOffsetSheet
                 hazeState = playerHaze,
                 onDismiss = onDismissLyricsOffset,
             )

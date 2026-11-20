@@ -127,7 +127,7 @@ object LyricsPlus {
             built?.to(line.element)
         }.sortedBy { it.first.timeMs }
 
-        val sides = lineAlignments(sung.map { singerOf(it.second) }, response.agentTypes())
+        val sides = ForkLyricsRules.alignments(sung.map { singerOf(it.second) }, response.agentTypes()) // fork: the rulebook's sides (lyrics.md §5.2); was lineAlignments
         return sung.mapIndexed { index, (line, element) ->
             // A payload that names no voices at all can still mark a line as the
             // answering side, which is how the older shape of this API said the
@@ -136,7 +136,7 @@ object LyricsPlus {
             val side = if (sides[index] == LyricAlignment.End || element.saysOpposite()) {
                 LyricAlignment.End
             } else {
-                LyricAlignment.Start
+                sides[index] // fork: Start or a group's Center (lyrics.md §5.2); was LyricAlignment.Start
             }
             line.copy(alignment = side)
         }.withInstrumentalGaps()

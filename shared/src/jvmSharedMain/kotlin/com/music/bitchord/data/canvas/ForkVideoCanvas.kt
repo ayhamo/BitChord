@@ -109,38 +109,144 @@ object ForkVideoCanvas {
 
     /** What a cut came to. */
     sealed interface Result {
-        /** The loop, an MP4 file. */
-        data class Clip(val file: File) : Result
+        /** The loop, an MP4 file, and the video it was cut from (null: not known). */
+        data class Clip(val file: File, val videoId: String? = null) : Result
 
         /** The song has no usable music video (none, a still upload, all flashing): a miss to keep. */
         data object None : Result
     }
 
     /**
+     * What the listener asked for besides the song (fork, audit 2026-11-20 C 1-3 and 7): the height
+     * the loop is cut at ([height], null: from [clip]'s `artPx`, canvas.md §13.6), the whole video
+     * rather than a part ([full], §13.7), their choices for the song ([choice]: a picked video,
+     * which part, the videos turned away), and the chorus from its synced lyrics ([chorusMs], §7.6).
+     */
+    data class Wish(
+        val height: Int? = null,
+        val full: Boolean = false,
+        val choice: ForkCanvasChoices.Choice = ForkCanvasChoices.Choice(),
+        val chorusMs: Long? = null,
+        /** Part of the loop's file name, so each choice's loop is its own file. */
+        val tag: String = "",
+    )
+
+    /** One video tried: its loop, or why not ([ForkClipGate.Refusal]). */
+    private sealed interface Tried {
+        data class Done(val clip: Result.Clip) : Tried
+        data class Refused(val why: ForkClipGate.Refusal) : Tried
+    }
+
+    /**
      * The loop for [songId] ([title] by [artist], [songMs] long, 0 unknown) in [dir], cut for art
-     * about [artPx] wide. Throws when a request fails: that is not saved as "no video".
+     * about [artPx] wide, as [wish] asks. Throws when a request fails: that is not saved as "no video".
+     *
+     * Prism's `ClipFinder.findOn` order (`PR/canvas/ClipFinder.kt:104-136`): a video the listener
+     * picked first, as it is; then the search's first match, which must be the official music video
+     * ([ForkClipGate.official], canvas.md §5.6) whose title doesn't say it is something else
+     * ([ForkClipGate.titleSays]); refused for either, up to [OTHER_VIDEOS] other matches are tried,
+     * and with none better the first match as it is. A song whose search finds no match at all may
+     * take a lyric video by the artist ([ForkMusicVideoMatch.candidates] `lyricsOk`). Live and
+     * private videos are never cut ([ForkClipGate.playable]).
      */
     @Synchronized
-    fun clip(songId: String, title: String, artist: String, songMs: Long, dir: File, artPx: Int, platform: Platform): Result {
+    fun clip(songId: String, title: String, artist: String, songMs: Long, dir: File, artPx: Int, platform: Platform, wish: Wish = Wish()): Result {
         val t0 = System.currentTimeMillis()
-        val video = findVideo(title, artist, Math.round(songMs / 1000.0)) ?: return Result.None
-        val player = visionPlayer(video.id)
+        val rejected = wish.choice.rejected
+        val out = File(dir, "mv_${safe(songId)}${wish.tag}.mp4")
+        fun done(t: Tried?): Result? = (t as? Tried.Done)?.clip?.also {
+            Log.d(TAG, "${it.file.length() / 1024} KB loop ready ${System.currentTimeMillis() - t0} ms after the lookup")
+        }
+
+        val picked = wish.choice.picked?.takeIf { it !in rejected }
+        if (picked != null) {
+            done(tryVideo(ForkMusicVideoMatch.Video(picked, "", "", 0), title, own = true, dir, out, artPx, platform, wish))?.let { return it }
+        }
+        val durationSec = Math.round(songMs / 1000.0)
+        val search = search(title, artist, durationSec, rejected)
+        val first = search.matches.firstOrNull()
+        if (first == null) {
+            // No music video at all: a lyric video by the artist, as it is (Prism's owner rule,
+            // 2026-11-13: "if the song has a video it should have a canvas").
+            val lyric = ForkMusicVideoMatch.candidates(title, ForkMusicVideoMatch.artists(artist), durationSec, search.all, lyricsOk = true)
+                .firstOrNull { it.id !in rejected } ?: return Result.None
+            Log.d(TAG, "no music video; the lyric video ${lyric.id} '${lyric.title}'")
+            return done(tryVideo(lyric, title, own = true, dir, out, artPx, platform, wish)) ?: Result.None
+        }
+        val tried = tryVideo(first, title, own = false, dir, out, artPx, platform, wish)
+        done(tried)?.let { return it }
+        val why = (tried as Tried.Refused).why
+        if (why !in ForkClipGate.SEARCH_AGAIN) return Result.None
+        for (other in search.matches.drop(1).take(OTHER_VIDEOS)) {
+            done(tryVideo(other, title, own = false, dir, out, artPx, platform, wish))?.let { return it }
+        }
+        // No better video: the song's own, whatever it is called or marked.
+        Log.d(TAG, "${first.id} refused ($why), none better: taken as it is")
+        return done(tryVideo(first, title, own = true, dir, out, artPx, platform, wish)) ?: Result.None
+    }
+
+    /** Other matches tried after a refused first one (Prism's `OTHER_VIDEOS`). */
+    private const val OTHER_VIDEOS = 2
+
+    /**
+     * One video through the gate and, if it passes, cut. [own]: the song's own video with no better
+     * one, or one the listener picked: its type and title are not held against it; what can't make
+     * a loop (not playable, no stream, a still picture, flashing) still refuses it.
+     */
+    private fun tryVideo(
+        video: ForkMusicVideoMatch.Video, songTitle: String, own: Boolean, dir: File, out: File, artPx: Int, platform: Platform, wish: Wish,
+    ): Tried {
+        val id = video.id
+        if (!own) {
+            val type = video.type ?: videoType(id)
+            if (!ForkClipGate.official(type)) {
+                Log.d(TAG, "$id is not the official video ($type)")
+                return Tried.Refused(ForkClipGate.Refusal.NOT_OFFICIAL)
+            }
+        }
+        val player = visionPlayer(id)
+        val details = player["videoDetails"] as? JsonObject
+        val videoTitle = details?.text("title") ?: video.title
+        if (!own && ForkClipGate.titleSays(songTitle, videoTitle)) {
+            Log.d(TAG, "$id '$videoTitle' says it is not the music video")
+            return Tried.Refused(ForkClipGate.Refusal.TITLE)
+        }
         val status = (player["playabilityStatus"] as? JsonObject)?.text("status")
         if (status != "OK") {
-            Log.d(TAG, "${video.id} not playable ($status)")
-            return if (status == "UNPLAYABLE" || status == "ERROR") Result.None else throw IOException("player: $status")
+            Log.d(TAG, "$id not playable ($status)")
+            if (status == "UNPLAYABLE" || status == "ERROR") return Tried.Refused(ForkClipGate.Refusal.NOT_PLAYABLE)
+            throw IOException("player: $status")
         }
-        val want = if (artPx < 480) 360 else if (artPx < 900) 720 else 1080
+        val seconds = (details?.get("lengthSeconds") as? JsonPrimitive)?.let { it.doubleOrNull ?: it.contentOrNull?.toDoubleOrNull() } ?: 0.0
+        if (!ForkClipGate.playable(status, details?.text("isPrivate") == "true", details?.text("isLive") == "true",
+                details?.text("isLiveContent") == "true", seconds.toLong())
+        ) {
+            Log.d(TAG, "$id is live or private")
+            return Tried.Refused(ForkClipGate.Refusal.NOT_PLAYABLE)
+        }
+        val want = wish.height ?: if (artPx < 480) 360 else if (artPx < 900) 720 else 1080
         val streaming = player["streamingData"] as? JsonObject
-        val format = pickFormat(streaming, want) ?: return Result.None.also { Log.d(TAG, "${video.id} has no H.264 DASH stream") }
-        val seconds = ((player["videoDetails"] as? JsonObject)?.get("lengthSeconds") as? JsonPrimitive)?.let { it.doubleOrNull ?: it.contentOrNull?.toDoubleOrNull() } ?: 0.0
+        val format = pickFormat(streaming, want)
+            ?: return Tried.Refused(ForkClipGate.Refusal.NO_STREAM).also { Log.d(TAG, "$id has no H.264 DASH stream") }
         dir.mkdirs()
-        val out = File(dir, "mv_${safe(songId)}.mp4")
 
         var length = Math.round(seconds * 1000)
         val board = runCatching { board(player, length, platform) }.onFailure { Log.w(TAG, "storyboard not read: ${it.message}") }.getOrNull()
         if (board != null) length = maxOf(length, board.frames.size * board.intervalMs)
-        if (length < ForkClipJudge.WINDOW_MS) return Result.None.also { Log.d(TAG, "${video.id} has no length") }
+        if (length < ForkClipJudge.WINDOW_MS) return Tried.Refused(ForkClipGate.Refusal.NO_STREAM).also { Log.d(TAG, "$id has no length") }
+
+        if (wish.full) {
+            // §13.7 Full video: the whole video, muted; a still upload is still no canvas.
+            val bars = if (board != null && board.frames.size >= MIN_FRAMES) ForkClipJudge.bars(board.frames) else FloatArray(4)
+            if (board != null && board.frames.size >= MIN_FRAMES && ForkClipJudge.still(board.frames, bars)) {
+                return Tried.Refused(ForkClipGate.Refusal.STILL).also { Log.d(TAG, "$id is a still picture") }
+            }
+            cut(format, 0.0, length / 1000.0, dir, out, platform)
+            File(out.path.dropLast(4) + ".crop").writeText(Framing(0.5f, bars).line())
+            trim(dir, keep = out)
+            Log.d(TAG, "$id whole video at ${format.intOf("height")}p")
+            return Tried.Done(Result.Clip(out, id))
+        }
 
         val loop: ForkClipJudge.Loop
         var peak = -1L
@@ -151,16 +257,19 @@ object ForkVideoCanvas {
         } else {
             // the still check first: a still upload needs no "most replayed" curve
             if (ForkClipJudge.still(board.frames, ForkClipJudge.bars(board.frames))) {
-                return Result.None.also { Log.d(TAG, "${video.id} is a still picture") }
+                return Tried.Refused(ForkClipGate.Refusal.STILL).also { Log.d(TAG, "$id is a still picture") }
             }
-            peak = ForkBestPart.partStart(heatmap(video.id), length)
-            // no chorus from synced lyrics yet: null (the rulebook's §12 lists it for both extensions too)
-            loop = ForkClipJudge.judge(board.frames, board.intervalMs, length, peak.takeIf { it >= 0 }, null)
-                ?: return Result.None.also { Log.d(TAG, "${video.id} has no window that moves") }
+            peak = ForkBestPart.partStart(heatmap(id), length)
+            // rule 7.6: the peak, else the chorus from the song's synced lyrics (the player's, when it had them)
+            loop = ForkClipJudge.judge(board.frames, board.intervalMs, length, peak.takeIf { it >= 0 }, wish.chorusMs)
+                ?: return Tried.Refused(ForkClipGate.Refusal.STILL).also { Log.d(TAG, "$id has no window that moves") }
         }
-        var start = maxOf(0.0, minOf(loop.startMs / 1000.0, length / 1000.0 - CLIP_SEC))
-        Log.d(TAG, "${video.id} ${format.intOf("height")}p, part at ${"%.1f".format(Locale.ROOT, start)} s of ${length / 1000} s" +
-            (if (peak < 0) "" else ", most replayed at ${peak / 1000} s") + ", crop ${loop.cropX}")
+        // "Pick another part": the judged part, then the runners-up in turn, round again
+        val parts = listOf(loop.startMs) + loop.others
+        val index = wish.choice.part % parts.size
+        var start = maxOf(0.0, minOf(parts[index] / 1000.0, length / 1000.0 - CLIP_SEC))
+        Log.d(TAG, "$id ${format.intOf("height")}p, part ${index + 1} of ${parts.size} at ${"%.1f".format(Locale.ROOT, start)} s of ${length / 1000} s" +
+            (if (peak < 0) "" else ", most replayed at ${peak / 1000} s") + (wish.chorusMs?.let { ", chorus at ${it / 1000} s" } ?: "") + ", crop ${loop.cropX}")
 
         // the second look, on real frames: end on a cut, never flashing; a part that flashes gives way
         // to the next other part once, and if that flashes too, no canvas
@@ -173,9 +282,9 @@ object ForkVideoCanvas {
                     end = e
                     break
                 }
-                val next = loop.others.firstOrNull()
+                val next = parts.getOrNull((index + 1) % parts.size)?.takeIf { parts.size > 1 }
                 if (e == 0.0 || attempt == 1 || next == null) {
-                    if (e < 0) return Result.None.also { Log.d(TAG, "${video.id} flashes: not shown") }
+                    if (e < 0) return Tried.Refused(ForkClipGate.Refusal.FLASHING).also { Log.d(TAG, "$id flashes: not shown") }
                     break
                 }
                 start = next / 1000.0
@@ -183,13 +292,15 @@ object ForkVideoCanvas {
             }
         }
         cut(format, start, end, dir, out, platform)
-        File(dir, "mv_${safe(songId)}.crop").writeText(Framing(loop.cropX, loop.bars).line())
+        File(out.path.dropLast(4) + ".crop").writeText(Framing(loop.cropX, loop.bars).line())
         trim(dir, keep = out)
-        Log.d(TAG, "${out.length() / 1024} KB loop ready ${System.currentTimeMillis() - t0} ms after the lookup")
-        return Result.Clip(out)
+        return Tried.Done(Result.Clip(out, id))
     }
 
     private fun safe(id: String) = id.replace(Regex("[^A-Za-z0-9_-]"), "_")
+
+    /** A [Wish.tag] for a loop key suffix: empty for none, else a short stable name part. */
+    fun tagOf(keySuffix: String): String = if (keySuffix.isEmpty()) "" else "_" + Integer.toHexString(keySuffix.hashCode())
 
     /** Deletes the oldest loops (and their framing) past [KEEP_BYTES]; never [keep]. */
     private fun trim(dir: File, keep: File) {
@@ -206,26 +317,78 @@ object ForkVideoCanvas {
 
     // ---- the video (rule 5.1) -------------------------------------------------------------
 
-    /** The song's music video, or null: a video search, then once more with "official video". */
-    fun findVideo(title: String, artist: String, durationSec: Long): ForkMusicVideoMatch.Video? {
+    /** A search's matches (best first, none turned away) and every result read, for the lyric fallback. */
+    private class Search(val matches: List<ForkMusicVideoMatch.Video>, val all: List<ForkMusicVideoMatch.Video>)
+
+    /** The searches of rule 5.1: "title artist", then with "official video" when nothing matches. */
+    private fun search(title: String, artist: String, durationSec: Long, rejected: Set<String>): Search {
         val artists = ForkMusicVideoMatch.artists(artist)
-        if (title.isBlank() || artists.isEmpty()) return null
+        if (title.isBlank() || artists.isEmpty()) return Search(emptyList(), emptyList())
+        val all = ArrayList<ForkMusicVideoMatch.Video>()
         for (q in listOf("$title ${artists[0]}", "$title ${artists[0]} official video")) {
-            val body = buildJsonObject {
-                put("query", q)
-                put("params", VIDEOS)
-                putJsonObject("context") {
-                    putJsonObject("client") {
-                        put("clientName", "WEB_REMIX"); put("clientVersion", "1.20251101.01.00"); put("hl", "en"); put("gl", "US")
-                    }
-                }
-            }
-            val found = ArrayList<ForkMusicVideoMatch.Video>()
-            results(post(MUSIC_SEARCH, body, "Mozilla/5.0", "https://music.youtube.com"), found)
-            ForkMusicVideoMatch.pick(title, artists, durationSec, found)?.let { return it }
+            val found = searchVideos(q)
+            all += found
+            val matches = ForkMusicVideoMatch.candidates(title, artists, durationSec, found).filter { it.id !in rejected }
+            if (matches.isNotEmpty()) return Search(matches, all)
             Log.d(TAG, "none for '$q' among ${found.take(5).joinToString { "'${it.title}' by ${it.channel}" }}")
         }
-        return null
+        return Search(emptyList(), all.distinctBy { it.id })
+    }
+
+    /** The song's music video, or null: a video search, then once more with "official video". */
+    fun findVideo(title: String, artist: String, durationSec: Long): ForkMusicVideoMatch.Video? =
+        search(title, artist, durationSec, emptySet()).matches.firstOrNull()
+
+    /**
+     * "Pick another video": the videos a search finds for the song, its matches first, none of
+     * [rejected]; at most [max]. Blocking.
+     */
+    fun choices(title: String, artist: String, durationSec: Long, rejected: Set<String>, max: Int = 10): List<ForkMusicVideoMatch.Video> {
+        val artists = ForkMusicVideoMatch.artists(artist)
+        if (title.isBlank() || artists.isEmpty()) return emptyList()
+        val found = searchVideos("$title ${artists[0]}")
+        val matches = ForkMusicVideoMatch.candidates(title, artists, durationSec, found)
+        return (matches + found).distinctBy { it.id }.filter { it.id !in rejected }.take(max)
+    }
+
+    private fun searchVideos(q: String): List<ForkMusicVideoMatch.Video> {
+        val body = buildJsonObject {
+            put("query", q)
+            put("params", VIDEOS)
+            putJsonObject("context") {
+                putJsonObject("client") {
+                    put("clientName", "WEB_REMIX"); put("clientVersion", "1.20251101.01.00"); put("hl", "en"); put("gl", "US")
+                }
+            }
+        }
+        val found = ArrayList<ForkMusicVideoMatch.Video>()
+        results(post(MUSIC_SEARCH, body, "Mozilla/5.0", "https://music.youtube.com"), found)
+        return found
+    }
+
+    /**
+     * YouTube Music's word for the video ("MUSIC_VIDEO_TYPE_OMV"), from its WEB_REMIX player answer,
+     * which carries it even where that client can't play the video; null when not read.
+     */
+    private fun videoType(videoId: String): String? = runCatching {
+        val body = buildJsonObject {
+            put("videoId", videoId)
+            putJsonObject("context") {
+                putJsonObject("client") {
+                    put("clientName", "WEB_REMIX"); put("clientVersion", "1.20251101.01.00"); put("hl", "en"); put("gl", "US")
+                }
+            }
+        }
+        ((post(MUSIC_PLAYER, body, "Mozilla/5.0", "https://music.youtube.com")["videoDetails"] as? JsonObject)?.text("musicVideoType"))
+    }.getOrNull()
+
+    private const val MUSIC_PLAYER = "https://music.youtube.com/youtubei/v1/player?prettyPrint=false"
+
+    /** The first `musicVideoType` anywhere under [node] (a search result's play button says it). */
+    private fun typeIn(node: JsonElement?): String? = when (node) {
+        is JsonObject -> (node["musicVideoType"] as? JsonPrimitive)?.contentOrNull ?: node.values.firstNotNullOfOrNull(::typeIn)
+        is JsonArray -> node.firstNotNullOfOrNull(::typeIn)
+        else -> null
     }
 
     /** Each search result's id, title, channel and length (the fixed column, else a subtitle run). */
@@ -253,7 +416,7 @@ object ForkVideoCanvas {
                     }
                     i++
                 }
-                out += ForkMusicVideoMatch.Video(id, title, channel, length)
+                out += ForkMusicVideoMatch.Video(id, title, channel, length, typeIn(r))
             }
             is JsonArray -> node.forEach { results(it, out) }
             else -> Unit

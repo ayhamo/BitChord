@@ -2023,7 +2023,7 @@ fun BitChordDesktopApp() {
     // phone's sheet, which carries the offset across tracks, is left alone.
     val lyricsOffsetMs by DesktopPlayerSettings.lyricsOffsetMs.collectAsState()
     LaunchedEffect(selectedSong?.videoId) {
-        DesktopPlayerSettings.setLyricsOffsetMs(0)
+        // fork: no reset; the global offset is kept across songs and each song has its own (ForkLyricsSettingsDesktop, lyrics.md §3)
     }
 
     LaunchedEffect(selectedSong?.videoId, animatedCanvas) {
@@ -3268,7 +3268,7 @@ fun BitChordDesktopApp() {
         )
         partySyncHolder[0]?.onLocalIntent()
     }
-    SideEffect { ForkMostReplayedDesktop.install(seek = ::seekPlayer, playingId = { selectedSong?.videoId }) } // fork: the player menu's "Jump to the most replayed part" seeks as the scrubber does
+    SideEffect { ForkMostReplayedDesktop.install(seek = ::seekPlayer, playingId = { selectedSong?.videoId }, position = { playbackEngine.state.value.positionMs }, play = { playSong(it) }) } // fork: the player menu's "Jump to the most replayed part" seeks as the scrubber does; + where the song is and "Play from the best part"
 
     ForkAccentSource(selectedSong?.thumbnailUrl) // fork: the accent can follow the song (ForkAccent)
     MaterialTheme(
@@ -6429,6 +6429,7 @@ private fun DesktopSettingsScreen(
                             onLyricsBlurChange,
                         )
                         ForkLyricsUnfocusedRow() // fork: Keep lyrics moving when unfocused (ForkLyricsUnfocused)
+                        ForkLyricsViewRowsDesktop() // fork: the lyrics rulebook's view settings (ForkLyricsSettingsDesktop)
                         SettingsNavigationRow(
                             title = DesktopStrings["lyrics_sources", "Lyrics sources"],
                             subtitle = enabledLyricsSources
@@ -6674,7 +6675,7 @@ private fun DesktopSettingsScreen(
                         val forkCovers by com.music.bitchord.ui.player.ForkCanvasSwitch.covers.collectAsState()
                         ForkMarked { SettingsToggle(ForkPlayerMenu.BACKDROPS_TITLE, ForkPlayerMenu.BACKDROPS_SUBTITLE, forkBackdrops, ForkNavidrome::setBackdrops) }
                         ForkMarked { ForkMusicVideoCanvasRow() } // fork: "Music video canvas", greyed while Backdrop videos is off
-                        ForkMarked { SettingsToggle(ForkPlayerMenu.COVERS_TITLE, ForkPlayerMenu.COVERS_SUBTITLE, forkCovers, ForkNavidrome::setCovers) }
+                        ForkMarked { SettingsToggle(ForkPlayerMenu.COVERS_TITLE, ForkPlayerMenu.COVERS_SUBTITLE, forkCovers, ForkNavidrome::setCovers) }; ForkCanvasSettingsRows() // fork: + the canvas settings (canvas.md §13: sources, qualities, mode) and the Best part button
                         ForkCanvasAutoHideRow() // fork
                         SettingsNavigationRow(
                             title = DesktopStrings["spotify_canvas_setup", "Spotify Canvas setup"],

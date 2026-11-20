@@ -215,7 +215,7 @@ Short path names used below:
 5. **Watch** (`PlaybackService:5405-5483`): for 10 s after the swap, a duration off by more than the slack, or an early end, reverts to the previous URI at the same position.
 6. **Substitute length check** (`PlaybackService:6585-6626`): a substituted copy that decodes more than slack + 1 s off is replaced by YouTube **from position 0**.
 7. **Fallback** (`PlaybackService:4199-4269`): a failing substitute falls back to YouTube after a recovery delay, refusing further upgrades and substitutes for that song. Picked source rows are exempt.
-8. **No alignment.** The swap seeks to the same position. No offset fit and no level fit are done for an addon copy.
+8. **Window check** (fork, 2026-11-20, after this spec was read): before the swap, 12 s of the copy at YouTube's position is fitted against YouTube's Opus (`ForkWindowCheckPhone`, `ForkWindowFit`); no match is no swap, a match seeks the copy to the position plus its offset. No level fit: the copy gets YouTube's figure (Loudness below).
 9. **Fork `ForkUpgradeCover`** (`ForkUpgradeCover:19-58`, `:340-375`, `:414-427`):
    - The standby player plays the old copy from cache, lined up on the players' clocks (tolerance 120 ms).
    - The session fades under it over 150 ms and takes the swap muted, then fades back in over 550 ms with equal-gain fades.

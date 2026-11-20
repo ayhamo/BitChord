@@ -268,7 +268,7 @@ internal fun PlayerScrubber(
                     .matchParentSize()
                     .graphicsLayer { alpha = 1f - mixPulse.cover },
             ) {
-                centerLabel()
+                if (!forkBestPartChip(shown, durationMs, onScrub, onScrubFinished)) centerLabel() // fork: Prism's "Best part" button in the label's place while it shows
             }
             val mixingShown by remember { derivedStateOf { mixPulse.cover > 0f } }
             if (mixingShown) {

@@ -2,7 +2,31 @@
 
 Snapshot for picking the work up again. Plan: `FORK_PLAN.md`. Every touched upstream line: `FORK.md`.
 
-## Done 2026-11-19, night (not committed): the 36 rulebook leftovers
+## Done 2026-11-20 (not committed): level cut only (spec 5ece86d)
+
+- YouTube's `loudnessDb` now only turns a loud song down; a quiet one is no longer raised (phone `loudnessGainMb`, PC `ForkLoudnessMath.gainDb`, shared `ForkLoudnessCut`). pick-cases `loudnessGain` 6/6. The PC's Navidrome ReplayGain and file tags can still raise a song.
+
+## Done 2026-11-20 (not committed): lyrics to the extension's rulebook (spec/lyrics, 712c95c)
+
+- **Built, phone and PC (shared panel):** the 660 ms early highlight (0.41 s under a still-sung line, gaps 190 ms ahead; "Lyrics by real timing" turns it off), scroll animation capped at 450 ms; auto-scroll setting, drag/wheel/trackpad stops following, back on "Follow lyrics", a tapped line or the panel shown again (no timers); per-song offset beside the global one in a new sheet (±50 ms, ±3 s slider, field, reset; positive = earlier), the PC keeps the offset across songs; rulebook duet sides (groups centred, the TTML `div`'s singer inherited, "Duet sides"); gaps of 7 s+ at 310/800 ms; text size and line spacing; per-language romanization, "Romanized as main" + "Keep the original under it", the sub-line at 0.64 (romanized 0.8, translated 0.7 / 0.3); SimpMusic offered; YouTube caption tracks behind the transcript source.
+- **Kept on purpose:** the clock, the ±5 s global clamp, the phone portrait top anchor, BitChord's gap dots, 34 / 1.2 defaults, romanization of other scripts and the per-song translate/romanize buttons, the listener's source order (FORK.md "Lyrics rulebook: kept").
+- **Tests:** `ForkLyricsCasesTest` runs the 17 cases (`/spec` or `RULEBOOK_SPEC`), `ForkLyricsRulesTest` the rest. Not tried on a device or the PC yet: the follow pill, the offset sheet and menu, centred group lines, the caption fallback and SimpMusic on the network.
+
+## Done 2026-11-20 (not committed): canvas settings (§13) and Prism's clip picking, song menu, best part
+
+- **Settings (canvas.md §13, all 11 `settings` cases pass):** source list with order and on/off, Animated cover quality (Apple's HLS rendition), YouTube canvas quality and mode (Clips / Full video), Artist images / videos / video quality, Best part button. Phone: under the canvas rows and on the Fork page; PC: Appearance and beside "Artist Art". Greyed, never hidden. A change asks again at once. Mobile data: upstream's "Canvas over mobile data", unchanged.
+- **Prism clip picking:** official-type check with up to two more videos tried, refusal words (fancam, stage, performance, jukebox, CJK), live and private videos refused, a lyric video only when nothing else matches, the chorus from synced lyrics as a candidate part, no canvas for stations and device files.
+- **Song menu:** Canvas for this song, Pick another part, Pick another video, Not this video, Set / Clear your best part (player menu); Play from the best part (every song menu). Best part button in the scrubber's centre for a song's first seconds; the most replayed jump snaps to a lyric line.
+- **Not tried on a device or the PC:** every row and menu, the HLS rendition pick on real Apple clips, Full video mode, the button, Play from the best part (phone: queued next, then skipped to), the Pick another video list. Kept gaps are in FORK.md ("Canvas settings, kept as they are").
+
+## Done 2026-11-20 (not committed): the addon rulebook rewrite (extension 712c95c)
+
+- **Window check, phone and PC:** before a better copy replaces what plays, 12 s of it at YouTube's position is fitted against YouTube's audio (`ForkWindowFit`, the extension's `fitWindow` ported; `ForkWindowCheckPhone` after the audition, `ForkWindowCheckPc` in `take()`). No match: no swap. Match: the phone swaps at position + offset and the cover lines up by it; the PC reads that copy through the offset from then on. The PC also refuses a fake lossless copy now.
+- **Tests:** synthetic window fixtures 11/11; `window-cases.json` 51 windows checked as numbers, all 51 audio refits skipped (the extension's `.cache/addons` copies are absent; nothing downloaded); pick-cases rowsToOpen 21/21 (the 2 new ISRC cases pass with no code change).
+- **Not checked on a device:** no swap has run through the window check on the phone or the PC. Unknowns: whether MediaExtractor seeks a sparsely cached FLAC from the audition's entry (the network fills a probed hole; a decode that fails keeps the song on what plays), and what the extra decode adds to the swap's delay.
+- **Kept, not built** (FORK.md row "Addon rulebook §8, kept differences"): a race won at the start plays unchecked; the phone swaps HLS/DASH unchecked; the phone's clock is the copy's after a swap; no search-only read-ahead; one shared cache; Upgrade clears every addon's answers; BitChord's UA and Atmos-on defaults. Also kept: a lane at its addon's limit waits for a slot (8.6, 5ece86d); the upgrade pass after a cached copy asks every other addon, not only higher-ranked ones (8.2.1, a84b2bf). The cut-only level (5ece86d) is built separately and not part of this work.
+
+## Done 2026-11-19, night (committed 0cec4a5b): the 36 rulebook leftovers
 
 - **Addons (10):** all pass on the phone end to end (`ForkRulebookPickTest.DIFFERS` empty), the PC on the same shared rules (`ForkAddonStream`): ISRC first (the song's ISRC from its lyrics lookup, since YouTube Music gives none), LOW without a low option takes the high one else the last, a missing bitrate from the answer's own tier, the tier read off the codec, plain-http stream links refused (localhost-only exception), HLS from `mimeType`. Not checked on a device: ISRC first only applies once a song's lyrics were looked up, and a LAN addon serving plain http is now refused.
 - **Canvas:** downloaded songs read their canvases saved by id first, phone and PC (`spid:<id>`, then `id:<id>`); the phone's Spotify REST fallback uses the rulebook match (20/20; upstream 13/20); chromeWhite is BitChord's own `PlayerChrome` and runs 3/3. The 17 Metrolist bleed cases stay unported on purpose (phone-only in the rulebook; BitChord draws its own mesh). Canvas 196 / 0 / 19.

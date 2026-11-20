@@ -138,7 +138,7 @@ object ForkCanvas {
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO + scope.context) {
                 var found: CanvasArtwork? = null
                 var threw: Throwable? = null
-                for ((_, ask) in ForkCanvasSources.backdrops(song, query.title, query.artist, album)) {
+                for ((_, ask) in ForkCanvasSources.backdropsBeside(song, query.title, query.artist, album)) {
                     val r = runCatching { ask() }
                     r.exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it; threw = it }
                     found = r.getOrNull()?.takeIf { it.matches(query.title, query.artist, album) }

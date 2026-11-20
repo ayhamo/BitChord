@@ -1324,6 +1324,7 @@ fun SettingsScreen(
                         onClick = onTranslationLanguage,
                     )
                 }
+                forkLyricsViewRows() // fork: the lyrics rulebook's settings (ForkLyricsSettingsRows)
             }
         }
 

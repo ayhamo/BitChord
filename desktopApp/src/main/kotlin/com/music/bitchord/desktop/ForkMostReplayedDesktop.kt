@@ -25,13 +25,55 @@ internal object ForkMostReplayedDesktop {
 
     @Volatile private var seek: ((Long) -> Unit)? = null
     @Volatile private var playingId: () -> String? = { null }
+    @Volatile private var position: () -> Long = { 0L }
+    @Volatile private var play: ((Song) -> Unit)? = null
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
-    /** From the window: its seek and the song playing now. */
-    fun install(seek: (Long) -> Unit, playingId: () -> String?) {
+    /**
+     * From the window: its seek, the song playing now, where it is, and its "play this song" (for
+     * "Play from the best part").
+     */
+    fun install(seek: (Long) -> Unit, playingId: () -> String?, position: () -> Long = { 0L }, play: ((Song) -> Unit)? = null) {
         this.seek = seek
         this.playingId = playingId
+        this.position = position
+        this.play = play
+    }
+
+    /** Where [songId] is now while it plays; null otherwise. */
+    fun positionOf(songId: String): Long? = if (playingId() == songId) position().coerceAtLeast(0) else null
+
+    /**
+     * "Play from the best part" (Prism's song-menu row): [song]'s best part
+     * ([ForkMostReplayed.bestPart]: your own, else the most replayed, else the chorus), then the song
+     * played from there (seeking once the window plays it).
+     */
+    fun playFromBestPart(song: Song) {
+        scope.launch {
+            val durationMs = com.music.bitchord.data.canvas.ForkMusicVideoMatch.lengthOf(song.durationText) * 1000
+            val ms = withContext(Dispatchers.IO) { runCatching { ForkMostReplayed.bestPart(song.videoId, durationMs) }.getOrNull() }
+            if (ms == null) {
+                ForkNotice.show(com.music.bitchord.data.canvas.ForkBestParts.NONE_KNOWN)
+                return@launch
+            }
+            if (DesktopListenTogether.state.value.controlsLocked) {
+                ForkNotice.show("Only the party host can change playback")
+                return@launch
+            }
+            if (playingId() != song.videoId) {
+                val p = play ?: return@launch
+                p(song)
+                // The engine opens the stream first; seek once the song is the one playing (up to 8 s).
+                var waited = 0
+                while (waited < 40 && !(playingId() == song.videoId && position() > 0)) {
+                    kotlinx.coroutines.delay(200)
+                    waited++
+                }
+                if (playingId() != song.videoId) return@launch
+            }
+            seek?.invoke(ms)
+        }
     }
 
     fun jump(songId: String) {
@@ -51,12 +93,17 @@ internal object ForkMostReplayedDesktop {
     }
 }
 
-/** The menu row: only for a YouTube song; closes the menu as the lookup starts. */
+/**
+ * The player menu's fork rows: the jump (only for a YouTube song; closes the menu as the lookup
+ * starts), then the song's canvas choices and best part ([ForkCanvasMenuRowsDesktop]).
+ */
 @Composable
 internal fun ForkMostReplayedRow(song: Song, onDismiss: () -> Unit) {
-    if (!ForkMostReplayed.eligible(song.videoId)) return
-    DesktopMenuRow(Icons.Rounded.Whatshot, ForkMostReplayed.MENU_TITLE) {
-        onDismiss()
-        ForkMostReplayedDesktop.jump(song.videoId)
+    if (ForkMostReplayed.eligible(song.videoId)) {
+        DesktopMenuRow(Icons.Rounded.Whatshot, ForkMostReplayed.MENU_TITLE) {
+            onDismiss()
+            ForkMostReplayedDesktop.jump(song.videoId)
+        }
     }
+    ForkCanvasMenuRowsDesktop(song, onDismiss)
 }

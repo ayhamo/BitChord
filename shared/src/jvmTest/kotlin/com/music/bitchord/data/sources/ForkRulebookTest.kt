@@ -106,6 +106,10 @@ class ForkRulebookTest {
                 e.getValue("refused").jsonArray.map { it.jsonObject.str("id") to it.jsonObject.str("why") }
             if (got != want) failures += "rowsToOpen: ${c.str("name")}\n   got  $got\n   want $want"
         }
+        // ISRC first in every match (extension 712c95c): its cases must be there to be run, not quietly gone
+        for (name in ISRC_CASES) {
+            if (cases.none { it.str("name") == name }) failures += "rowsToOpen: the ISRC case '$name' is missing from the rulebook"
+        }
         report("pick-cases rowsToOpen", cases.size, failures)
     }
 
@@ -215,6 +219,19 @@ class ForkRulebookTest {
         report("atmosOff", cases.size, failures)
     }
 
+    /** pick-cases' `loudnessGain`: a cut only, from `audioConfig.loudnessDb`, never `perceptualLoudnessDb` (spec 5ece86d). */
+    @Test
+    fun loudnessGainCases() {
+        val cases = read("pick-cases.json").getValue("loudnessGain").jsonArray.map { it.jsonObject }
+        val failures = cases.mapNotNull { c ->
+            val db = c.getValue("audioConfig").jsonObject["loudnessDb"]?.jsonPrimitive?.content?.toDoubleOrNull()
+            val got = com.music.bitchord.data.innertube.ForkLoudnessCut.gainDb(db)
+            val want = c.getValue("expectDb").jsonPrimitive.content.toDouble()
+            "${c.str("name")}: got $got dB, want $want".takeIf { kotlin.math.abs(got - want) > 1e-9 }
+        }
+        report("loudnessGain", cases.size, failures)
+    }
+
     private fun report(what: String, n: Int, failures: List<String>) {
         println("$what: ${n - failures.size}/$n pass")
         if (failures.isNotEmpty()) fail("$what: ${failures.size} of $n differ\n" + failures.joinToString("\n"))
@@ -288,4 +305,13 @@ class ForkRulebookTest {
     }
 
     private val ATMOS = Regex("atmos|dolby|eac3[_-]?joc|ec-?3", RegexOption.IGNORE_CASE)
+
+    /** pick-cases' ISRC-first cases; the last two came with the rulebook rewrite (712c95c). */
+    private val ISRC_CASES = listOf(
+        "ISRC first, whatever the title says",
+        "an ISRC row still needs the length",
+        "no ISRC on the song: the matcher decides",
+        "no ISRC on the rows: the matcher decides",
+        "two ISRC rows open first, in the addon's order",
+    )
 }

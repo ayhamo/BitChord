@@ -29,7 +29,7 @@ object SimpMusicLyrics {
     suspend fun lyrics(videoId: String, durationMs: Long): List<LyricLine>? =
         withContext(Dispatchers.IO) {
             if (videoId.isBlank()) return@withContext null
-            val body = lyricsGet(BASE + videoId) ?: return@withContext null
+            val body = forkLyricsGetAs(BASE + videoId, "SimpMusicLyrics/1.0") ?: return@withContext null // fork: its own User-Agent (lyrics.md §11.1); was lyricsGet
             val response = runCatching { lyricsJson.decodeFromString<Response>(body) }.getOrNull()
             if (response == null || !response.success) return@withContext null
 

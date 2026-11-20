@@ -426,6 +426,7 @@ internal fun SettingsGroupScope.forkCanvasRows(enabled: Boolean) = forkDisabledW
     row(stringResource(R.string.fork_animated_covers), "fork", "canvas", "apple", "animated", "cover", "video") { ForkAnimatedCoversRow() }
     row(stringResource(R.string.fork_backdrop_clips), "fork", "canvas", "spotify", "backdrop", "video") { ForkBackdropClipsRow() }
     forkMusicVideoCanvasRow()
+    forkCanvasSettingsRows()
 }
 
 /**
@@ -467,7 +468,9 @@ internal fun SettingsGroupScope.forkSettingsRows() {
             row(stringResource(R.string.fork_animated_covers), "fork", "apple", "animated", "cover") { ForkAnimatedCoversRow() }
             row(stringResource(R.string.fork_backdrop_clips), "fork", "spotify", "backdrop", "video") { ForkBackdropClipsRow() }
             forkMusicVideoCanvasRow()
+            forkCanvasSettingsRows()
         }
+        forkArtistAndBestPartRows()
         row(stringResource(R.string.fork_clip_cache_size), "fork", "cache", "video", "clips") { ForkClipCacheSizeRow() }
         row(stringResource(R.string.fork_clear_backdrops), "fork", "cache", "backdrop") { ForkClearBackdropsRow() }
         row(stringResource(R.string.fork_clear_cover_clips), "fork", "cache", "cover") { ForkClearCoverClipsRow() }

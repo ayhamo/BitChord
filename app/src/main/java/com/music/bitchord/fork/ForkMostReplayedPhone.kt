@@ -62,6 +62,47 @@ object ForkMostReplayedPhone {
             Toast.makeText(app, ForkMostReplayed.message(outcome), Toast.LENGTH_SHORT).show()
         }
     }
+
+    /** Where [songId] is now, while it is the controller's current song; null otherwise. */
+    fun positionOf(songId: String): Long? {
+        val c = controller ?: return null
+        return if (c.currentMediaItem?.mediaId == songId) c.currentPosition.coerceAtLeast(0) else null
+    }
+
+    /**
+     * "Play from the best part" (Prism's song-menu row): [songId]'s best part
+     * ([ForkMostReplayed.bestPart]: your own, else the most replayed, else the chorus), then the song
+     * from there. Playing now, it seeks; otherwise [playNext] queues it next (the menu's "Play
+     * next") and the controller moves to it at that point once it is in the queue.
+     */
+    fun playFromBestPart(context: Context, songId: String, durationMs: Long, playNext: () -> Unit) {
+        val app = context.applicationContext
+        scope.launch {
+            val ms = withContext(Dispatchers.IO) { runCatching { ForkMostReplayed.bestPart(songId, durationMs) }.getOrNull() }
+            if (ms == null) {
+                Toast.makeText(app, com.music.bitchord.data.canvas.ForkBestParts.NONE_KNOWN, Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            if (ListenTogether.state.value.controlsLocked) {
+                Toast.makeText(app, "Only the host can seek in this party", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val c = controller ?: return@launch
+            if (c.currentMediaItem?.mediaId == songId) { c.seekTo(ms); return@launch }
+            playNext()
+            // The queue is changed by the service; wait (up to 5 s) for the song to be next.
+            repeat(25) {
+                kotlinx.coroutines.delay(200)
+                if (c.currentMediaItem?.mediaId == songId) { c.seekTo(ms); return@launch } // an empty queue plays it at once
+                val next = c.currentMediaItemIndex + 1
+                if (next < c.mediaItemCount && c.getMediaItemAt(next).mediaId == songId) {
+                    c.seekTo(next, ms)
+                    c.play()
+                    return@launch
+                }
+            }
+        }
+    }
 }
 
 /** The menu row: only for a YouTube song, closing the menu ([onDone]) as the lookup starts. */
