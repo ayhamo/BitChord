@@ -2,6 +2,7 @@ package com.music.bitchord.data.canvas
 
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.Http
+import com.music.bitchord.data.settings.AppSettings
 import com.google.protobuf.CodedInputStream
 import com.google.protobuf.CodedOutputStream
 import kotlinx.serialization.json.Json
@@ -62,7 +63,10 @@ object SpotifyCanvas {
 
     private data class TrackHit(val uri: String, val title: String, val artist: String, val album: String?)
 
+    private fun disabled(): Boolean = AppSettings.disableSpotifyCanvas.value
+
     suspend fun search(title: String, artist: String, album: String?): CanvasArtwork? {
+        if (disabled()) return null
         val token = SpotifyToken.accessToken()
         if (token == null) {
             Log.d(TAG, "no access token (cookie unset or mint failed); skipping")
@@ -76,6 +80,7 @@ object SpotifyCanvas {
         // outside Spotify. Kept as the fallback rather than dropped, since a
         // client token failing to mint takes Pathfinder down with it but
         // leaves REST still reachable.
+        if (disabled()) return null
         val hit = searchViaPathfinder(title, artist, album, token)
             ?: searchViaRest(title, artist, album, token)
         if (hit == null) {
@@ -83,11 +88,13 @@ object SpotifyCanvas {
             return null
         }
 
+        if (disabled()) return null
         val canvasUrl = fetchCanvasUrl(hit.uri, token)
         if (canvasUrl == null) {
             Log.d(TAG, "no canvas for '$title' by '$artist' (matched '${hit.title}', no clip)")
             return null
         }
+        if (disabled()) return null
         Log.d(TAG, "canvas for '${hit.title}' by '${hit.artist}'")
         return CanvasArtwork(
             url = canvasUrl,
@@ -108,6 +115,7 @@ object SpotifyCanvas {
      * than re-checking it.
      */
     private fun searchViaPathfinder(title: String, artist: String, album: String?, token: String): TrackHit? {
+        if (disabled()) return null
         val clientToken = SpotifyToken.clientToken()
         if (clientToken == null) {
             Log.d(TAG, "no client token; skipping pathfinder search")
@@ -143,7 +151,9 @@ object SpotifyCanvas {
             "Accept" to "application/json",
             "User-Agent" to CANVAS_UA,
         )
+        if (disabled()) return null
         val (code, body) = canvasGetWithStatus(url, headers)
+        if (disabled()) return null
         if (body == null) {
             Log.w(TAG, "pathfinder search failed, http $code")
             ForkCanvasLookup.fail("Spotify: pathfinder search http $code") // fork: no answer is not "no clip" (REST may still answer; found wins)
@@ -184,6 +194,7 @@ object SpotifyCanvas {
     private fun searchViaRest(title: String, artist: String, album: String?, token: String): TrackHit? {
         // fork: Pathfinder already answered with named hits, none of them this song; REST would only 429 or agree
         if (com.music.bitchord.fork.ForkSpotifyMatch.takeNamedMiss(title, artist)) return null
+        if (disabled()) return null
         val query = listOfNotNull(title, artist, album).joinToString(" ")
         val url = SEARCH_URL.toHttpUrl().newBuilder()
             .addQueryParameter("q", query)
@@ -192,7 +203,10 @@ object SpotifyCanvas {
             .build()
             .toString()
 
-        val (code, body) = canvasGetWithStatus(url, authHeaders(token))
+        val headers = authHeaders(token)
+        if (disabled()) return null
+        val (code, body) = canvasGetWithStatus(url, headers)
+        if (disabled()) return null
         if (body == null) {
             Log.w(TAG, "search request failed, http $code")
             ForkCanvasLookup.fail("Spotify: search http $code") // fork
@@ -230,7 +244,9 @@ object SpotifyCanvas {
      * lookup to make directly.
      */
     suspend fun searchAlbum(album: String, artist: String): CanvasArtwork? {
+        if (disabled()) return null
         val token = SpotifyToken.accessToken() ?: return null
+        if (disabled()) return null
         val url = SEARCH_URL.toHttpUrl().newBuilder()
             .addQueryParameter("q", "$album $artist")
             .addQueryParameter("type", "album")
@@ -238,11 +254,15 @@ object SpotifyCanvas {
             .build()
             .toString()
 
-        val body = canvasGet(url, authHeaders(token)) ?: return ForkCanvasLookup.failed("Spotify: album search gave no answer") // fork: was `return null`
+        val headers = authHeaders(token)
+        if (disabled()) return null
+        val body = canvasGet(url, headers) ?: return ForkCanvasLookup.failed("Spotify: album search gave no answer") // fork: was `return null`
+        if (disabled()) return null
         val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull() ?: return null
         val items = root["albums"]?.jsonObject?.get("items")?.jsonArray ?: return null
 
         for (item in items) {
+            if (disabled()) return null
             val record = item as? JsonObject ?: continue
             val recordTitle = record["name"]?.jsonPrimitive?.contentOrNull ?: continue
             val artists = record["artists"]?.jsonArray
@@ -254,6 +274,7 @@ object SpotifyCanvas {
             val trackUri = firstTrackUri(albumId, token) ?: continue
             val canvasUrl = fetchCanvasUrl(trackUri, token) ?: continue
 
+            if (disabled()) return null
             Log.d(TAG, "canvas for album '$recordTitle' by ${artists.joinToString()}")
             return CanvasArtwork(
                 url = canvasUrl,
@@ -267,11 +288,15 @@ object SpotifyCanvas {
     }
 
     private fun firstTrackUri(albumId: String, token: String): String? {
+        if (disabled()) return null
         val url = "$ALBUM_TRACKS_URL/$albumId/tracks".toHttpUrl().newBuilder()
             .addQueryParameter("limit", "1")
             .build()
             .toString()
-        val body = canvasGet(url, authHeaders(token)) ?: return null
+        val headers = authHeaders(token)
+        if (disabled()) return null
+        val body = canvasGet(url, headers) ?: return null
+        if (disabled()) return null
         val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull() ?: return null
         return root["items"]?.jsonArray?.firstOrNull()
             ?.jsonObject?.get("uri")?.jsonPrimitive?.contentOrNull
@@ -287,7 +312,7 @@ object SpotifyCanvas {
      */
     private fun authHeaders(token: String): Map<String, String> {
         val headers = mutableMapOf("Authorization" to "Bearer $token", "User-Agent" to CANVAS_UA)
-        SpotifyToken.clientToken()?.let { headers["Client-Token"] = it }
+        if (!disabled()) SpotifyToken.clientToken()?.let { headers["Client-Token"] = it }
         return headers
     }
 
@@ -303,7 +328,7 @@ object SpotifyCanvas {
 
     /** The live `canvas` query hash, read off the web player's own scripts. */
     private val queryHashes = SpotifyCanvasQuery.QueryHashes(
-        fetch = { url -> canvasGet(url, mapOf("User-Agent" to CANVAS_UA)) },
+        fetch = { url -> if (disabled()) null else canvasGet(url, mapOf("User-Agent" to CANVAS_UA)) },
     )
 
     /**
@@ -330,7 +355,9 @@ object SpotifyCanvas {
         }
 
     private fun fetchCanvasViaPathfinder(trackUri: String, token: String, isRetry: Boolean = false): SpotifyCanvasQuery.Answer {
+        if (disabled()) return SpotifyCanvasQuery.Answer.Failed("Spotify Canvas disabled")
         val hash = queryHashes.canvasHash(forceRefresh = isRetry)
+        if (disabled()) return SpotifyCanvasQuery.Answer.Failed("Spotify Canvas disabled")
         val request = Request.Builder()
             .url(SpotifyCanvasQuery.ENDPOINT)
             .post(SpotifyCanvasQuery.requestBody(trackUri, hash).toRequestBody("application/json".toMediaType()))
@@ -339,11 +366,13 @@ object SpotifyCanvas {
             .header("Accept", "application/json")
             .header("Accept-Language", "en")
             .build()
+        if (disabled()) return SpotifyCanvasQuery.Answer.Failed("Spotify Canvas disabled")
         val (code, body) = runCatching {
             Http.client.newCall(request).execute().use { response ->
                 response.code to if (response.isSuccessful) response.body?.string() else null
             }
         }.getOrElse { return SpotifyCanvasQuery.Answer.Failed("request threw: ${it.message}") }
+        if (disabled()) return SpotifyCanvasQuery.Answer.Failed("Spotify Canvas disabled")
         if (body == null) return SpotifyCanvasQuery.Answer.Failed("http $code")
 
         val answer = SpotifyCanvasQuery.parse(body)
@@ -361,6 +390,7 @@ object SpotifyCanvas {
     private data class CanvasHit(val id: String?, val url: String, val trackUri: String?)
 
     private fun fetchCanvasViaCanvaz(trackUri: String, token: String): String? {
+        if (disabled()) return null
         val requestBody = encodeCanvasRequest(trackUri)
             .toRequestBody("application/protobuf".toMediaType())
         val request = Request.Builder()
@@ -372,6 +402,7 @@ object SpotifyCanvas {
             .header("User-Agent", SPOTIFY_APP_UA)
             .build()
 
+        if (disabled()) return null
         val bytes = runCatching {
             Http.client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
@@ -382,6 +413,7 @@ object SpotifyCanvas {
         }.onFailure { Log.w(TAG, "canvaz-cache request threw: ${it.message}") }.getOrNull()
             ?: return ForkCanvasLookup.failed("Spotify: canvaz-cache gave no answer") // fork: was `?: return null` on the line above
 
+        if (disabled()) return null
         // The structured parse first — it can tell this track's own clip apart
         // from another one Spotify bundled in the same response. The regex is
         // the fallback: it only needs a *.cnvs.mp4 URL to be sitting somewhere

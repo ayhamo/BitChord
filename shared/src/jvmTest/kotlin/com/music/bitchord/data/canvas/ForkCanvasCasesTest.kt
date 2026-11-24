@@ -211,6 +211,9 @@ class ForkCanvasCasesTest {
             // The fork's scoring is upstream's AppleMusicCanvas.score (app) and DesktopAppleMusicCanvas.score
             // (desktopApp): ForkAppleCanvasCasesTest (app) runs these against the real function.
             "appleScore", "appleRank" -> skip(g, "run in app ForkAppleCanvasCasesTest against AppleMusicCanvas.score")
+            // The spec's anonymous pathfinder `canvas` answer (4.5, extension 3ad093a): not ported, the rule is
+            // turning login first (2026-11-24: Spotify no longer gives a canvas without one).
+            "spotifyCanvas" -> skip(g, "anonymous pathfinder canvas not ported; the rule is becoming login first")
             "appleToken" -> {
                 val jwts = c.arr("tokens").map { jwt((it as JsonObject)["header"], it["payload"]) }
                 val rejected = (c["rejected"] as? JsonArray).orEmpty().map { jwts[Math.round(num(it)).toInt()] }.toSet()

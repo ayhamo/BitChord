@@ -237,6 +237,7 @@ What a user of upstream would notice working differently, as opposed to fork fea
 | `shared/…/data/canvas/ForkCanvasChoices.kt` (new, 2026-11-20, + `ForkCanvasChoicesTest`) | The per-song canvas menu's choices (`files/fork-canvas-choices.properties`, 2000 songs; line `2\|flags\|picked\|partMs\|partVideo\|rejected\|use`, older lines read as all off): a switch per source, picked video, the picked part itself (ms, in its video), rejected videos, Use. Notes from the lookup (video, part, up to 4 others, sources found) are in memory only (§15 rule 9). The menu's rows (`rows`, `toggle`), `pickPart`, `videoChoices`, `orderFor`; `keySuffix` makes each choice its own saved loop |
 | `shared/…/data/canvas/ForkBestParts.kt` (new, 2026-11-20, + `ForkBestPartsTest`) | Prism's `BestPart.chorusMs` and `snap` (a lyric line within 4 s before / 1.5 s after, 250 ms ahead; Prism's bar step when a `Tempo` is given, none is), `start` (own, peak, chorus), `shows` (the button's window), `markAt` (the mark under the bar), the player's synced lyrics per song (8), the listener's own best part (`files/fork-best-parts.properties`), the editor's state (`editing`, `player`), the playing song's `current`, the "Best part button" setting |
 | `sharedUi/…/ui/player/ForkBestPartChip.kt` (new, 2026-11-20) | `ForkBestPartFollow` (notes the lyrics, works out the playing song's best part whether or not the button shows, hosts the editor), `forkBestPartChip` (the button in the scrubber's centre; a tap scrubs there, a long press or right click opens the editor) and `ForkBestPartMark` (the dot under the bar) |
+| `app/…/fork/ForkUpstreamRows.kt` (new, 2026-11-24) | `SHOWN = false`: upstream rows the rulebook replaces with its own control, kept in their files and never drawn (v1.10's "Disable Spotify Canvas" and "Show Best Part") |
 | `sharedUi/…/ui/player/ForkBestPartEditor.kt` (new, 2026-11-20) | "Your best part" (§14 rule 5): a dialog with the time, a slider, −5 s / Now / +5 s, Listen from here, Save, Forget (back to the part people replay) |
 | `sharedUi/…/ui/player/ForkVideoChoiceRow.kt` (new, 2026-11-20) | One video under "Pick another video" on both apps: YouTube's still, title, channel, "In use" |
 | `app/…/fork/ForkCanvasMenuPhone.kt`, `desktopApp/…/ForkCanvasMenuDesktop.kt` (new, 2026-11-20) | The player menu's canvas rows (switches per source, Pick another part, Pick another video, Use, Not this video: dialogs on the phone, lists under the row on the PC), "Your best part" and "Play from the best part" |
@@ -454,6 +455,46 @@ The earlier round (7cc53e21) had already brought `SettingsSheet.kt`, `SongAction
 | `app/src/test/.../WordSyncTest.kt` (lyrics rulebook) | The three group lines expect `LyricAlignment.Center` (were `Start`): TTML duet, LyricsPlus duet, the alias-declared group |
 | `ui/screens/SettingsSheet.kt` (lyrics rulebook) | `forkLyricsViewRows()` after the Translation language row, inside `forkDisabledWhen(!syncedLyrics)` |
 | `desktopApp/.../DesktopApp.kt`, `DesktopSongMenuUi.kt` (lyrics rulebook) | `DesktopApp`: `ForkLyricsViewRowsDesktop()` after `ForkLyricsUnfocusedRow()`; the per-song `LaunchedEffect(selectedSong?.videoId)` no longer calls `setLyricsOffsetMs(0)` (a comment in its place). `DesktopSongMenuUi`: line 345 `ForkDesktopLyricsOffsetControl(song.videoId)` (was `DesktopLyricsOffsetControl(lyricsOffsetMs) { onSetLyricsOffset(it) }`, now unused), line 464 `value = forkDesktopLyricsOffsetLabel(song.videoId)` |
+
+### Upstream v1.10 merge (2026-11-24)
+
+Tests after the merge: app 1518, shared 522, sharedUi 137, PC 900. One shared failure, `ForkV2SpecFixturesTest` (vaina-loca `v3.choice`), is expected: spec 9df4da6 (mix placement) moved that fixture and isn't ported yet.
+
+Conflicts resolved in the merge of `v1.10` (34 files). "Merged": upstream's new code taken and the fork's hook put back on it; "kept ours": the rulebook's control stays the only one.
+
+| Upstream file | Resolution |
+|---|---|
+| `DesktopApp.kt` (player `NowPlayingScreen` call) | Not a conflict, a compile fix: v1.10's shared player needs `previousRestarts` and `currentPlaybackSong`; the PC passes playPrevious's rule (past 10 s and not a station, or no previous song) and `selectedSong` |
+| `BitChordApplication.kt` | Merged: `NavidromeAndroid.init` / `ForkSettings.init` before upstream's new `AutomixModels.install` |
+| `AppSettings.kt` | Merged: `SongSort.REVERSED` beside upstream's `TRACK_NUMBER`; `smartFadeEnabled` keeps `ForkSettings.DEFAULT_AUTOMIX_ON` (field and load) beside upstream's new Automix artwork and sleep-timer fade |
+| `MainActivity.kt`, `DetailScreen.kt` | Merged: the `REVERSED` label and sort beside upstream's `TRACK_NUMBER` |
+| `DiscordRPC.kt` | Merged: `NavidromeDiscordCover.coverFor(…)` then upstream's `youTubeThumbnailFallback` |
+| `PlayerConnection.kt` | Merged: `NavidromeRepository.atRest(…)` around upstream's `youTubeThumbnailFallback` artwork |
+| `DspChain.kt` | Merged: `holdLimiter = equalizer.isShaping \|\| spatial.enabled \|\| forkMixing` (upstream 2986a5b9 added `spatial.enabled`) |
+| `MainViewModel.kt` | Merged: `NavidromeLyrics.remember` before upstream's embedded-lyrics pick |
+| `Downloads.kt`, `AudioCache.kt`, `BrowseActionsMenu.kt`, `SettingsSheet.kt` (Cover fade row), `backup_rules.xml`, `data_extraction_rules.xml`, `HomeScreen.kt` | Merged: both sides kept as they were |
+| `CanvasRepository.kt` | Merged: the server-album rule and `ForkCanvasSources.song` kept; upstream's `effectivePrioritizeSpotifyCanvas`, `spotifyDisabled` in the key (+ `ForkCanvasSources.keySuffix()`), and its Spotify filter inside `ForkCanvasLookup`'s skip/keep |
+| `SpotifyCanvas.kt` | Merged: `ForkSpotifyMatch.takeNamedMiss` and `ForkCanvasLookup.failed` beside upstream's `disabled()` checks |
+| `CanvasArtwork.kt` | Merged: `CanvasSource { SPOTIFY, APPLE, OTHER, BACKDROP, VIDEO }` (upstream added `APPLE`) |
+| `CanvasArtworkPlayer.kt` | Merged: `DefaultDataSource` now in upstream's `newCanvasDecoder`; `ForkClipFraming.track` after upstream's layer paint |
+| `Backup.kt` | Merged: `fork = ForkBackup.export()` / `ForkBackup.import(file.fork)` moved into upstream's new `writeTo` / `readFrom` (Drive backup writes it too) |
+| `CrossfadeController.kt` | Merged: `forkSkip.drop()` beside upstream's `cancelAutoMixVisual()`; `forkSkip.isSkipBlend()` in upstream's hand-off with its visual times |
+| `SongActionsMenu.kt` | Merged: upstream's Remove-without-account group, with the server-song rule; "Play from the best part" inside upstream's `!fromQueue` block |
+| `PlaylistSync.kt` | Merged: `check(approvedId, likedOnly)`; an approval reads only its playlist, Liked's own pass runs unless another playlist was approved (and is approved when Liked was); no `KEY_LAST_CHECK` stamp for an approval or a like |
+| `PlaybackService.kt` | Merged: `.forkMasked(crossfade)` after upstream's `onShuffleRequest`; `ForkAutoNavidrome.item` after upstream's `auto-browse:` lookup; `ForkAutoNavidrome.queueFor` before upstream's `auto-browse:` queue; the two `detach()` beside upstream's undo cleanup |
+| `Models.kt` | Merged: `.forkSubsonicSized(px)` before upstream's YouTube-thumbnail upgrade |
+| `StreamResolver.kt`, `LrcLib.kt` | Took upstream's: the same `init` fix, and the compressed `[t1][t2]` line (spaces allowed between stamps) |
+| `NowPlayingScreen.kt` | Merged onto upstream's AutoMix visuals: `forkCanvases` feeds `sessionCanvas` (then upstream's `nowPlayingRendition`); `forkPlayerState` before "Full-bleed is a phone idiom"; `forkBackdropPulse` on the mesh, blur and legacy backdrops; `ForkLandscapeBackdrop` and the landscape canvas rule; `forkIntro.alpha` and `forkIntro.rendered` on the banner clip; `forkClipPlays` for the clip in play (a standby keeps `isPlaying`); a station's no-like. `key(clip.url)` / `key(canvas.url)` dropped: upstream's `CanvasPresentationHost` keys each clip by URL. Three `== SPOTIFY` lines of upstream's (`incomingFullWindow`, the banner's `fullscreen`, the reveal) read `fillsPhone` |
+| `AutoMixCanvas.kt` (no conflict) | `retiresBeforeAutoMix` reads `fillsPhone`: the fork's full-screen clips retire like Spotify's |
+| `LandscapePlayer.kt` | Merged: `forkCoverFade` / `forkBassGlowAnchor` after upstream's Apple still; no like for a station; `key(clip.url)` dropped (`CanvasPresentationHost`) |
+| `PlayerControls.kt` | Merged: `ForkBestPartMark` before upstream's dodged time labels; `ForkLiveClock.remaining()` before upstream's total duration |
+| `PlayerLyrics.kt` | Merged: `forkLyricsOnScreen` on upstream's single `foreground`; `.forkCentre` on the sub voice with upstream's `laneLocked` |
+| `PlayerQueue.kt` | Merged: `forkQueueChips` inside upstream's AutoPlay block; the PC scrollbar beside upstream's undo / selection footer |
+| `PlayerState.kt` | Merged: `forkCanvasGen` / `forkBackdrops` keys beside upstream's `disableSpotifyCanvas` |
+| `LibraryScreen.kt` | Merged: `forkRowMax` cap with upstream's `extraCount` (leading and trailing cards) |
+| `DesktopPlayerHost.kt` | v1.10's `PlayerSettingsSource` members: `showTotalDuration`, `hideLyricsPreview`, `disableSpotifyCanvas`, `showBestPart`, all off (no PC rows; `bestPartMs` is null on the PC) |
+| `PlayerControls.kt` `BestPartPill`, `SettingsSheet.kt` "Show Best Part" (kept ours) | v1.10's Best Part pill returns at once (`FORK_UPSTREAM_BEST_PART_PILL = false`, `ForkBestPartChip.kt`) and its row is not drawn (`ForkUpstreamRows.SHOWN`): `ForkBestPartChip` and canvas.md §14 rule 8's "Best part button" are the one control |
+| `SpotifyCanvasAuthScreen.kt` "Disable Spotify Canvas" (kept ours) | Not drawn (`ForkUpstreamRows.SHOWN`). `ForkSettings.foldUpstreamSpotifySwitch`: a phone that had it on gets Spotify off in the §13 source list once, and upstream's flag is set back to off |
 
 ### Lyrics rulebook: kept (where BitChord deliberately differs from spec/lyrics/lyrics.md)
 

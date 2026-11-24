@@ -113,7 +113,9 @@ class NavidromeDiscordCoverTest {
 
     @Test
     fun `a server song with a public YouTube thumbnail needs no lookup`() {
-        assertEquals(NavidromeDiscordCover.Answer.Ready(ytThumb), NavidromeDiscordCover.now(song("navidrome:1", ytThumb), 480))
+        // v1.10's artworkAt asks YouTube for its largest rendition at 480 px; DiscordRPC then takes it back to
+        // hqdefault (youTubeThumbnailFallback), which every video has.
+        assertEquals(NavidromeDiscordCover.Answer.Ready(ytThumb.replace("hqdefault", "maxresdefault")), NavidromeDiscordCover.now(song("navidrome:1", ytThumb), 480))
     }
 
     @Test

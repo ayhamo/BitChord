@@ -193,6 +193,11 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
     override val audioQualityWifi = MutableStateFlow(AudioQuality.LOSSLESS)
     override val canvasOverCellular = MutableStateFlow(true)
     override val fullBleedArtwork = MutableStateFlow(false)
+    // fork: v1.10's members, off as the PC has no rows for them yet (no best part from the host: PlayerHost.bestPartMs is null here)
+    override val showTotalDuration = MutableStateFlow(false)
+    override val hideLyricsPreview = MutableStateFlow(false)
+    override val disableSpotifyCanvas = MutableStateFlow(false)
+    override val showBestPart = MutableStateFlow(false)
     override val hideSongStatus: StateFlow<Boolean> get() = ForkPlayerSettings.hideSongStatus // fork: was MutableStateFlow(false); its Settings row
     override val showQueueHistory: StateFlow<Boolean> get() = ForkPlayerSettings.showQueueHistory // fork: was MutableStateFlow(false); its Settings row
     override val hideVolumeBar: StateFlow<Boolean> get() = DesktopAppearanceSettings.hideVolumeBar // fork: was MutableStateFlow(false), so the row did nothing

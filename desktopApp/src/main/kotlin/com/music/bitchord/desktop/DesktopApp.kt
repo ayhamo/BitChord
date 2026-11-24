@@ -3610,6 +3610,8 @@ fun BitChordDesktopApp() {
                             windowWidth = windowWidth,
                             windowHeight = windowHeight,
                             menuOpen = { playerMenuOpen }, // fork: the phone's player (sharedUi) has no #795 drawer parameters
+                            previousRestarts = { (playbackEngine.state.value.positionMs > BACK_RESTARTS_AFTER_MS && !com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(selectedSong?.videoId)) || !liveQueue.hasPrevious }, // fork: v1.10 parameter, playPrevious's rule
+                            currentPlaybackSong = { selectedSong }, // fork: v1.10 parameter
                         )
                         // The sheet's own origin in the window, so the menu below can be
                         // placed on the "…" button the player reports in window terms.

@@ -4,6 +4,7 @@ import android.content.Context
 import com.music.bitchord.R
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
+import com.music.bitchord.data.model.youTubeThumbnailFallback
 import com.my.kizzy.rpc.KizzyRPC
 import com.my.kizzy.rpc.RpcImage
 import java.util.Locale
@@ -119,7 +120,7 @@ class DiscordRPC(
             // A track with no artwork — or with artwork Discord can't reach,
             // which is anything that isn't an http URL — sends none, and Discord
             // draws the BitChord application's own icon in its place.
-            largeImage = com.music.bitchord.data.navidrome.NavidromeDiscordCover.coverFor(song, ART_PX) // fork: only a public cover; a server song gets its YouTube / iTunes one (waits ≤ 3 s; this job is cancelled by the next push)
+            largeImage = com.music.bitchord.data.navidrome.NavidromeDiscordCover.coverFor(song, ART_PX)?.let { youTubeThumbnailFallback(it) ?: it } // fork: only a public cover; a server song gets its YouTube / iTunes one (waits ≤ 3 s; this job is cancelled by the next push)
                 ?.let(RpcImage::ExternalImage),
             smallImage = null,
             // The card's optional third information line. Kept absent for

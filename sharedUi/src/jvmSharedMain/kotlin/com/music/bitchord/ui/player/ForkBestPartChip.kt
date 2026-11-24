@@ -36,6 +36,9 @@ import com.music.bitchord.ui.components.contextClick
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+/** v1.10's own Best Part pill (`BestPartPill`) is never drawn: this chip is the player's one Best part button (canvas.md §14). */
+internal const val FORK_UPSTREAM_BEST_PART_PILL = false
+
 /**
  * Fork: Prism's "Best part" button by the scrubber, on the phone and the PC (both draw this player;
  * canvas.md §14).

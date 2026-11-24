@@ -171,6 +171,18 @@ object ForkSettings {
         com.music.bitchord.data.canvas.ForkCanvasSettings.load(canvasStore, _musicVideoCanvas.value)
         _musicVideoCanvas.value = com.music.bitchord.data.canvas.ForkCanvasSettings.videoOn()
         com.music.bitchord.data.canvas.ForkBestParts.loadSettings(canvasStore)
+        foldUpstreamSpotifySwitch()
+    }
+
+    /**
+     * v1.10's "Disable Spotify Canvas" (`AppSettings.disableSpotifyCanvas`) is the §13 source list's Spotify
+     * switch said twice; the list keeps the one control. A phone that had it on gets Spotify off in the list,
+     * once, and upstream's flag goes back to off, so its own checks never filter anything again.
+     */
+    private fun foldUpstreamSpotifySwitch() {
+        if (!com.music.bitchord.data.settings.AppSettings.disableSpotifyCanvas.value) return
+        com.music.bitchord.data.canvas.ForkCanvasSettings.setOn(com.music.bitchord.data.canvas.ForkCanvasRules.Source.SPOTIFY, false)
+        com.music.bitchord.data.settings.AppSettings.setDisableSpotifyCanvas(false)
     }
 
     fun setNavidromeScrobble(value: Boolean) {

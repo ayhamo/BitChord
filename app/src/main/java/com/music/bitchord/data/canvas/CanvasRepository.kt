@@ -1,5 +1,7 @@
 package com.music.bitchord.data.canvas
 
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.async
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
@@ -85,12 +87,52 @@ object CanvasRepository {
         // late arrival look like a different question and run the whole chain
         // a second time. [reusable] decides when the earlier answer still
         // stands instead.
-        val album = song.albumName.takeUnless { com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(song.videoId) } // fork: a server album can be a collection ("Youtube Topic") that rejected every right hit
-        val spotifyFirst = AppSettings.prioritizeSpotifyCanvas.value
-        val key = cacheKey("song|${song.videoId}", spotifyFirst)
+        val album = song.albumName.takeUnless { com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(song.videoId) } // fork: a server album can be a collection that rejected every right hit
+        val spotifyFirst = AppSettings.effectivePrioritizeSpotifyCanvas.value
+        val spotifyDisabled = AppSettings.disableSpotifyCanvas.value
+        val key = cacheKey("song|${song.videoId}", spotifyFirst, spotifyDisabled)
 
         return resolve(key, album != null) {
             firstHit(*com.music.bitchord.fork.ForkCanvasSources.song(song, title, artist, album, spotifyFirst)) { it.matches(title, artist, album) } // fork: the canvas rulebook's sources and order (+ the music video, anonymous Spotify, saved lookups); was Apple, Tidal, Community, Spotify (Spotify first when prioritised)
+        }
+    }
+
+    /**
+     * The animated covers the lyrics share can offer for [song], by source.
+     *
+     * Starts from the clip the player is already showing ([cached]) — that is
+     * the one the listener has seen, and it was found with the album in hand,
+     * which is what lets Apple's search land. Searching again here without it
+     * was turning the player's own clip down. Whatever source the player's
+     * clip didn't come from is then looked up on its own, Apple and Spotify
+     * each, rather than first-hit-wins. A clip from Tidal or the community
+     * index comes back under [CanvasSource.OTHER]. Each search is held to
+     * [CanvasArtwork.matches].
+     */
+    suspend fun shareClipsFor(song: Song): Map<CanvasSource, CanvasArtwork> = coroutineScope {
+        val playing = cached(song)
+        val title = song.title.cleaned()
+        val artist = song.artist.cleaned()
+        if (title.isBlank() || artist.isBlank()) {
+            return@coroutineScope playing?.let { mapOf(it.source to it) }.orEmpty()
+        }
+        val album = song.albumName ?: playing?.album
+        fun CanvasArtwork?.ok() = this?.takeIf { it.matches(title, artist, album) }
+        val apple = async(Dispatchers.IO) {
+            if (playing?.source == CanvasSource.APPLE) playing
+            else runCatching { AppleMusicCanvas.search(title, artist, album) }.getOrNull().ok()
+        }
+        val spotify = async(Dispatchers.IO) {
+            when {
+                AppSettings.disableSpotifyCanvas.value -> null
+                playing?.source == CanvasSource.SPOTIFY -> playing
+                else -> runCatching { SpotifyCanvas.search(title, artist, album) }.getOrNull().ok()
+            }
+        }
+        buildMap {
+            if (playing?.source == CanvasSource.OTHER) put(CanvasSource.OTHER, playing)
+            apple.await()?.let { put(CanvasSource.APPLE, it) }
+            spotify.await()?.let { put(CanvasSource.SPOTIFY, it) }
         }
     }
 
@@ -104,9 +146,11 @@ object CanvasRepository {
     fun cached(song: Song): CanvasArtwork? {
         val key = cacheKey(
             base = "song|${song.videoId}",
-            spotifyFirst = AppSettings.prioritizeSpotifyCanvas.value,
+            spotifyFirst = AppSettings.effectivePrioritizeSpotifyCanvas.value,
+            spotifyDisabled = AppSettings.disableSpotifyCanvas.value,
         )
         return synchronized(cache) { cache[key]?.artwork }
+            ?.takeUnless { AppSettings.disableSpotifyCanvas.value && it.source == CanvasSource.SPOTIFY }
     }
 
     /**
@@ -122,11 +166,12 @@ object CanvasRepository {
         val credit = artist.cleaned()
         if (name.isBlank() || credit.isBlank()) return null
 
-        val spotifyFirst = AppSettings.prioritizeSpotifyCanvas.value
-        return resolve(cacheKey("album|$name|$credit", spotifyFirst), withAlbum = true) {
+        val spotifyFirst = AppSettings.effectivePrioritizeSpotifyCanvas.value
+        val spotifyDisabled = AppSettings.disableSpotifyCanvas.value
+        return resolve(cacheKey("album|$name|$credit", spotifyFirst, spotifyDisabled), withAlbum = true) {
             if (spotifyFirst) {
                 firstHit(
-                    { SpotifyCanvas.searchAlbum(name, credit) },
+                    { if (AppSettings.disableSpotifyCanvas.value) null else SpotifyCanvas.searchAlbum(name, credit) },
                     { AppleMusicCanvas.searchAlbum(name, credit) },
                     { TidalCanvas.searchAlbum(name, credit) },
                     { CommunityCanvas.searchAlbum(name, credit) },
@@ -136,15 +181,15 @@ object CanvasRepository {
                     { AppleMusicCanvas.searchAlbum(name, credit) },
                     { TidalCanvas.searchAlbum(name, credit) },
                     { CommunityCanvas.searchAlbum(name, credit) },
-                    { SpotifyCanvas.searchAlbum(name, credit) },
+                    { if (AppSettings.disableSpotifyCanvas.value) null else SpotifyCanvas.searchAlbum(name, credit) },
                 ) { it.matches(name, credit, name) }
             }
         }
     }
 
-    /** Priority is part of the question, so a toggle never reuses the other order's answer. */
-    private fun cacheKey(base: String, spotifyFirst: Boolean): String =
-        "$base|spotifyFirst=$spotifyFirst" + com.music.bitchord.fork.ForkCanvasSources.keySuffix() // fork: + the switches that decide which sources are asked
+    /** Provider settings are part of the question, not just the search order. */
+    private fun cacheKey(base: String, spotifyFirst: Boolean, spotifyDisabled: Boolean): String =
+        "$base|spotifyFirst=$spotifyFirst|spotifyDisabled=$spotifyDisabled" + com.music.bitchord.fork.ForkCanvasSources.keySuffix() // fork: + the switches that decide which sources are asked
 
     private suspend fun resolve(
         key: String,
@@ -152,11 +197,16 @@ object CanvasRepository {
         lookUp: suspend () -> CanvasArtwork?,
     ): CanvasArtwork? = lock.withLock {
         synchronized(cache) {
-            cache[key]?.let { if (it.reusable(withAlbum)) return@withLock it.artwork }
+            cache[key]?.let {
+                if (it.reusable(withAlbum) &&
+                    !(AppSettings.disableSpotifyCanvas.value && it.artwork?.source == CanvasSource.SPOTIFY)
+                ) return@withLock it.artwork
+            }
         }
         if (ForkCanvasLookup.skips(key, withAlbum)) return@withLock null // fork: a lookup that failed is not asked again within a minute
         val forkScope = ForkCanvasLookup.Scope() // fork: where the providers report a failure
         val found = withContext(Dispatchers.IO + forkScope.context) { lookUp() } // fork: + forkScope.context
+        if (AppSettings.disableSpotifyCanvas.value && found?.source == CanvasSource.SPOTIFY) return@withLock null
         if (ForkCanvasLookup.keeps(key, withAlbum, found != null, forkScope)) synchronized(cache) { cache[key] = Entry(found, withAlbum) } // fork: a failed lookup is not cached as "no clip"
         found
     }

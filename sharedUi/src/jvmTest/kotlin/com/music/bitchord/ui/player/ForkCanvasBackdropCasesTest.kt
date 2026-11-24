@@ -93,7 +93,7 @@ class ForkCanvasBackdropCasesTest {
         // the player's own lines still do that arithmetic
         val np = source("NowPlayingScreen.kt")
         if (!np.contains("private const val HERO_FADE_FRACTION = 0.42f") ||
-            !np.contains("(heroHeight.value * HERO_FADE_FRACTION / clipBottom.value).coerceIn(0f, 1f)")
+            !np.contains("(heroHeight.value * HERO_FADE_FRACTION / bottom.value).coerceIn(0f, 1f)") // v1.10: clipFadeFraction(bottom), the clip's bottom passed in
         ) fails += "NowPlayingScreen's clip fade no longer reads banner x 0.42 over the clip's bottom (rule 8.2)"
         val pc = source("PlayerControls.kt")
         if (!pc.contains("val band = width * 0.6f") || !pc.contains("val center = -band + progress.value * (width + 2 * band)")) {

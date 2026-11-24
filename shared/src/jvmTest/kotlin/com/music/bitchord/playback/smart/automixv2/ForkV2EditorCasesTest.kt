@@ -136,7 +136,9 @@ class ForkV2EditorCasesTest {
     fun thePortsValuesAreTheSchemas() {
         val schema = ForkV2Json.parse(File(specDir(), "automix/override.schema.json").readText()) as Map<String, Any?>
         val props = schema["properties"] as Map<String, Any?>
-        fun enumOf(m: Any?): List<Any?> = (m as Map<String, Any?>)["enum"] as List<Any?>
+        // A lane is its named shapes or, since the spec's drawn lanes (editor.md §10), oneOf those and a drawing.
+        fun enumOf(m: Any?): List<Any?> = (m as Map<String, Any?>)["enum"] as List<Any?>?
+            ?: (m["oneOf"] as List<Any?>).firstNotNullOf { (it as Map<String, Any?>)["enum"] as List<Any?>? }
         assertEquals(enumOf(props["preset"]), ForkV2MixOverride.PRESETS.toList())
         assertEquals(enumOf(props["beatMatch"]), ForkV2MixOverride.BEAT_MATCH.toList())
         assertEquals(enumOf(props["bars"]).map { (it as Number).toInt() }, ForkV2MixOverride.BARS.toList())

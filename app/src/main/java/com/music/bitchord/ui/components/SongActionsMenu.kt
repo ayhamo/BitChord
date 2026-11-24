@@ -67,6 +67,7 @@ import com.music.bitchord.data.webdav.WebDavUploads
 import com.music.bitchord.download.DownloadState
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.playback.SleepTimer
+import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.theme.ArtworkPalette
 import kotlinx.coroutines.delay
@@ -185,6 +186,8 @@ fun SongActionsMenu(
      * as before — present when the id is there, absent when it never was.
      */
     resolvingLinks: Boolean = false,
+    /** Queue rows already belong to the queue, so hide its insertion actions. */
+    fromQueue: Boolean = false,
 ) {
     var showingSongInfo by remember(song.videoId) { mutableStateOf(false) }
     var pickingSleepTimer by remember { mutableStateOf(false) }
@@ -289,14 +292,18 @@ fun SongActionsMenu(
         // player's own pair: a heart that files the track under this device's
         // Liked playlist, and the device's playlists. [likeStatus] is that
         // playlist's answer there, not YouTube's, and neither needs an account.
-        if (canRate && (!com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(song.videoId) || onRemoveFromPlaylist != null)) { // fork: no empty group on a server's song
+        // Remove stands without an account too: a playlist imported onto
+        // this device is the user's to edit while signed out.
+        if ((canRate && !com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(song.videoId)) || onRemoveFromPlaylist != null) { // fork: no empty group on a server's song
             if (startsGroup()) IosMenuSeparator()
-            if (!com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(song.videoId)) ActionRow( // fork: YouTube's and the device's playlists hold neither a server's song
-                icon = SfIcons.AddToPlaylist,
-                label = stringResource(R.string.add_to_playlist),
-                accent = palette.accent,
-                onClick = onAddToPlaylist,
-            )
+            if (canRate && !com.music.bitchord.data.navidrome.NavidromeSettings.isNavidromeId(song.videoId)) { // fork: YouTube's and the device's playlists hold neither a server's song
+                ActionRow(
+                    icon = SfIcons.AddToPlaylist,
+                    label = stringResource(R.string.add_to_playlist),
+                    accent = palette.accent,
+                    onClick = onAddToPlaylist,
+                )
+            }
             onRemoveFromPlaylist?.let {
                 ActionRow(
                     icon = SfIcons.RemoveFromPlaylist,
@@ -317,19 +324,21 @@ fun SongActionsMenu(
             accent = palette.accent,
             onClick = onStartRadio,
         )
-        ActionRow(
-            icon = SfIcons.PlayNext,
-            label = stringResource(R.string.play_next),
-            accent = palette.accent,
-            onClick = onPlayNext,
-        )
-        com.music.bitchord.fork.ForkPlayFromBestPartRow(song, palette.accent, onPlayNext) // fork: "Play from the best part" (Prism)
-        ActionRow(
-            icon = SfIcons.PlayLast,
-            label = stringResource(R.string.add_to_queue),
-            accent = palette.accent,
-            onClick = onAddToQueue,
-        )
+        if (!fromQueue) {
+            ActionRow(
+                icon = SfIcons.PlayNext,
+                label = stringResource(R.string.play_next),
+                accent = palette.accent,
+                onClick = onPlayNext,
+            )
+            com.music.bitchord.fork.ForkPlayFromBestPartRow(song, palette.accent, onPlayNext) // fork: "Play from the best part" (Prism)
+            ActionRow(
+                icon = SfIcons.PlayLast,
+                label = stringResource(R.string.add_to_queue),
+                accent = palette.accent,
+                onClick = onAddToQueue,
+            )
+        }
         DownloadRow(song, palette, isOffline, onDownload)
         onRemoveFromCache?.let {
             ActionRow(
@@ -663,6 +672,16 @@ private fun SleepTimerPicker(palette: ArtworkPalette, onBack: () -> Unit) {
             selected = custom != null,
             accent = palette.accent,
         ) { pickingCustom = true }
+
+        HorizontalDivider(thickness = 0.5.dp, color = palette.divider)
+        val fadeOut by AppSettings.sleepTimerFadeOut.collectAsStateWithLifecycle()
+        IosMenuRow(
+            label = stringResource(R.string.sleep_timer_fade_out),
+            icon = if (fadeOut) SfIcons.Check else null,
+            onClick = { AppSettings.setSleepTimerFadeOut(!fadeOut) },
+            iconTint = palette.accent,
+        )
+
         if (chosen != null || afterTrack) {
             ActionRow(SfIcons.Close, stringResource(R.string.turn_off_timer), accent = palette.accent) {
                 SleepTimer.cancel()
@@ -942,6 +961,8 @@ private fun LoadingActionRow(icon: ImageVector, label: String, palette: ArtworkP
  * The track the playlist picker is adding, drawn at its head — the same track
  * the menu it was opened from was about.
  *
+ * [title] is set when that track's artwork and artist preview an album instead.
+ *
  * [subtitleColor] is for ground other than the flat theme background, where
  * the usual dim grey may not hold.
  */
@@ -950,6 +971,7 @@ internal fun SheetTrackHeader(
     song: Song,
     modifier: Modifier = Modifier,
     subtitleColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    title: String? = null,
 ) {
     Row(
         modifier = modifier
@@ -969,11 +991,21 @@ internal fun SheetTrackHeader(
         )
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            ExplicitSongTitle(
-                song = song,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onBackground,
-            )
+            if (title == null) {
+                ExplicitSongTitle(
+                    song = song,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onBackground,
+                )
+            } else {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             Text(
                 text = song.artist,
                 style = MaterialTheme.typography.bodyMedium,
