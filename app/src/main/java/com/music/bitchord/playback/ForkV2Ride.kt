@@ -71,10 +71,7 @@ internal object ForkV2Ride {
         if (out != null) tracks.forkEcho(false) { s ->
             s.aimMid(frame.outMidDb)
             // the Looping lane: from the outgoing sink's mix-out on, A's first beats of the window repeat (editor.md §13)
-            if (t.loopSongSec > 0 && progress >= 0f && loopedFor !== t) {
-                s.loopStart(t.loopSongSec)
-                loopedFor = t
-            }
+            if (loopDue(t, progress)) s.loopStart(t.loopSongSec)
             if (fx) {
                 s.aimFader(frame.gainOut)
                 times?.let { s.fx.times(it[0], it[1]) }
@@ -142,6 +139,26 @@ internal object ForkV2Ride {
 
     private var caughtFor: ForkV2Transition? = null
     private var loopedFor: ForkV2Transition? = null
+
+    /** Whether [t]'s Looping lane starts now ([progress] at its mix-out), once per blend: noted as started. */
+    internal fun loopDue(t: ForkV2Transition, progress: Float): Boolean {
+        if (!(t.loopSongSec > 0) || !(progress >= 0f) || loopedFor === t) return false
+        loopedFor = t
+        return true
+    }
+
+    /**
+     * A blend is over, however it ended (the controller's `finish`): nothing it caught, looped or waited on carries
+     * into the next. The marks are by identity, and the v2 latch hands back the very same [ForkV2Transition] when a seek
+     * back lands in its window again, so a replayed blend skipped its Looping lane (`loopedFor === t`) and read the
+     * aborted attempt's quiet point for its tail (audit 2026-11-26 part 1b #5).
+     */
+    fun reset() {
+        caughtFor = null
+        loopedFor = null
+        quietAt = null
+        tailFor = null
+    }
 
     /**
      * The players' volumes for [t] with effects: both at 1 ([into]'s from its first tick; [out] unless it ran on), the

@@ -56,11 +56,12 @@ internal fun ForkCanvasMenuRowsDesktop(song: Song, onDismiss: () -> Unit) {
     val backdrops by ForkCanvasSwitch.backdrops.collectAsState()
     val covers by ForkCanvasSwitch.covers.collectAsState()
     val videos by ForkCanvasSwitch.videos.collectAsState()
+    val spotifyFirst by ForkSpotifyCanvasFirst.prioritized.collectAsState() // the player's own order (audit 2026-11-26)
     val choice = remember(song.videoId, generation) { ForkCanvasChoices.of(song.videoId) }
     val note = remember(song.videoId, generation) { ForkCanvasChoices.noteOf(song.videoId) }
-    val rows = remember(choice, note, backdrops, covers, videos) {
+    val rows = remember(choice, note, backdrops, covers, videos, spotifyFirst) {
         ForkCanvasChoices.rows(choice, note, isSong = true, canvasOn = backdrops,
-            order = ForkCanvasSettings.effectiveOrder(backdrops, covers).filter { it != ForkCanvasRules.Source.YOUTUBE_MUSIC_VIDEO || videos })
+            order = ForkCanvasSettings.menuOrder(backdrops, covers, videos, spotifyFirst))
     }
     var open by remember(song.videoId) { mutableStateOf<String?>(null) }
     fun flip(list: String) { open = if (open == list) null else list }

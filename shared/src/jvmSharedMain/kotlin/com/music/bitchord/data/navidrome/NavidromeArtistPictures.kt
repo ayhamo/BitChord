@@ -17,6 +17,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -396,14 +397,14 @@ object NavidromeArtistPictures {
             store.remove(stale)
         }
         Log.d(TAG, "placeholder learned (${hashes.size} known), ${stale.size} pictures to look up again")
-        _updates.value++
+        _updates.update { it + 1 } // atomic: a lost tick between two answers left one picture undrawn (audit 2026-11-26 2b #7)
     }
 
     private fun keep(key: String, entry: Entry) {
         entries[key] = entry
         failedAt.remove(key)
         store.putStrings(mapOf(key to encode(entry)))
-        _updates.value++
+        _updates.update { it + 1 } // atomic: a lost tick between two answers left one picture undrawn (audit 2026-11-26 2b #7)
     }
 
     // ── The pass over the library ───────────────────────────────────────────
@@ -531,7 +532,9 @@ object NavidromeArtistPictures {
         val request = Request.Builder().url(url).header("User-Agent", USER_AGENT).build()
         Http.client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw IOException("Apple HTTP ${response.code}")
-            return response.body.string()
+            // Capped (combined audit 2026-11-26): iTunes JSON, the largest the 200-song lookup at a
+            // few hundred KB, so 2 MB leaves room; it was read whole whatever came back.
+            return com.music.bitchord.data.ForkCappedBody.text(response, 2 * com.music.bitchord.data.ForkCappedBody.MB)
         }
     }
 

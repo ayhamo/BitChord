@@ -56,6 +56,40 @@ class ForkLateEntryTest {
         assertFalse(e.holding)
     }
 
+    /**
+     * mix-file.md rule 2 (extension 6dcaf08): the trim follows B as heard, 0 while held, then its 10 ms rise, then its
+     * curve. A (fall 1) is never under its trimmed curve during the hold, the output power steps at most 1 dB per 10 ms
+     * around the entry, and both are on their usual curves 20 ms after.
+     */
+    @Test
+    fun theTrimFollowsBsRiseWithNoStep() {
+        val e = ForkLateEntry()
+        e.begin(1.0, 1.0, 0.0)
+        val rise = 1f
+        fun trim(heard: Float) = 1.0 / kotlin.math.sqrt(maxOf(1.0, 1.0 + heard))
+        fun powerDb(heard: Float) = 10 * kotlin.math.log10(trim(heard).let { it * it } * (1.0 + heard * heard))
+        val db = ArrayList<Double>()
+        var ms = 0.0
+        while (ms <= 1040.0) {
+            val el = e.elapsed(0.0, ms, 1.0)
+            val inEl = if (e.holding) 0.0 else ms - 1000.0
+            val at = if (e.holding) el else e.elapsed(inEl, ms, 1.0)
+            val heard = e.heardRise(rise, at)
+            if (ms < 1000.0) assertEquals(1.0, trim(heard), 0.0)
+            db += powerDb(heard)
+            ms += 1.0
+        }
+        for (i in 10 until db.size) assertTrue("step at ${i} ms", kotlin.math.abs(db[i] - db[i - 10]) <= 1.0 + 1e-9)
+        assertEquals(1 / kotlin.math.sqrt(2.0), trim(e.heardRise(rise, 1020.0)), 1e-9)
+    }
+
+    @Test
+    fun withoutALateEntryTheTrimReadsTheCurve() {
+        val e = ForkLateEntry()
+        e.begin(0.0, 1.0, 0.0)
+        assertEquals(0.4f, e.heardRise(0.4f, 5.0), 0f)
+    }
+
     private fun song(id: String, dur: Double) = ForkV2Analysis().apply {
         fileKey = id
         durationSec = dur
@@ -86,5 +120,15 @@ class ForkLateEntryTest {
         // 2 s into the blend: B unstarted, its position (the cue) unread
         assertEquals(2000.0 * plan.incomingPlaybackRate, e.elapsed(0.0, 152_000.0 * 1.0, plan.incomingPlaybackRate), 1e-6)
         assertFalse(e.takeStart())
+    }
+
+    /** While B is held its gain is 0 for the headroom trim, whatever its curve says; then its curve once its 10 ms rise is over (audit 2026-11-26 part 1b #7). */
+    @Test
+    fun theTrimCountsBSilentWhileItIsHeld() {
+        val e = ForkLateEntry()
+        assertFalse(e.begin(3.0, 1.0, 100_000.0))
+        assertEquals(0f, e.heardRise(0.6f, 0.0), 0f)
+        e.release()
+        assertEquals(0.6f, e.heardRise(0.6f, 3010.0), 0f)
     }
 }

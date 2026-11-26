@@ -48,7 +48,8 @@ object ForkSpotifyMadeForYou {
             .build()
         Http.client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw java.io.IOException("HTTP ${response.code}")
-            val items = json.parseToJsonElement(response.body.string()).jsonObject["playlists"]
+            // capped (combined audit 2026-11-26): 50 playlists are tens of KB of JSON
+            val items = json.parseToJsonElement(com.music.bitchord.data.ForkCappedBody.text(response, 512 * com.music.bitchord.data.ForkCappedBody.KB)).jsonObject["playlists"]
                 ?.let { it as? JsonObject }?.get("items") as? JsonArray ?: return@use emptyList()
             items.mapNotNull { element ->
                 val o = element as? JsonObject ?: return@mapNotNull null

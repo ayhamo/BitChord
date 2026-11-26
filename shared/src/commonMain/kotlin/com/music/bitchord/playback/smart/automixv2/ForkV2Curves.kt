@@ -43,6 +43,12 @@ class ForkV2Curves {
             val D = m.durationSec
             val style = m.style
             c.durationSec = D
+            // The songs' own speeds (spotify-mixes.md rule 10): A steady at its speed through a mix of any style, B's glide
+            // back ending at its speed, not x1, and B at it throughout a filter mix or crossfade. These curves ignored them
+            // (and the planner built them before it set the speeds), so a plan's tempo curves and dumps showed x1 where the
+            // decks play the playlist's speed (extension L2; automix.js blendCurves). The players read rate/outRate, not these.
+            val sIn = if (m.speedIn > 0) m.speedIn else 1.0
+            val sOut = if (m.speedOut > 0) m.speedOut else 1.0
             if (m.v2 && style != "crossfade") {
                 val s = ForkV2Mix.djShape(m, D, samples(D))
                 val g = trimmed(m, s[0], s[1])
@@ -94,6 +100,10 @@ class ForkV2Curves {
                     if (i == 0 || p[0] != pts[i - 1][0] || p[1] != pts[i - 1][1]) kept.add(p)
                 }
                 c.out["rate"] = kept.toTypedArray()
+            } else if (m.glide == null && abs((if (style == "blend") m.outRate else sOut) - 1) > 1e-4) {
+                // (A at a steady speed through the mix: a blend's outRate, else its playlist speed)
+                val R = if (style == "blend") m.outRate else sOut
+                c.out["rate"] = arrayOf(doubleArrayOf(0.0, R), doubleArrayOf(D, R))
             }
             val rate = if (style == "blend") m.rate else 1.0
             val glide = m.glide
@@ -104,16 +114,21 @@ class ForkV2Curves {
                 val i = rateSteps(G.inRate, G.at)
                 o.add(doubleArrayOf(D, G.outRate[G.outRate.size - 1]))
                 i.add(doubleArrayOf(D, G.inRate[G.inRate.size - 1]))
-                i.add(doubleArrayOf(D, 1.0))
+                i.add(doubleArrayOf(D, sIn))
                 c.out["rate"] = o.toTypedArray()
                 c.`in`["rate"] = i.toTypedArray()
-            } else if (abs(rate - 1) > 1e-9) {
-                if (abs(rate - 1) < 0.002) {
-                    c.`in`["rate"] = arrayOf(doubleArrayOf(0.0, rate), doubleArrayOf(D, rate), doubleArrayOf(D, 1.0))
+            } else if (style == "blend" && abs(rate - 1) > 1e-9 && abs(rate - sIn) > 1e-9) {
+                // the glide back to B's speed, timed as the player times it (ForkV2Mix: |rate − to| in GLIDE_STEPs; automix.js
+                // glideBack). Written as |1 + rate − sIn − 1| it lost a step to rounding (1 + 1.05 − 1 is 1.0499…98).
+                val back = abs(rate - sIn)
+                if (back < 0.002) {
+                    c.`in`["rate"] = arrayOf(doubleArrayOf(0.0, rate), doubleArrayOf(D, rate), doubleArrayOf(D, sIn))
                 } else {
-                    val sec = ceil(abs(rate - 1) / ForkV2Mix.GLIDE_STEP) * ForkV2Mix.GLIDE_STEP_SEC
-                    c.`in`["rate"] = arrayOf(doubleArrayOf(0.0, rate), doubleArrayOf(D, rate), doubleArrayOf(D + sec, 1.0))
+                    val sec = ceil(back / ForkV2Mix.GLIDE_STEP) * ForkV2Mix.GLIDE_STEP_SEC
+                    c.`in`["rate"] = arrayOf(doubleArrayOf(0.0, rate), doubleArrayOf(D, rate), doubleArrayOf(D + sec, sIn))
                 }
+            } else if (abs(sIn - 1) > 1e-4) {
+                c.`in`["rate"] = arrayOf(doubleArrayOf(0.0, sIn), doubleArrayOf(D, sIn)) // (B at its own speed throughout)
             }
             return c
         }

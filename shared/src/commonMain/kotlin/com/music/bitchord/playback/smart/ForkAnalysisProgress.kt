@@ -62,10 +62,10 @@ object ForkAnalysisProgress {
 
     private val _changes = MutableStateFlow(0L)
 
-    /** Bumped on every change, for the popup to redraw the row. */
+    /** Bumped on every change, the addon copy's ([ForkAddonCopyProgress]) too, for the popup to redraw the row. */
     val changes: StateFlow<Long> = _changes.asStateFlow()
 
-    private fun changed() {
+    internal fun changed() {
         _changes.update { it + 1 }
     }
 
@@ -96,9 +96,14 @@ object ForkAnalysisProgress {
             val was = s.running[id]
             val r = Running(stage, refining ?: was?.refining ?: false)
             if (was != null && was.stage == r.stage && was.refining == r.refining) return@write s
+            // A new pass: the last one's outcome, a failure as much as a note, is over. A failure was kept before, and
+            // [rowFor] reads it ahead of the notes, so a retry that was then stopped or decoded short still read
+            // "failed: <the old error>" (editor.md §11 rule 3; audit 2026-11-26 part 1a #4).
+            val fresh = stage == Stage.QUEUED || stage == Stage.AUDIO || stage == Stage.OPENING
             s.copy(
                 running = s.running + (id to r),
-                notes = if (stage == Stage.QUEUED || stage == Stage.AUDIO || stage == Stage.OPENING) s.notes - id else s.notes,
+                notes = if (fresh) s.notes - id else s.notes,
+                failedWhy = if (fresh) s.failedWhy - id else s.failedWhy,
             )
         }
     }
@@ -120,8 +125,9 @@ object ForkAnalysisProgress {
             val r = s.copy(running = s.running - id)
             when {
                 usable == true -> r.copy(failedWhy = r.failedWhy - id, notes = r.notes - id, tooLongIds = r.tooLongIds - id)
-                stopped -> r.copy(notes = r.notes + (id to "stopped (a listening party, or the song was moved past)"))
-                short -> r.copy(notes = r.notes + (id to "its audio decoded too short to measure"))
+                // (not failures: their own wording, and no failure left from an earlier pass read ahead of them)
+                stopped -> r.copy(notes = r.notes + (id to "stopped (a listening party, or the song was moved past)"), failedWhy = r.failedWhy - id)
+                short -> r.copy(notes = r.notes + (id to "its audio decoded too short to measure"), failedWhy = r.failedWhy - id)
                 usable == false && id !in r.failedWhy -> r.copy(failedWhy = r.failedWhy + (id to "nothing usable came out of the audio"))
                 else -> r
             }
@@ -134,6 +140,8 @@ object ForkAnalysisProgress {
         val p = curId to nextId?.takeIf { it.isNotBlank() && it != curId }
         if (p == pair) return
         pair = p
+        // the addon copy of a song that is neither playing nor next has nothing more to say (rule 6)
+        ForkAddonCopyProgress.keepOnly(setOfNotNull(p.first, p.second))
         changed()
     }
 
@@ -156,8 +164,11 @@ object ForkAnalysisProgress {
 
     /**
      * The row for the pair (editor.md §11): this song before the next, never both; a failure or
-     * another outcome in its place; with neither song analysing and [loopSearching] (BitChord's own
-     * loop-mix search still waiting), "Looking for a loop mix…"; else null (nothing to say).
+     * another outcome in its place; then, when neither song's analysis has anything to say, the addon
+     * copy of the playing song ([ForkAddonCopyProgress], rule 6: never the next song's), with a moving
+     * bar; then, with [loopSearching] (BitChord's own loop-mix search still waiting), "Looking for a
+     * loop mix…"; else null (nothing to say). After the outcomes as the extension's `progressRow`
+     * puts it (efb7d06): "only when they have nothing to say".
      */
     fun rowFor(curId: String?, nextId: String?, loopSearching: Boolean): Row? {
         val st = state.value
@@ -172,12 +183,14 @@ object ForkAnalysisProgress {
             st.failedWhy[id]?.let { return Row("Analysis of $which failed: $it", null) }
             st.notes[id]?.let { return Row("Analysis of $which: $it", null) }
         }
+        ForkAddonCopyProgress.lineFor(curId)?.let { return Row(it, Float.NaN) }
         return if (loopSearching) Row("Looking for a loop mix…", Float.NaN) else null
     }
 
     /** Tests: start empty. */
     fun clear() {
         state.value = State()
+        ForkAddonCopyProgress.clear()
         pair = null
         changed()
     }

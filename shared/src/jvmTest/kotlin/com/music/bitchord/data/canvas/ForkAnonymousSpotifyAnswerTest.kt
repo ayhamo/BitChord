@@ -8,6 +8,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /**
  * Fork: an empty pathfinder answer is a failed lookup, not "no canvas" ([ForkAnonymousSpotifyCanvas]).
@@ -46,5 +47,14 @@ class ForkAnonymousSpotifyAnswerTest {
         ForkAnonymousSpotifyCanvas.checkStatus("canvas", 200)
         val canvasUrl = ForkAnonymousSpotifyCanvas::class.java.methods.first { it.name == "canvasUrl" }
         assertFalse(java.lang.reflect.Modifier.isSynchronized(canvasUrl.modifiers))
+    }
+
+    /** Canvas.md §4 rule 5 (audit 2026-11-26): only a non-empty `errors` list fails an answer. */
+    @Test
+    fun onlyANonEmptyErrorsListIsAFailure() {
+        assertFalse(ForkAnonymousSpotifyCanvas.hasErrors(obj("""{"data":{}}""")))
+        assertFalse(ForkAnonymousSpotifyCanvas.hasErrors(obj("""{"data":{},"errors":[]}""")))
+        assertFalse(ForkAnonymousSpotifyCanvas.hasErrors(obj("""{"data":{},"errors":null}""")))
+        assertTrue(ForkAnonymousSpotifyCanvas.hasErrors(obj("""{"errors":[{"message":"x"}]}""")))
     }
 }

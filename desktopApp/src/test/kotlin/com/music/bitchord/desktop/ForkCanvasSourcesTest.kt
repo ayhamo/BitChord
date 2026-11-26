@@ -93,4 +93,27 @@ class ForkCanvasSourcesTest {
         assertEquals(noSpotify, ForkSpotifyCanvasFirst.ordered(ForkSpotifyCanvasFirst.forOrdered(noSpotify, true), spotifyFirst = true))
         assertEquals(asked, ForkSpotifyCanvasFirst.forOrdered(asked, spotifyFirst = false))
     }
+
+    // ── Apple's clip: https on Apple's hosts only (audit 2026-11-26) ─────
+
+    @Test
+    fun `an untrusted Apple clip is no clip and an untrusted fallback is dropped`() {
+        val good = "https://mvod.itunes.apple.com/itunes-assets/square/master.m3u8"
+        val bad = listOf(
+            "http://mvod.itunes.apple.com/itunes-assets/x/master.m3u8",
+            "https://apple.com.evil.example/master.m3u8",
+            "https://user@mvod.itunes.apple.com/itunes-assets/x/master.m3u8",
+            "https://mvod.itunes.apple.com:8443/itunes-assets/x/master.m3u8",
+        )
+        for (url in bad) {
+            var read = false
+            assertNull(ForkDesktopCanvasSources.rendition(DesktopCanvasArtwork(url = url)) { read = true; null }, url)
+            assertFalse(read, "no list read from $url")
+            val got = ForkDesktopCanvasSources.rendition(DesktopCanvasArtwork(url = good, fallbackUrl = url)) { null }
+            assertEquals(good, got?.url)
+            assertNull(got?.fallbackUrl, url)
+            // a saved answer read back is held to the same rule
+            assertNull(ForkDesktopCanvasSources.trustedApple(DesktopCanvasArtwork(url = url)), url)
+        }
+    }
 }

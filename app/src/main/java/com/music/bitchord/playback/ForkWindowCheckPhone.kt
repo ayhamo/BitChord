@@ -67,6 +67,7 @@ internal object ForkWindowCheckPhone {
             synchronized(offsets) { offsets[upgradedUri] = current }
             return true
         }
+        com.music.bitchord.fork.ForkAddonCopyPhone.liningUp(mediaId, stream.format) // the progress row (editor.md §11 rule 6); a refusal's line goes with the pass or the next row's ask
         val p = (positionMs - current).coerceAtLeast(0L) / 1000.0
         val (from, to) = ForkWindowFit.youtubeSpan(p)
         val yt = withContext(Dispatchers.IO) { youtubeSide(playing, videoId, from, to - from) }

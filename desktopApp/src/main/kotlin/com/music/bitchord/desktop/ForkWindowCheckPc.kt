@@ -49,12 +49,16 @@ internal object ForkWindowCheckPc {
             DesktopTrackLog.log("window check for '${song.title}': no YouTube audio of it to check against; staying on what plays")
             return false
         }
+        // the progress row (editor.md §11 rule 6): the copy's window is its first bytes fetched, then the fit lines it up;
+        // a refusal's line goes with the pass or the next row's ask
+        ForkAddonCopyPc.fetching(song.videoId, better)
         val p = positionMs.coerceAtLeast(0L) / 1000.0
         val result = withContext(Dispatchers.IO) {
             val (from, to) = ForkWindowFit.youtubeSpan(p)
             val ytSide = decode(yt, from, to - from) ?: return@withContext null to "YouTube's copy did not decode"
             // read once more before it counts: a refusal passes the row over for the song (ForkAddonRefusals.copyWindow)
             val window = com.music.bitchord.data.sources.ForkAddonRefusals.copyWindow { decode(better, p, ForkWindowFit.WINDOW_SEC) } ?: return@withContext null to COPY_UNDECODABLE
+            ForkAddonCopyPc.liningUp(song.videoId, better)
             ForkWindowFit.fitWindow(ytSide, window, p - from) to null
         }
         val fit = result.first

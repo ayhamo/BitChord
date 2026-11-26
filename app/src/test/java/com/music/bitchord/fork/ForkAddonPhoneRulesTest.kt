@@ -66,6 +66,8 @@ class ForkAddonPhoneRulesTest {
         assertEquals(listOf("a", "b", "c", "d"), ids(unknown, null)) // a cached copy that names no addon: all
         assertEquals(listOf("a", "c", "d"), ids(null, "b")) // upstream's: every other source
         assertEquals(listOf("a", "c", "d"), ids(ForkAddonFloorPhone.Look.OverYouTube, "b"))
+        // No pass: nobody is asked (a search and /stream calls whose answers worth() refuses anyway spend the addons' quota).
+        assertEquals(emptyList<String>(), ids(ForkAddonFloorPhone.Look.None, "b"))
     }
 
     @Test

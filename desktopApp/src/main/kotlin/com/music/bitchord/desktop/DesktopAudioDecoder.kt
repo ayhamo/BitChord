@@ -209,12 +209,13 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
         }
         opened.interrupt_callback().callback(forkInterrupt)
         // The code matters.
-        val inputFormat: AVInputFormat? = when (transport?.lowercase()) {
+        val forkLocal = if (windowed) null else ForkAssembledStreams.local(url) // fork: an HLS/DASH stream put together into one file is read from it (rulebook 8.1.5 rule 5, ForkAddonStreamAssemble)
+        val inputFormat: AVInputFormat? = when (transport?.lowercase()?.takeIf { forkLocal == null }) { // fork: takeIf, the file is probed as a file
             DesktopAddonStream.HLS -> av_find_input_format("hls")
             DesktopAddonStream.DASH -> av_find_input_format("dash")
             else -> null
         }
-        val status = avformat_open_input(opened, if (windowed) null as String? else url, inputFormat, options)
+        val status = avformat_open_input(opened, if (windowed) null as String? else forkLocal ?: url, inputFormat, options) // fork: forkLocal ?:
         check(status >= 0) { "could not open stream (${describe(status)})" }
         format = opened
         check(avformat_find_stream_info(opened, null as AVDictionary?) >= 0) { "no stream info" }

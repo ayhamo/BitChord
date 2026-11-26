@@ -1,5 +1,6 @@
 package com.music.bitchord.data
 
+import com.music.bitchord.data.canvas.ForkAppleCanvasRules
 import com.music.bitchord.data.DebugLog as Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -113,6 +114,7 @@ object ForkAppleArtistArtRepository {
     private fun lookup(artistName: String, name: String, titles: Set<String>): Entry? {
         val search = get(
             "https://itunes.apple.com/search?term=${URLEncoder.encode(artistName, "UTF-8")}&entity=musicArtist&limit=5",
+            JSON_MAX,
         ) ?: return null
         // Every same-named candidate is checked, not just the first: the one Apple ranks highest
         // is often the wrong one of two.
@@ -121,7 +123,7 @@ object ForkAppleArtistArtRepository {
                 if (!shares) Log.d(TAG, "$artistName: Apple artist $id shares no titles, skipped")
             }
         }?.second ?: return Entry(null)
-        val html = get(page) ?: return null
+        val html = get(page, PAGE_MAX) ?: return null
         return Entry(parseArtistPage(html))
     }
 
@@ -160,18 +162,21 @@ object ForkAppleArtistArtRepository {
         val hero = (header.obj("artwork") ?: header.obj("colorBackdropArtwork"))?.obj("dictionary") ?: return null
         val heroW = hero.int("width")?.takeIf { it > 0 } ?: return null
         val heroH = hero.int("height")?.takeIf { it > 0 } ?: return null
-        val heroUrl = hero.str("url").fill(HERO_WIDTH, (HERO_WIDTH.toLong() * heroH / heroW).toInt(), "jpg") ?: return null
+        // Audit 2026-11-26: the page's links are held to Apple's https hosts (trustedMotion) like a canvas
+        // clip; an untrusted hero is no art, an untrusted logo or clip is left out.
+        val heroUrl = hero.str("url").fill(HERO_WIDTH, (HERO_WIDTH.toLong() * heroH / heroW).toInt(), "jpg")
+            ?.takeIf(ForkAppleCanvasRules::trustedMotion) ?: return null
         val logoW = logo?.int("width") ?: 0
         val logoH = logo?.int("height") ?: 0
         val logoUrl = if (logo != null && logoW > 0 && logoH > 0) {
-            logo.str("url").fill(LOGO_WIDTH, (LOGO_WIDTH.toLong() * logoH / logoW).toInt(), "png")
+            logo.str("url").fill(LOGO_WIDTH, (LOGO_WIDTH.toLong() * logoH / logoW).toInt(), "png")?.takeIf(ForkAppleCanvasRules::trustedMotion)
         } else {
             null
         }
         val background = hero.str("bgColor").toArgb() ?: return null
         // The phone's read (AppleArtistArt.parse): the clip and the colours of its preview frame.
         val clip = header.obj("videoArtwork")?.obj("dictionary")?.obj("motionArtistSquare1x1")
-        val video = clip?.str("video")?.takeIf { it.startsWith("https://") }
+        val video = clip?.str("video")?.takeIf(ForkAppleCanvasRules::trustedMotion)
         val preview = clip?.obj("previewFrame")?.takeIf { video != null }
         val videoBackground = preview?.str("bgColor").toArgb()
         return ForkAppleArtistArt(
@@ -216,11 +221,20 @@ object ForkAppleArtistArtRepository {
         return replace("{w}", w.toString()).replace("{h}", h.toString()).replace("{c}", "bb").replace("{f}", format)
     }
 
-    private fun get(url: String): String? {
+    /**
+     * [url]'s text, read to at most [max] bytes (ForkCappedBody). Audit 2026-11-26: `body.string()`
+     * read whatever came back into memory; the iTunes search JSON is a few KB ([JSON_MAX]) and an
+     * artist page about 1 MB ([PAGE_MAX]), so anything past those is an IOException, which [artFor]
+     * already treats as a failed lookup (retried later, not cached).
+     */
+    private fun get(url: String, max: Int): String? {
         val request = Request.Builder().url(url).header("User-Agent", USER_AGENT).build()
         Http.client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) return null
-            return response.body.string()
+            return ForkCappedBody.text(response, max)
         }
     }
+
+    private const val JSON_MAX = 512 * ForkCappedBody.KB
+    private const val PAGE_MAX = 2 * ForkCappedBody.MB
 }

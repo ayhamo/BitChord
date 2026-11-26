@@ -36,4 +36,19 @@ class ForkCopyAnalysisTest {
         assertTrue(q.isRelevant("weaRBsTrSkM@addon"))
         assertFalse(q.isRelevant("other@addon"))
     }
+
+    /** Audit 2026-11-26 3a #2: a refocus on the same pair kept the songs and dropped their copies. */
+    @Test
+    fun aQueuedCopyOutlivesARefocusOnItsSongAndFitsBesideBothSongs() {
+        val q = ForkAnalysisQueue<Int>()
+        q.focus("weaRBsTrSkM", "vNQjKyEMJxk")
+        assertTrue(q.offer("weaRBsTrSkM", 1))
+        assertTrue(q.offer("vNQjKyEMJxk", 2))
+        assertTrue(q.offer("weaRBsTrSkM@addon", 3))
+        assertFalse(q.offer("weaRBsTrSkM@other", 4)) // one copy per song
+        assertEquals(emptyList<String>(), q.focus("weaRBsTrSkM", "vNQjKyEMJxk"))
+        assertEquals(listOf("weaRBsTrSkM", "vNQjKyEMJxk", "weaRBsTrSkM@addon"), q.pendingIds())
+        assertEquals(listOf("vNQjKyEMJxk"), q.focus("weaRBsTrSkM", "c"))
+        assertEquals(listOf("weaRBsTrSkM", "weaRBsTrSkM@addon"), q.pendingIds())
+    }
 }

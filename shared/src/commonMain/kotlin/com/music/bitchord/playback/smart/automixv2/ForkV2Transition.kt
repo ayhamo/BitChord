@@ -86,8 +86,17 @@ class ForkV2Transition internal constructor(
      */
     val loopSongSec: Double = if (plan.loopSec > 0 && !glides && plan.style != "loop") plan.loopSec else 0.0
 
-    /** [loopSongSec] as the outgoing deck plays it out, at its rate in the blend. */
-    val loopOutputSec: Double get() = loopSongSec / (if (plan.style == "blend" && plan.outRate > 0) plan.outRate else 1.0)
+    /**
+     * [loopSongSec] as the outgoing deck plays it out, at its rate in the mix: a song at its playlist speed plays at it in
+     * any style (spotify-mixes.md rule 10, the rate [ForkV2Automix.toTransitionPlan] gives the outgoing player), else a
+     * blend's outRate, else x1. Only a blend's outRate was read before, so a crossfade or filter mix of A at x0.97 looped
+     * 3% too long on the PC and drifted off A's beat each repeat (audit 2026-11-26 part 1a #3).
+     */
+    val loopOutputSec: Double get() = loopSongSec / when {
+        ForkSongSpeed.off1(plan.speedOut) && plan.speedOut > 0 -> plan.speedOut
+        plan.style == "blend" && plan.outRate > 0 -> plan.outRate
+        else -> 1.0
+    }
 
     /** The echo's and the delay's seconds from the window's start, or null (editor.md §12 rule 3). */
     val fxTime: DoubleArray? get() = mix.fxTime

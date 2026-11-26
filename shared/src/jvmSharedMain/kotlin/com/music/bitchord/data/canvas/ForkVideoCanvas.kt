@@ -14,10 +14,13 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
 import java.nio.ByteBuffer
 import java.util.Locale
 import java.util.concurrent.TimeUnit
@@ -63,12 +66,25 @@ object ForkVideoCanvas {
 
     @Volatile private var visitor: String? = null
 
+    /** The client for the loop's byte ranges: no call timeout, a long range may take a while on a slow line. */
     private val client by lazy {
         Http.client.newBuilder()
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(20, TimeUnit.SECONDS)
             .build()
     }
+
+    /**
+     * The client for the JSON answers and storyboard sheets: [client] with a 20 s call timeout.
+     * Audit 2026-11-26: only the connect and read timeouts were set, so a server that trickled a
+     * byte every few seconds held a lookup (and the canvas waiting on it) without end.
+     */
+    private val shortClient by lazy { client.newBuilder().callTimeout(20, TimeUnit.SECONDS).build() }
+
+    /** One storyboard sheet's most (a real one is tens of KB) and the loop's fragment bytes' most. */
+    private const val SHEET_MAX = 1 * com.music.bitchord.data.ForkCappedBody.MB
+    private const val HEAD_MAX = 2 * com.music.bitchord.data.ForkCappedBody.MB
+    internal const val BODY_MAX = 80L * 1024 * 1024
 
     /** What a platform does for the pipeline. */
     interface Platform {
@@ -627,7 +643,7 @@ object ForkVideoCanvas {
         var bytes = 0L
         var n = 0
         while (n < sb.sheets && bytes < 2_000_000) {
-            val img = getBytes(sb.sheet(n), null) ?: break
+            val img = getBytes(sb.sheet(n), null, SHEET_MAX, shortClient) ?: break
             bytes += img.size
             val grey = platform.grey(img) ?: break
             for (i in 0 until sb.perSheet) {
@@ -700,13 +716,11 @@ object ForkVideoCanvas {
         val head = getRange(url, 0, indexEnd)
         val sidx = Sidx.parse(head, indexStart.toInt()) ?: throw IOException("no sidx")
         val range = sidx.range(start, end - start, indexEnd + 1)
-        val body = getRange(url, range[0], range[1])
         val raw = File(dir, out.name + ".part")
         try {
-            raw.outputStream().use { o ->
-                o.write(head, 0, (initEnd + 1).toInt())
-                o.write(body)
-            }
+            // Streamed to the file, not read whole: a full-video cut (`cut(format, 0, length)`) held the
+            // whole range in memory (audit 2026-11-26)
+            openRange(url, range[0], range[1]).use { response -> writePart(raw, head, initEnd, response.body.byteStream(), BODY_MAX) }
             val base = range[2] / 1e6
             return base + platform.remux(raw, out, start - base, end - base) / 1e6
         } finally {
@@ -783,14 +797,58 @@ object ForkVideoCanvas {
 
     private fun visionUserAgent() = "com.google.visionos.youtube/$VISION_VERSION(RealityDevice14,1; U; CPU visionOS 25_6_0 like Mac OS X; US)"
 
+    /** The head (init and index boxes) of the video's stream: capped at [HEAD_MAX]. */
     private fun getRange(url: String, from: Long, to: Long): ByteArray =
-        getBytes("$url&range=$from-$to", visionUserAgent()) ?: throw IOException("no bytes $from-$to")
+        getBytes("$url&range=$from-$to", visionUserAgent(), HEAD_MAX, client) ?: throw IOException("no bytes $from-$to")
 
-    private fun getBytes(url: String, ua: String?): ByteArray? {
+    /**
+     * [url]'s bytes on [via], at most [max] (ForkCappedBody: past it, or empty, an IOException).
+     * Audit 2026-11-26: `body.bytes()` read whatever came, a whole video from a server ignoring the range.
+     */
+    private fun getBytes(url: String, ua: String?, max: Int, via: OkHttpClient): ByteArray? {
         val request = Request.Builder().url(url).apply { if (ua != null) header("User-Agent", ua) }.build()
-        client.newCall(request).execute().use { response ->
+        via.newCall(request).execute().use { response ->
             if (response.code >= 400) throw IOException("HTTP ${response.code}")
-            return response.body?.bytes()
+            return com.music.bitchord.data.ForkCappedBody.bytes(response, max)
+        }
+    }
+
+    /** The loop's fragments [from]..[to], open for streaming; a range larger than [BODY_MAX] is refused before asking. */
+    private fun openRange(url: String, from: Long, to: Long): Response {
+        if (to < from || to - from + 1 > BODY_MAX) throw IOException("range $from-$to over ${BODY_MAX / (1024 * 1024)} MB")
+        val request = Request.Builder().url("$url&range=$from-$to").header("User-Agent", visionUserAgent()).build()
+        val response = client.newCall(request).execute()
+        if (response.code >= 400) {
+            response.close()
+            throw IOException("HTTP ${response.code}")
+        }
+        return response
+    }
+
+    /**
+     * Writes the stream's init segment (`head[0..initEnd]`) then [body] (at most [max] bytes) to [raw].
+     * An init range outside [head] is an IOException (it was an IndexOutOfBounds); a body over [max]
+     * is one too, and [raw] is deleted on any failure, so no `.part` is left behind.
+     */
+    internal fun writePart(raw: File, head: ByteArray, initEnd: Long, body: InputStream, max: Long) {
+        if (initEnd < 0 || initEnd >= head.size) throw IOException("init range 0-$initEnd outside the ${head.size}-byte head")
+        try {
+            raw.outputStream().use { o ->
+                o.write(head, 0, (initEnd + 1).toInt())
+                val buffer = ByteArray(64 * 1024)
+                var total = 0L
+                while (true) {
+                    val n = body.read(buffer)
+                    if (n < 0) break
+                    total += n
+                    if (total > max) throw IOException("fragments over ${max / (1024 * 1024)} MB")
+                    o.write(buffer, 0, n)
+                }
+                if (total == 0L) throw IOException("no fragment bytes")
+            }
+        } catch (e: Throwable) {
+            raw.delete()
+            throw e
         }
     }
 
@@ -845,7 +903,7 @@ object ForkVideoCanvas {
             .build(),
     )
 
-    private fun send(request: Request): JsonObject = client.newCall(request).execute().use { response ->
+    private fun send(request: Request): JsonObject = shortClient.newCall(request).execute().use { response ->
         if (response.code >= 400) throw IOException("HTTP ${response.code}")
         // capped (ForkCappedBody): a player answer is well under 1 MB; an empty one is a failure, not "no video"
         json.parseToJsonElement(com.music.bitchord.data.ForkCappedBody.text(response, 2 * com.music.bitchord.data.ForkCappedBody.MB)) as? JsonObject ?: throw IOException("not JSON")

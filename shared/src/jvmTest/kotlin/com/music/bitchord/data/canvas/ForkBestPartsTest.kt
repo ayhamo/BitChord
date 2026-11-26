@@ -109,4 +109,13 @@ class ForkBestPartsTest {
         assertTrue(ForkBestParts.isSynced(song))
         assertFalse(ForkBestParts.isSynced(lyrics(0L to "unsynced")))
     }
+
+    /** Audit 2026-11-26 2a #4: the old song's part never marks the new song's bar. */
+    @Test
+    fun theMarkIsOnlyThePlayingSongsPart() {
+        val old = ForkBestParts.Current("old", 60_000L, 60_000L, 0L, false)
+        assertNull(ForkBestParts.markFor(old, "new", 120_000L))
+        assertEquals(0.5f, ForkBestParts.markFor(old, "old", 120_000L))
+        assertEquals(0.5f, ForkBestParts.markFor(old, null, 120_000L))
+    }
 }

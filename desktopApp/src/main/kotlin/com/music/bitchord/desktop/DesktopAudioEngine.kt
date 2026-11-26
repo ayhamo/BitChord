@@ -508,6 +508,7 @@ class DesktopPlaybackEngine(
                 }
                 DesktopTrackLog.log("no better copy of '${song.title}' was found")
             } finally {
+                ForkAddonCopyPc.passEnded(song.videoId) // fork: the pass over, its progress-row line goes unless a take-over still runs (editor.md §11 rule 6)
                 // Settled either way: the badge stops saying "upgrading" the moment the search
                 // stops, never on a timer.
                 // Only this song's: by now the queue may have blended on to another whose own
@@ -548,6 +549,7 @@ class DesktopPlaybackEngine(
 
     /** Re-opens the current track on a different stream, carrying the playhead over. */
     private fun swapStream(song: Song, stream: DesktopStream, positionMs: Long) {
+        ForkAddonCopyPc.switching(song.videoId, stream) // fork: the progress row's "Switching to the lossless copy…" until heard (editor.md §11 rule 6)
         scope.launch {
             openTrack(song, stream, positionMs).fold(
                 onSuccess = { track ->
@@ -565,6 +567,7 @@ class DesktopPlaybackEngine(
                         track.decoder.seek(latest.positionMs * 1_000)
                         track.startUs = latest.positionMs * 1_000
                     }
+                    ForkAddonCopyPc.queued(song.videoId) // fork: the audio thread takes the watch over (ForkAddonCopyPc.engineStep)
                     commands += Command.ReplaceCurrent(track, playWhenReady = latest.isPlaying)
                 },
                 onFailure = { failure ->
@@ -577,7 +580,7 @@ class DesktopPlaybackEngine(
                     ) }
                 },
             )
-        }
+        }.invokeOnCompletion { ForkAddonCopyPc.opened(song.videoId) } // fork: was `}`; a copy closed or failed before the audio thread had it ends its progress-row line
     }
 
     /** Re-opens the current track, keeping the playhead. */
@@ -1005,6 +1008,7 @@ class DesktopPlaybackEngine(
             return
         }
         sink.resume()
+        ForkAddonCopyPc.engineStep(forkSwap?.song?.videoId, forkArmedSwap?.song?.videoId, forkWaitingSwap?.song?.videoId) // fork: the progress row's take-over ends once the copy crossed in or was given up (editor.md §11 rule 6)
         if (forkInstallHeldUpgrade(track)) return // fork: a better copy held through a mix (ForkMixUpgradeHold)
 
         if (forkLoopStep(track)) return // fork: the loop mix writes this block (ForkDesktopLoopMix)
@@ -1138,9 +1142,10 @@ class DesktopPlaybackEngine(
             } else {
                 out
             }
-            val trim = 1f / kotlin.math.sqrt((outgoingLevel + into).coerceAtLeast(1f))
+            val forkInto = ForkDesktopV2.heardInto(into, index, forkHeld, channels, sink.format.sampleRate) // fork: B as heard (held silent, then its 10 ms rise) makes the room (mix-file.md rule 2)
+            val trim = 1f / kotlin.math.sqrt((outgoingLevel + forkInto).coerceAtLeast(1f)) // fork: forkInto, was into
             val forkTextureRamp = if (textureActive) ForkAutomixFx.textureRamp(progress) else 0f // fork: the texture's bell (ForkAutomixFx)
-            val forkFxTrim = ForkAutomixFx.fxTrim((outgoingLevel + into) * trim, forkTextureRamp) // fork: the sends give way, not the mix; decks as heard, after [trim]
+            val forkFxTrim = ForkAutomixFx.fxTrim((outgoingLevel + forkInto) * trim, forkTextureRamp) // fork: the sends give way, not the mix; decks as heard, after [trim]
             val stop = minOf(count, index + subBlock)
             val span = stop - index
             while (index < stop) {
@@ -2077,6 +2082,7 @@ class DesktopPlaybackEngine(
         // Past the midpoint the listener is looking at — and seeking in — the incoming song, so
         // the blend is finished on the spot and the seek lands on that one.
         if (displaySwitched && upcoming != null) promoteUpcoming()
+        upcoming?.takeIf { fadeRemaining > 0 && current != null }?.let { incoming -> DesktopTrackLog.log("blend stops: a seek on the outgoing song"); forkCallOffBlend(incoming) } // fork: before the switch the seek calls the mix off (playback.md "The queue during a mix" rule 2)
         forkSwapBeforeSeek() // fork
         val track = current ?: return
         if (forkSeekReopens(track, millis)) return // fork: a dead or reopening deck is reopened at the seek
@@ -2807,12 +2813,15 @@ class DesktopPlaybackEngine(
                         " against its song",
                 )
             }
+            // Once engaged the splice block sums the song and the renderer (25 ms) and then is the renderer's decks: under
+            // the mix limiter as the blocks after it are (versions.md "The mix's ceiling" rule 1: on while any deck sounds,
+            // up to the take-over). It went out unlimited before (audit 2026-11-26 3a #9).
             if (stereo === song || !run.engaged) {
-                forkLoopWrite(track, song, count)
+                forkLoopWrite(track, song, count, summing = run.engaged)
             } else {
                 // fork: crossed into the renderer: its stereo back onto the output's front pair (ForkLoopChannels)
                 val out = forkLoopChannels.spread(stereo, forkLoopChannels.count, sink.format)
-                forkLoopWrite(track, out, forkLoopChannels.count)
+                forkLoopWrite(track, out, forkLoopChannels.count, summing = true)
             }
             publishPosition(track)
             return true
@@ -3013,6 +3022,18 @@ class DesktopPlaybackEngine(
             return
         }
         val heardMs = playhead.peek(sink.framesPlayed()) / 1_000
+        forkCallOffBlend(incoming)
+        performSeek(heardMs)
+    }
+
+    /**
+     * Ends a blend still on the outgoing song (the display not yet switched, B's late entry included): no plan, no
+     * transition effects, filters open, and the incoming deck back at its start, unstretched, for the next plan. The
+     * caller seeks the outgoing song. Shared by a pause ([forkPauseMix]) and a seek ([performSeek]): a seek had left
+     * the blend running, so B blended in over A's new position and took over seconds later (playback.md "The queue
+     * during a mix" rule 2: a seek calls the mix off; audit 2026-11-26 3a #6).
+     */
+    private fun forkCallOffBlend(incoming: Track) {
         activePlan = null
         transitionEcho = null
         transitionBeatRepeat = null
@@ -3033,7 +3054,6 @@ class DesktopPlaybackEngine(
         equalizerIncoming.reset()
         forkLoudnessIncoming.reset()
         endBlend()
-        performSeek(heardMs)
     }
 
     private fun forkLoopEnd() {
@@ -3369,8 +3389,14 @@ class DesktopPlaybackEngine(
         fadeRemaining = 0
         blendActive = false
         sink.flush()
+        // The rest of what Flush resets, which this copy had left out: a Next mid-mix carried the
+        // cut mix's effect tails, noise ramp, late-entry rise and limiter gain into the song skipped
+        // to, and its skip-mix mark onto a later hand-off (audit 2026-11-26 3a #4).
+        ForkDesktopV2.flush()
+        forkMixLimiter.reset()
         framesWritten = sink.framesPlayed()
         endBlend()
+        forkSkipMixInto.set(null)
         if (prepared == null) {
             command.resolve()
             return

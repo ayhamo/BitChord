@@ -128,6 +128,40 @@ class ForkMixFxTest {
         for (i in pc.indices) assertEquals(phone[i], pc[i], 1e-5f, "at $i")
     }
 
+    /** The hall's impulse and spectra are made once per rate, not at every set-up (audit 2026-11-26 part 1b #1). */
+    @Test
+    fun theHallIsMadeOncePerRate() {
+        val a = ForkMixFx.reverbFor(rate)!!
+        val b = ForkMixFx.reverbFor(rate)!!
+        assertTrue(a !== b, "each user gets its own running state")
+        assertTrue(a.hall === b.hall, "the impulse's spectra are shared")
+    }
+
+    /**
+     * A clear on the same format (a seek, a flush) silences everything without a new set-up: what rings is gone, and the
+     * returns then play a new send exactly as a fresh one does.
+     */
+    @Test
+    fun aClearSilencesTheReturnsAsAFreshOneStarts() {
+        fun run(fx: ForkMixFx): FloatArray {
+            fx.times(0.1, 0.1)
+            fx.aim(0.7f, 0.7f, 0.7f, 0f)
+            val x = FloatArray(4_096) { (0.5 * sin(2 * PI * 330 * it / rate)).toFloat() }
+            phone(fx, x)
+            return x
+        }
+        val used = ForkMixFx()
+        run(used)
+        used.clear()
+        val after = FloatArray(1_024)
+        used.process(after, after.size, 1, rate)
+        assertTrue(after.all { it == 0f }, "nothing rings after a clear")
+        assertFalse(used.ringing)
+        val again = run(used)
+        val fresh = run(ForkMixFx())
+        for (i in again.indices) assertEquals(fresh[i], again[i], 1e-6f, "at $i")
+    }
+
     @Test
     fun noisePlaysWhileAimedAndStopsAfter() {
         val fx = ForkMixFx()
@@ -186,5 +220,63 @@ class ForkMixFxTest {
         val y = FloatArray(100) { 0.3f }
         shelf.process(y, y.size, 1, rate)
         assertTrue(y.all { it == 0.3f })
+    }
+
+    /**
+     * A stop the audio thread hasn't reached yet (the player retired before another block) doesn't hold back the next
+     * mix's start on that sink: the stop is taken, then the new loop (audit 2026-11-26 part 1b #2).
+     */
+    @Test
+    fun aLoopStartsAgainAfterAStopNoBlockHasSeen() {
+        val shelf = ForkMixShelf()
+        shelf.loopStart(0.01)
+        shelf.process(FloatArray(400), 400, 1, rate)
+        shelf.loopStop()
+        shelf.loopStart(0.005) // 40 frames, with no block between
+        val x = FloatArray(200) { it.toFloat() / 1_000f }
+        shelf.process(x, x.size, 1, rate)
+        for (i in 0 until 200) assertEquals((i % 40) / 1_000f, x[i], 1e-6f, "at $i")
+    }
+
+    /** A loop kept in one format isn't played into another (stereo now): it ends, and the deck plays as it is. */
+    @Test
+    fun aLoopEndsWhenTheFormatChanges() {
+        val shelf = ForkMixShelf()
+        shelf.loopStart(0.01)
+        shelf.process(FloatArray(400) { 0.1f }, 400, 1, rate)
+        val y = FloatArray(400) { 0.3f }
+        shelf.process(y, y.size, 2, rate)
+        assertTrue(y.all { it == 0.3f })
+    }
+
+    /**
+     * The in-sink fader: its first aim starts there, a release glides back to 1 and lets go, and an aim after a release
+     * or a reset starts there again (only the audio thread turns it on and off: audit 2026-11-26 part 1b #3).
+     */
+    @Test
+    fun theFaderSnapsToAFirstAimAndLetsGoAfterARelease() {
+        val shelf = ForkMixShelf()
+        shelf.aimFader(0f)
+        val a = FloatArray(400) { 0.5f }
+        shelf.process(a, a.size, 1, rate)
+        assertTrue(a.all { it == 0f }, "the first aim starts there")
+        shelf.fxRest()
+        repeat(4) { shelf.process(FloatArray(400) { 0.5f }, 400, 1, rate) } // 5 ms back up, at 8 kHz 40 frames
+        val b = FloatArray(400) { 0.5f }
+        shelf.process(b, b.size, 1, rate)
+        assertTrue(b.all { it == 0.5f }, "released: untouched")
+        shelf.aimFader(0f)
+        val c = FloatArray(400) { 0.5f }
+        shelf.process(c, c.size, 1, rate)
+        assertTrue(c.all { it == 0f }, "a new mix's aim after a release starts there")
+        shelf.reset()
+        shelf.aimFader(0.5f)
+        val d = FloatArray(400) { 0.5f }
+        shelf.process(d, d.size, 1, rate)
+        assertTrue(d.all { abs(it - 0.25f) < 1e-6f }, "after a reset, the aim starts there")
+        shelf.reset()
+        val e = FloatArray(400) { 0.5f }
+        shelf.process(e, e.size, 1, rate)
+        assertTrue(e.all { it == 0.5f }, "a reset lets go at once")
     }
 }

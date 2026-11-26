@@ -827,7 +827,7 @@ fun SettingsScreen(
             val miniArtTransitionTitle = stringResource(R.string.automix_mini_art_transition)
             row(
                 automixTitle, "crossfade", "smart fade", "mix",
-                artTransitionTitle.takeIf { smartFade }, miniArtTransitionTitle.takeIf { smartFade },
+                artTransitionTitle, miniArtTransitionTitle, // fork: always found, as the rows are always shown (was .takeIf { smartFade })
             ) {
                 BypassedByBitPerfect(bitPerfectReady) {
                     SettingsRow(
@@ -844,7 +844,7 @@ fun SettingsScreen(
                         },
                         onClick = { AppSettings.setSmartFadeEnabled(!smartFade) },
                     )
-                    if (smartFade) {
+                    ForkDisabledWhen(!smartFade) { // fork: greyed, not hidden, while Automix is off (was if (smartFade) {)
                         val artwork by AppSettings.autoMixArtwork.collectAsStateWithLifecycle()
                         SettingsSubRow(
                             title = artTransitionTitle,

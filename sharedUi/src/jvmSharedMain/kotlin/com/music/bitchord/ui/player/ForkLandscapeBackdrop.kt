@@ -80,12 +80,12 @@ internal fun ForkLandscapeBackdrop(
                     .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
                     .drawWithContent {
                         drawContent()
-                        val edge = size.width / 2
+                        val fadeEnd = forkFadeEnd(size.width, FADE.toPx()) ?: return@drawWithContent
                         drawRect(
                             Brush.horizontalGradient(
                                 0f to Color.Black,
-                                edge / size.width to Color.Black,
-                                (edge + FADE.toPx()) / size.width to Color.Transparent,
+                                0.5f to Color.Black,
+                                fadeEnd to Color.Transparent,
                             ),
                             blendMode = BlendMode.DstIn,
                         )
@@ -98,3 +98,14 @@ internal fun ForkLandscapeBackdrop(
 }
 
 private val FADE = 140.dp
+
+/**
+ * Where the clip's fade over the blur ends, as a fraction of [width] (it starts at the middle), or null
+ * when there is no width to draw on. Clamped to the right edge: under `2 * FADE` wide (a narrow PC
+ * window) the stop went past 1, and at zero width (a minimised window, the first layout pass) the
+ * stops were NaN and Infinity, handed to the gradient as they were (audit 2026-11-26 2a #2).
+ */
+internal fun forkFadeEnd(width: Float, fadePx: Float): Float? {
+    if (!(width > 0f) || !width.isFinite()) return null
+    return ((width / 2 + fadePx.coerceAtLeast(0f)) / width).coerceIn(0.5f, 1f)
+}

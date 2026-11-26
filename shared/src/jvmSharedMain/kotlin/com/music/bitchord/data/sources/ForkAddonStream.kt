@@ -1,7 +1,6 @@
 package com.music.bitchord.data.sources
 
 import com.music.bitchord.data.lyrics.LyricsRepository
-import java.net.URI
 import java.util.Locale
 
 /**
@@ -96,11 +95,46 @@ object ForkAddonStream {
      * this machine itself (a self-hosted addon on `localhost`, and the tests'
      * mock servers). A remote addon may not point the app at localhost.
      * Upstream opened any URL OkHttp could parse.
+     *
+     * The scheme is read by hand, not by `java.net.URI`: URI throws on an unencoded space, `[`, `]`,
+     * `|`, `{` or `}` (common in debrid file links, `http://cdn/01 Track [FLAC].flac`), and the
+     * null scheme that left was read as "not http", so the link was allowed, while OkHttp
+     * percent-encodes the same link and opens it over plain http (audit 2026-11-26 2b #4). The rule
+     * is also the rulebook's whole one now (protocol.md §4 `url`: "https only: any other link is a
+     * miss"): anything that isn't `https` is refused, `ftp:` or a schemeless link included, not
+     * only `http`.
      */
     fun cleartextRefused(url: String, addonBase: String): Boolean {
-        val scheme = runCatching { URI(url.trim()).scheme }.getOrNull()?.lowercase(Locale.ROOT)
-        if (scheme != "http") return false
-        return !(isLocal(url) && isLocal(addonBase))
+        val scheme = schemeOf(url)
+        // https to this machine from an addon that isn't on it: refused as well (protocol.md §1; the combined audit
+        // 2026-11-26 step 2: a remote addon could point the player at a service on the device over https)
+        if (scheme == "https") return ForkThisMachine.isThisMachine(hostOf(url)) && !isLocal(addonBase)
+        return !(scheme == "http" && isLocal(url) && isLocal(addonBase))
+    }
+
+    /** [url]'s scheme, lower-cased (RFC 3986: a letter, then letters, digits, `+`, `-`, `.`), or null. */
+    internal fun schemeOf(url: String): String? =
+        SCHEME.find(url.trim())?.groupValues?.get(1)?.lowercase(Locale.ROOT)
+
+    private val SCHEME = Regex("""^([A-Za-z][A-Za-z0-9+.\-]*):""")
+
+    /** [url]'s host without its port (an IPv6 literal keeps its brackets). */
+    internal fun hostOf(url: String): String {
+        val hp = shownHost(url)
+        return if (hp.startsWith("[")) hp.substringBefore(']') + "]" else hp.substringBefore(':')
+    }
+
+    /**
+     * [url] as a log may show it: its host (and port) only. Upstream's `AddonSource.openable` logged a malformed stream
+     * link's first 120 characters, which for most addons is the addon's key or a signed token in the path or query
+     * (owner via the master, 2026-11-26: "log host only"). Read by hand, since the link is malformed: the part after
+     * the scheme and `//`, up to the path, query or fragment, any `user:password@` dropped.
+     */
+    fun shownHost(url: String): String {
+        val u = url.trim()
+        val rest = SCHEME.find(u)?.let { u.substring(it.range.last + 1) } ?: u
+        return rest.removePrefix("//").substringBefore('/').substringBefore('\\').substringBefore('?').substringBefore('#')
+            .substringAfterLast('@').trim().ifBlank { "a link with no host" }
     }
 
     /**

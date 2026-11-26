@@ -82,7 +82,20 @@ internal class ForkUpgradeCover(
      * lines it up, and fades the session player out under it. Null means "cut as upstream does";
      * nothing is left changed then.
      */
-    suspend fun raise(mediaId: String): Cover? = withContext(Dispatchers.Main) { raiseOnMain(mediaId) }
+    suspend fun raise(mediaId: String): Cover? {
+        // The progress row's "Switching to the lossless copy…" (editor.md §11 rule 6), from here until the copy is
+        // heard: a cover's line ends once it faded back onto the new copy or came down ([Cover]); with none, upstream
+        // cuts right after this returns, and the cut is watched until the swapped item plays.
+        com.music.bitchord.fork.ForkAddonCopyPhone.switching(mediaId)
+        val cover = try {
+            withContext(Dispatchers.Main) { raiseOnMain(mediaId) }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            com.music.bitchord.fork.ForkAddonCopyPhone.switched(mediaId)
+            throw e
+        }
+        if (cover == null) com.music.bitchord.fork.ForkAddonCopyPhone.watchCut(scope, active, mediaId)
+        return cover
+    }
 
     private suspend fun raiseOnMain(mediaId: String): Cover? {
         val p = active() ?: return null
@@ -272,6 +285,7 @@ internal class ForkUpgradeCover(
             } finally {
                 p.removeListener(listener)
                 withContext(NonCancellable) { takeDown(p, s) }
+                com.music.bitchord.fork.ForkAddonCopyPhone.switched(mediaId) // faded onto the new copy, or cut over to it: heard
             }
         }
 
@@ -288,6 +302,7 @@ internal class ForkUpgradeCover(
                 }
             } finally {
                 withContext(NonCancellable) { takeDown(p, s) }
+                com.music.bitchord.fork.ForkAddonCopyPhone.switched(mediaId) // no swap: nothing to switch to
             }
         }
     }

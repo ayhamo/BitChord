@@ -137,18 +137,35 @@ internal class ForkAnalysisQueue<T> {
     fun focus(currentId: String?, nextId: String?): List<String> {
         val ids = listOfNotNull(currentId?.takeIf { it.isNotBlank() }, nextId?.takeIf { it.isNotBlank() }).distinct()
         focusIds = ids
-        val dropped = pending.keys.filter { it !in ids }
+        // An add-on copy's pass (`<song>@<source>`, ForkCopyAnalysis) stays while its song does:
+        // comparing the whole key dropped every queued copy on the next focus, even with its song
+        // still playing or next, and the loop mix then refused the pair as "analysed off another
+        // recording" (audit 2026-11-26 3a #2).
+        val dropped = pending.keys.filter { ForkCopyAnalysis.songOf(it) !in ids }
         pending.keys.removeAll(dropped.toSet())
         return dropped
     }
 
     fun isRelevant(id: String): Boolean = focusIds?.contains(ForkCopyAnalysis.songOf(id)) ?: true // a copy's pass is its song's (ForkCopyAnalysis)
 
+    /**
+     * Two songs at a time, each with its own pass and at most one add-on copy's pass. The cap was
+     * two entries in all, so with both songs' own passes queued a copy was turned away.
+     */
     @Synchronized
     fun offer(id: String, task: T): Boolean {
-        if (!isRelevant(id) || id in pending || pending.size >= 2) return false
+        if (!isRelevant(id) || id in pending) return false
+        val song = ForkCopyAnalysis.songOf(id)
+        val copy = song != id
+        val songs = pending.keys.map(ForkCopyAnalysis::songOf).toSet()
+        if (song !in songs && songs.size >= MAX_SONGS) return false
+        if (pending.keys.any { ForkCopyAnalysis.songOf(it) == song && (it != song) == copy }) return false
         pending[id] = task
         return true
+    }
+
+    private companion object {
+        const val MAX_SONGS = 2
     }
 
     @Synchronized

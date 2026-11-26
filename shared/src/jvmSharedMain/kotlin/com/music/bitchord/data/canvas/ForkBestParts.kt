@@ -189,6 +189,15 @@ object ForkBestParts {
      */
     data class Current(val songId: String, val startMs: Long?, val autoMs: Long?, val knownAtMs: Long, val mine: Boolean)
 
+    /**
+     * [markAt] for [current] only when it is [songId]'s: on a song change the scrubber recomposes with
+     * the new song's length a frame before `ForkBestPartFollow` clears [current], and the old song's
+     * mark showed at a wrong place on the new song's bar (audit 2026-11-24 2a #1 part 3, 2026-11-26
+     * 2a #4). A null [songId] (a caller that names none) keeps the old reading.
+     */
+    fun markFor(current: Current?, songId: String?, durationMs: Long): Float? =
+        markAt(current?.takeIf { songId == null || it.songId == songId }?.startMs, durationMs)
+
     private val _current = MutableStateFlow<Current?>(null)
     val current: StateFlow<Current?> = _current.asStateFlow()
 

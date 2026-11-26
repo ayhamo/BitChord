@@ -46,4 +46,36 @@ class ForkTransitionEditorTest {
         assertNull(ForkEditorUi.pointDrag)
         ForkEditorUi.closeDrawing()
     }
+
+    /** Audit 2026-11-26 3a #8: the replace question, a drag and a Draw waiting on a loop mix don't outlive their pair. */
+    @Test
+    fun closingOrResettingLeavesNoQuestionDragOrWaitingDraw() {
+        ForkEditorUi.askReplace = ForkEditorUi.ReplaceAsk("Replace the drawing?") {}
+        ForkEditorUi.drag = EditorDrag("a>b", out = true, base = 10.0, pos = com.music.bitchord.playback.smart.automixv2.ForkV2MixOverride.Position(1, 1, 0, 10.0), limit = null)
+        ForkEditorUi.pendingDraw = "a>b" to "volume"
+        ForkEditorUi.closeDrawing()
+        assertNull(ForkEditorUi.askReplace)
+        assertNull(ForkEditorUi.drag)
+        assertNull(ForkEditorUi.pendingDraw)
+
+        // Reset to Auto
+        ForkEditorUi.askReplace = ForkEditorUi.ReplaceAsk("Replace the drawing?") {}
+        ForkEditorUi.pendingDraw = "a>b" to "volume"
+        ForkEditorUi.stopDrawing()
+        assertNull(ForkEditorUi.pendingDraw)
+        assertNull(ForkEditorUi.askReplace)
+        ForkEditorUi.closeDrawing()
+    }
+
+    /** Audit 2026-11-26 3a #10: "Set" is off for an empty or unreadable box, and for the value already saved. */
+    @Test
+    fun setTakesOnlyANewNumber() {
+        assertNull(lateToSet("", 0.0))
+        assertNull(lateToSet(".", 2.0))
+        assertNull(lateToSet("abc", 2.0))
+        assertNull(lateToSet("2", 2.0))
+        assertNull(lateToSet("0", 0.0))
+        assertEquals(2.5, lateToSet("2,5", 0.0)!!, 0.0)
+        assertEquals(0.0, lateToSet("0", 3.0)!!, 0.0)
+    }
 }

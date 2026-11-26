@@ -159,6 +159,21 @@ class ForkMixFilesTest {
         assertEquals("songppppppppppp-songqqqqqqqqqqq.vivimix.json", name)
     }
 
+    /** Audit 2026-11-26 3a #7: a cancelled lookup cancels Play these mixes; it had queued the fallbacks anyway. */
+    @Test
+    fun aCancelledLookupCancelsInsteadOfQueuingFallbacks() {
+        ForkMixFiles.lookup = { throw kotlinx.coroutines.CancellationException("cancelled") }
+        ForkMixFiles.lastImport = ForkMixFiles.LastImport(listOf("aaaaaaaaaaa", "bbbbbbbbbbb"), 1)
+        val q = FakeQueue(mutableListOf(), -1)
+        ForkMixFiles.queue = q
+        kotlin.test.assertFailsWith<kotlinx.coroutines.CancellationException> { runBlocking { ForkMixFiles.playNow() } }
+        assertTrue(q.songs.isEmpty(), "nothing queued")
+        // any other failure is still a fallback
+        ForkMixFiles.lookup = { error("offline") }
+        assertEquals("Playing the mix: 2 songs in the queue, in the file's order.", runBlocking { ForkMixFiles.playNow() })
+        assertEquals(listOf("aaaaaaaaaaa", "bbbbbbbbbbb"), q.songs)
+    }
+
     @Test
     fun fileNamesAsTheExtensionMakesThem() {
         assertEquals("yquefue", ForkMixFiles.slug("Y Que Fue?"))

@@ -100,6 +100,35 @@ class ForkV2SpecFixturesTest {
     }
 
     /**
+     * spotify-mixes.md rule 10 (b74ce10): no echo out at a song speed [all]. Unethical's pair is an echo out at x1; with
+     * both songs at x1.02 (the played tempos as far apart as the BPMs) the ladder skips the echo out's rung and goes
+     * from the filter mix to the hand-over, the reason ending "(no echo out at a playlist speed)".
+     */
+    @Test
+    fun noEchoOutAtAPlaylistSpeed() {
+        val f = pairFiles(specDir()).first { it.name.startsWith("3-") }
+        val pair = ForkV2Json.parse(f.readText()) as Map<String, Any?>
+        val songs = pair["songs"] as List<Any?>
+        val from = ForkV2Analysis.fromJson((songs[0] as Map<String, Any?>)["analysis"] as Map<String, Any?>)
+        val to = ForkV2Analysis.fromJson((songs[1] as Map<String, Any?>)["analysis"] as Map<String, Any?>)
+        val pos = max(30.0, from.durationSec - 95)
+        fun plan(speed: Double): ForkV2Planner.Plan {
+            val s = ForkV2Planner.Settings()
+            s.version = 3
+            s.speedOut = speed
+            s.speedIn = speed
+            return ForkV2Planner.plan(s, "a", "b", from, to, from.durationSec, pos, pos + ForkV2Mix.HAND_LEAD + 0.5, null)
+        }
+        val plain = plan(1.0)
+        assertTrue(plain.style == "blend" && plain.shape == "echo", "${f.name} at x1 is an echo out, plays ${plain.shape ?: plain.style}: ${plain.reason}")
+        val p = plan(1.02)
+        assertTrue(p.shape != "echo", "${f.name} at x1.02 must not be an echo out: ${p.reason}")
+        assertTrue(p.handoff || p.bridge, "the ladder goes from the filter mix to the hand-over, plays ${p.shape ?: p.style}: ${p.reason}")
+        assertTrue(p.reason.orEmpty().contains("filter mix (no echo out at a playlist speed) fits"), "the reason: ${p.reason}")
+        assertTrue(abs(p.speedOut - 1.02) < 1e-9 && abs(p.speedIn - 1.02) < 1e-9, "the plan keeps the songs' speeds")
+    }
+
+    /**
      * versions.md "Where a song is sung" rule 5 and its fixture rules (automix_fixtures.mjs): with
      * lyrics, Unethical and Poker Face don't fall to the hand-over; with only the playing song's,
      * Poker Face -> Let Me Love You is an echo out.

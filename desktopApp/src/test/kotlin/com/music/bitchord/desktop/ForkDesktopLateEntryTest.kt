@@ -96,6 +96,77 @@ class ForkDesktopLateEntryTest {
         assertEquals(0.1f, ForkDesktopV2.afterLateEntry(none, 0.1f))
     }
 
+    /** Audit 2026-11-26 3a #3: B's curve up but B held silent must not trim A (the trim is 1 / sqrt(out + into)). */
+    @Test
+    fun aHeldBMakesNoRoomInTheHeadroomTrim() {
+        val t = transition(3.0)
+        val tp = ForkV2Automix.toTransitionPlan(t, t.plan.mixOutTrackTime)
+        val gains = FloatArray(2)
+        // 2 s into the mix: inside the 3 s hold, and smooth's incoming curve is already up
+        val progress = (2.0 / t.outputSeconds).toFloat()
+        assertTrue(ForkDesktopV2.gains(tp, progress, gains))
+        assertTrue(gains[1] > 0.05f, "into ${gains[1]}")
+        val total = (t.outputSeconds * 48_000).toInt() * channels
+        val elapsed = (2.0 * 48_000).toInt() * channels
+        val held = ForkDesktopV2.heldSamples(tp, elapsed, total, 1024, channels)
+        assertEquals(1024, held)
+        ForkDesktopV2.lateRise(null, held, 1024, channels, 48_000)
+        val into = ForkDesktopV2.heardInto(gains[1], 0, held, channels, 48_000)
+        assertEquals(0f, into)
+        // A alone at full gain: no trim
+        assertEquals(1f, 1f / kotlin.math.sqrt((1f + into).coerceAtLeast(1f)))
+    }
+
+    /**
+     * mix-file.md rule 2 "[all] A while B is held" (extension 6dcaf08): the trim reads B's heard gain (0 while held, its
+     * 10 ms rise, then its curve). A is never under its own curve during the hold, the output's power steps at most
+     * 1 dB per 10 ms around B's entry, and both are on their usual (trimmed) curves 20 ms after it.
+     */
+    @Test
+    fun theTrimFollowsBInWithNoStep() {
+        val ch = 2
+        val rate = 48_000
+        val block = 1024
+        val sub = 64 * ch // the engine's sub-block (TransitionFilter.GLIDE_FRAMES frames)
+        val out = 1f
+        val curve = 1f // the deepest case: out + into = 2, a 3 dB trim
+        val entryBlock = 4
+        val entryAt = 512 // B's entry, in samples into that block
+        val trims = ArrayList<Float>()
+        val powers = ArrayList<Double>()
+        val heldTrims = ArrayList<Float>()
+        for (b in 0 until 16) {
+            val held = when {
+                b < entryBlock -> block
+                b == entryBlock -> entryAt
+                else -> 0
+            }
+            val samples = FloatArray(block) { curve } // B at its curve, before the rise is applied
+            ForkDesktopV2.lateRise(samples, held, block, ch, rate)
+            var index = 0
+            while (index < block) {
+                val heard = ForkDesktopV2.heardInto(curve, index, held, ch, rate)
+                val trim = 1f / kotlin.math.sqrt((out + heard).coerceAtLeast(1f))
+                val bOut = if (index < held) 0f else samples[index]
+                if (index < held) heldTrims += trim
+                trims += trim
+                powers += (trim * trim * (out * out + bOut * bOut)).toDouble()
+                index += sub
+            }
+        }
+        assertTrue(heldTrims.isNotEmpty() && heldTrims.all { it == 1f }, "A untrimmed while B is held")
+        val perTenMs = Math.ceil(0.010 * rate / (sub / ch)).toInt()
+        val db = powers.map { 10 * kotlin.math.log10(it) }
+        for (i in perTenMs until db.size) {
+            val step = kotlin.math.abs(db[i] - db[i - perTenMs])
+            assertTrue(step <= 1.0, "the output moved $step dB in 10 ms at sub-block $i")
+        }
+        // 20 ms after the entry: both on their usual curves, A at the full 3 dB trim
+        val entryIndex = (entryBlock * block + entryAt) / sub
+        val after = entryIndex + Math.ceil(0.020 * rate / (sub / ch)).toInt()
+        assertEquals((1 / Math.sqrt(2.0)).toFloat(), trims[after], 1e-6f)
+    }
+
     @Test
     fun bRisesToTheCurveWithinTenMillisecondsOfItsStart() {
         val ch = 2

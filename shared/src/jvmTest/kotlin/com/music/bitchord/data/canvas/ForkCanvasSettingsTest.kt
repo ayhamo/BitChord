@@ -109,4 +109,14 @@ class ForkCanvasSettingsTest {
         assertFalse(ForkCanvasSettings.trusted("https://apple.com.evil.example/x.m3u8"))
         assertEquals("https://evil.example.com/a.m3u8", ForkCanvasSettings.variantUrl("https://evil.example.com/a.m3u8", 720) { text })
     }
+
+    /** Audit 2026-11-26: the canvas menus list the sources in the player's order, "Prioritise Spotify Canvas" included. */
+    @Test
+    fun theMenuOrderIsThePlayersOrder() {
+        ForkCanvasSettings.setOrder(listOf(Source.APPLE_MUSIC, Source.YOUTUBE_MUSIC_VIDEO, Source.SPOTIFY))
+        assertEquals(ForkCanvasSettings.effectiveOrder(true, true, spotifyFirst = true), ForkCanvasSettings.menuOrder(true, true, true, spotifyFirst = true))
+        assertEquals(Source.SPOTIFY, ForkCanvasSettings.menuOrder(true, true, true, spotifyFirst = true).first())
+        assertEquals(Source.APPLE_MUSIC, ForkCanvasSettings.menuOrder(true, true, true, spotifyFirst = false).first())
+        assertFalse(Source.YOUTUBE_MUSIC_VIDEO in ForkCanvasSettings.menuOrder(true, true, videosOn = false, spotifyFirst = true))
+    }
 }

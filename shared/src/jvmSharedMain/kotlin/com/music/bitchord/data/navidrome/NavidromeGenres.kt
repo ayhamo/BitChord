@@ -37,7 +37,13 @@ object NavidromeGenres {
         NavidromePlatform.onGenres(
             genres.map { genre ->
                 async {
-                    val cover = gate.withPermit { runCatching { client.albumsByGenre(genre.name, 1).firstOrNull()?.coverArt }.getOrNull() }
+                    // A cover that fails is no cover; a cancelled load stops here instead of showing
+                    // tiles with their covers missing (audit 2026-11-26 2b #8).
+                    val cover = gate.withPermit {
+                        runCatching { client.albumsByGenre(genre.name, 1).firstOrNull()?.coverArt }
+                            .onFailure { if (it is kotlin.coroutines.cancellation.CancellationException) throw it }
+                            .getOrNull()
+                    }
                     MoodGenre(title = genre.name, browseId = PREFIX + genre.name, params = null, thumbnailUrl = cover?.let { client.coverUrl(it) })
                 }
             }.awaitAll(),

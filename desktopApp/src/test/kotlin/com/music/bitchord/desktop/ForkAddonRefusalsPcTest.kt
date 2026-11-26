@@ -89,6 +89,49 @@ class ForkAddonRefusalsPcTest {
         book.forget(song.videoId)
     }
 
+    /** 8.1.5 rule 6, case 1 (owner, 2026-11-26): a row announced as HLS or DASH plays from its own URL, never in cached windows. */
+    @Test
+    fun `an announced HLS or DASH row plays from its own URL with its transport`() {
+        assertEquals(DesktopAddonStream.HLS, ForkNextRowPc.announcedTransport(DesktopStream(url = "https://a.example/s/master.M3U8?token=x")))
+        assertEquals(DesktopAddonStream.DASH, ForkNextRowPc.announcedTransport(DesktopStream(url = "https://a.example/s/42", transport = "DASH")))
+        assertEquals(DesktopAddonStream.DASH, ForkNextRowPc.announcedTransport(DesktopStream(url = "https://a.example/x.mpd")))
+        // the path only, never the query or a word in the host
+        assertNull(ForkNextRowPc.announcedTransport(DesktopStream(url = "https://a.example/Dashboard.flac")))
+        assertNull(ForkNextRowPc.announcedTransport(DesktopStream(url = "https://mpd.example/a.flac?t=x.mpd")))
+        val played = ForkNextRowPc.asAnnounced(DesktopStream(url = "https://a.example/x.m3u8", windowedReads = true))
+        assertEquals(DesktopAddonStream.HLS, played.transport)
+        assertFalse(played.windowedReads, "never read in windows through the range cache")
+        val file = DesktopStream(url = "https://a.example/x.flac")
+        assertTrue(ForkNextRowPc.asAnnounced(file) === file)
+    }
+
+    /** 8.1.5 rule 6, case 2: a file's row answering a playlist or manifest is refused by its content; an announced one is not. */
+    @Test
+    fun `a file row answering a manifest is refused by its bytes or type, an announced one plays`() = runBlocking {
+        val book = ForkNextRowPc.book
+        book.forget(song.videoId)
+        val addon = DesktopSourceConfig("addon-hls", DesktopSourceKind.ADDON)
+        var probed = 0
+        fun head(bytes: String, mime: String? = null): suspend (DesktopStream) -> ForkNextRowPc.Head? = { probed++; ForkNextRowPc.Head(bytes.toByteArray(), mime) }
+
+        assertTrue(ForkNextRowPc.refusesManifest(song, addon, DesktopStream(url = "https://a.example/file/1"), head("#EXTM3U\n#EXT-X-VERSION:3\n")))
+        assertTrue(book.wasRefused(song.videoId, "https://a.example/file/1"))
+        assertTrue(ForkNextRowPc.refusesManifest(song, addon, DesktopStream(url = "https://a.example/file/2"), head("x", "application/dash+xml")))
+        assertFalse(ForkNextRowPc.refusesManifest(song, addon, DesktopStream(url = "https://a.example/file/3"), head("fLaCxxxx", "audio/flac")))
+        assertEquals(3, probed)
+        // announced: case 1, not probed and not refused
+        assertFalse(ForkNextRowPc.refusesManifest(song, addon, DesktopStream(url = "https://a.example/s.m3u8"), head("#EXTM3U")))
+        assertFalse(ForkNextRowPc.refusesManifest(song, addon, DesktopStream(url = "https://a.example/s", transport = "hls"), head("#EXTM3U")))
+        // not an addon, or no head: not refused
+        assertFalse(ForkNextRowPc.refusesManifest(song, DesktopSourceConfig("yt", DesktopSourceKind.YOUTUBE), DesktopStream(url = "https://a.example/f"), head("#EXTM3U")))
+        assertFalse(ForkNextRowPc.refusesManifest(song, addon, DesktopStream(url = "https://a.example/file/4")) { null })
+        assertEquals(3, probed)
+        // a link the probe stopped at a blocked redirect: refused, never left to the decoder (8.1.5 rule 5)
+        assertTrue(ForkNextRowPc.refusesManifest(song, addon, DesktopStream(url = "https://a.example/file/5")) { ForkNextRowPc.Head(ByteArray(0), null, blocked = true) })
+        assertTrue(book.wasRefused(song.videoId, "https://a.example/file/5"))
+        book.forget(song.videoId)
+    }
+
     /** 8.1.4's cap stops the searches (`upgradeFor` asks nothing); "Upgrade quality" (8.1.7) gives the rows back; a skipped song asks nothing. */
     @Test
     fun `an exhausted song is searched no more until upgraded by hand, and a skipped one asks nothing`() = runBlocking {

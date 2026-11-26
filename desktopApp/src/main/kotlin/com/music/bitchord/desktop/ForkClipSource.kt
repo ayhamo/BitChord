@@ -1,5 +1,6 @@
 package com.music.bitchord.desktop
 
+import com.music.bitchord.data.sources.ForkThisMachine
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.URI
@@ -123,7 +124,8 @@ internal object ForkClipSource {
                 DesktopTrackLog.log("canvas: the clip's playlist can't be saved (${unsupported.message}); streaming it")
                 return Source.Stream(unsupported.streamUrl ?: url)
             }
-            Files.newOutputStream(part).buffered().use { out ->
+            Files.newOutputStream(part).buffered().use { file ->
+                val out = BudgetOut(file, MAX_CLIP_BYTES)
                 for (piece in ForkClipHls.merged(plan)) fetch(piece, out)
             }
             check(Files.size(part) > 0) { "the clip came back empty" }
@@ -185,14 +187,51 @@ internal object ForkClipSource {
             val status = response.statusCode()
             check(status in 200..299) { "segment HTTP $status" }
             check(ForkClipHls.secure(response.uri().toString())) { "a segment was redirected off https" }
-            val length = piece.length
-            if (length == null) {
-                body.copyTo(out)
-                return
-            }
-            if (status == 200) body.skipExactly(piece.offset)
-            check(body.copyExactly(out, length) == length) { "a segment ended early" }
+            copyPiece(status, response.headers().firstValue("Content-Range").orElse(null), body, piece, out)
         }
+    }
+
+    /**
+     * [piece]'s bytes from an answer's [body] into [out]. A 206 counts only when its `Content-Range`
+     * starts at [ForkClipHls.Piece.offset]: Apple serves a rendition as one MP4 addressed by byte
+     * ranges, and a fragment taken from another offset joins into a file whose sample tables point
+     * at the wrong bytes, which is the `Invalid NAL unit size` breakage this file exists to end
+     * (combined audit 2026-11-26: any 206 was taken). A 200 is the whole file, cut down here.
+     */
+    internal fun copyPiece(status: Int, contentRange: String?, body: InputStream, piece: ForkClipHls.Piece, out: OutputStream) {
+        val length = piece.length
+        if (length == null) {
+            body.copyTo(out)
+            return
+        }
+        if (status == 206) {
+            val start = contentRange?.let { Regex("""^\s*bytes\s+(\d+)-\d+/(?:\d+|\*)\s*$""", RegexOption.IGNORE_CASE).matchEntire(it) }
+                ?.groupValues?.get(1)?.toLongOrNull()
+            check(start == piece.offset) { "a segment's byte range came back from another offset" }
+        } else {
+            body.skipExactly(piece.offset)
+        }
+        check(body.copyExactly(out, length) == length) { "a segment ended early" }
+    }
+
+    /**
+     * [out] that fails once more than [max] bytes went through it: the clip's pieces, whole files
+     * ([InputStream.copyTo]) included, which nothing bounded before (combined audit 2026-11-26). A
+     * cover clip is a few MB; a playlist pointing at a large file would otherwise be written to disk
+     * whole before the decoder ever saw it.
+     */
+    internal class BudgetOut(private val out: OutputStream, private val max: Long) : OutputStream() {
+        private var used = 0L
+
+        private fun take(n: Int) {
+            used += n
+            check(used <= max) { "the clip is over ${max / (1024 * 1024)} MB" }
+        }
+
+        override fun write(b: Int) { take(1); out.write(b) }
+        override fun write(b: ByteArray, off: Int, len: Int) { take(len); out.write(b, off, len) }
+        override fun flush() = out.flush()
+        override fun close() = out.close()
     }
 
     private fun request(url: String, piece: ForkClipHls.Piece?): HttpRequest =
@@ -230,6 +269,9 @@ internal object ForkClipSource {
         }
         return done
     }
+
+    /** One clip's bytes on disk at most: Apple's cover clips are a few MB at the rendition chosen. */
+    internal const val MAX_CLIP_BYTES = 30L * 1024 * 1024
 
     private const val CLIP_UA =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
@@ -292,7 +334,10 @@ internal object ForkClipHls {
      */
     fun secure(uri: String): Boolean = runCatching {
         val u = URI(uri)
-        u.scheme.equals("https", ignoreCase = true) && !u.host.isNullOrEmpty()
+        // Not this machine by any spelling ([ForkThisMachine]): a playlist (or a redirect) naming
+        // `127.1` or `[::ffff:127.0.0.1]` would otherwise point the fetch at a local service
+        // (combined audit 2026-11-26).
+        u.scheme.equals("https", ignoreCase = true) && !u.host.isNullOrEmpty() && !ForkThisMachine.isThisMachine(u.host)
     }.getOrDefault(false)
 
     /** A URI, whole ([length] null) or the byte range [offset]..[offset]+[length]. */
@@ -385,6 +430,7 @@ internal object ForkClipHls {
                     lastUri = uri
                     range = null
                     segments += piece
+                    if (segments.size > MAX_SEGMENTS) throw IllegalStateException("too many segments")
                 }
             }
         }
@@ -413,6 +459,13 @@ internal object ForkClipHls {
         }
         return out
     }
+
+    /**
+     * The most segments a clip playlist may list. Apple's list a few dozen; an unbounded list held
+     * every piece in memory and asked for each in turn (combined audit 2026-11-26). Over it the clip
+     * fails (not [Unsupported]: streaming it would hand FFmpeg the same endless list).
+     */
+    const val MAX_SEGMENTS = 10_000
 
     /** `n[@o]` into (length, offset or null). */
     private fun byteRange(spec: String): Pair<Long, Long?> {

@@ -8,6 +8,7 @@ import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.canvas.CanvasSource
 import com.music.bitchord.data.canvas.CommunityCanvas
 import com.music.bitchord.data.canvas.ForkAnonymousSpotifyCanvas
+import com.music.bitchord.data.canvas.ForkAppleCanvasRules
 import com.music.bitchord.data.canvas.ForkBestParts
 import com.music.bitchord.data.canvas.ForkCanvasChoices
 import com.music.bitchord.data.canvas.ForkCanvasLookup
@@ -68,9 +69,8 @@ object ForkCanvasSources {
     @Volatile
     var videoDir: File? = null
 
-    /** When Spotify's signed-in token last failed to mint; see [spotify]. */
-    @Volatile
-    private var tokenMissedAt = 0L
+    /** When Spotify's signed-in token last failed to mint, and for which sign-in; see [signedInSpotify]. */
+    private val tokenMiss = ForkTokenMiss(ForkCanvas.MISS_MS)
 
     /**
      * The switches and settings that change which sources are asked, for the repository's in-memory
@@ -146,7 +146,7 @@ object ForkCanvasSources {
         // A cover found is noted for the song's menu (its Animated cover switch and Use, §15).
         val had = { a: CanvasArtwork? -> a?.also { ForkCanvasChoices.noteHad(song.videoId, ForkCanvasRules.Source.APPLE_MUSIC) } }
         return listOf<suspend () -> CanvasArtwork?>(
-            { had(ForkDownloadedCanvas.through(idKey, accept) { ForkCanvasStore.cached(appleKey, saveMiss = album != null) { AppleMusicCanvas.search(title, artist, album)?.let { rendition(it) } } }) },
+            { had(ForkDownloadedCanvas.through(idKey, accept) { ForkCanvasStore.cached(appleKey, saveMiss = album != null) { AppleMusicCanvas.search(title, artist, album)?.let { rendition(it) } }?.let(ForkAppleCanvasRules::trustedArt) }) },
             { had(ForkDownloadedCanvas.through(idKey, accept) { TidalCanvas.search(title, artist, album) }) },
             { had(ForkDownloadedCanvas.through(idKey, accept) { CommunityCanvas.search(title, artist, album) }) },
         )
@@ -159,10 +159,16 @@ object ForkCanvasSources {
      * phone and in a lyrics story, and left unresolved it ignored "Animated cover quality" there.
      * [read]: the list's text (the network; a test passes its own).
      */
-    internal fun rendition(art: CanvasArtwork, read: (String) -> String? = { url -> canvasGet(url) }): CanvasArtwork {
+    internal fun rendition(art: CanvasArtwork, read: (String) -> String? = { url -> canvasGet(url) }): CanvasArtwork? {
+        // Audit 2026-11-26: variantUrl hands an untrusted master back unchanged, so Apple's answer
+        // is held to Apple's https hosts first (no read of an untrusted list), and the picked
+        // renditions again after.
+        val trusted = ForkAppleCanvasRules.trustedArt(art) ?: return null
         val cap = ForkCanvasSettings.coverQuality.value.cap
         fun pick(url: String?) = url?.let { ForkCanvasSettings.variantUrl(it, cap, read) }
-        return art.copy(url = pick(art.url) ?: art.url, fallbackUrl = pick(art.fallbackUrl), portraitUrl = pick(art.portraitUrl))
+        return ForkAppleCanvasRules.trustedArt(
+            trusted.copy(url = pick(trusted.url) ?: trusted.url, fallbackUrl = pick(trusted.fallbackUrl), portraitUrl = pick(trusted.portraitUrl)),
+        )
     }
 
     /**
@@ -233,7 +239,12 @@ object ForkCanvasSources {
         val songMs = ForkMusicVideoMatch.lengthOf(song.durationText) * 1000
         val made = runCatching {
             ForkVideoCanvas.tryPicked(song.videoId, song.title, songMs, dir, artPx(), ForkVideoCanvasAndroid, wish(song, next, suffix)) is ForkVideoCanvas.Result.Clip
-        }.onFailure { Log.w(TAG, "the picked video was not tried: ${it.message}") }.getOrDefault(false)
+        }.onFailure {
+            // A cancelled pick stops; it isn't a pick that failed (audit 2026-11-24 2a #9), as in
+            // ForkCanvas.backdropFor and signedInSpotify.
+            if (it is kotlinx.coroutines.CancellationException) throw it
+            Log.w(TAG, "the picked video was not tried: ${it.message}")
+        }.getOrDefault(false)
         if (made) ForkCanvasChoices.pick(song.videoId, videoId)
         made
     }
@@ -266,17 +277,22 @@ object ForkCanvasSources {
      * song isn't saved as a miss while the sign-in could not be asked).
      */
     private suspend fun signedInSpotify(title: String, artist: String, album: String?): CanvasArtwork? {
-        if (AppSettings.spotifySpdcToken.value.isBlank()) return null
+        val cookie = AppSettings.spotifySpdcToken.value
+        if (cookie.isBlank()) return null
         // A sign-in whose token can't be minted (no network, offline mode, a harvest timing out) is
         // left alone for ForkCanvas.MISS_MS: the WebView harvest waits up to 20 s
         // (SpotifyToken.HARVEST_TIMEOUT_MS), and asked for each song in turn a dead sign-in held one
-        // open for every song of a session.
-        val retryAt = tokenMissedAt + ForkCanvas.MISS_MS
-        if (System.currentTimeMillis() < retryAt) return ForkCanvasLookup.coolingDown("Spotify: the sign-in has no token", retryAt)
+        // open for every song of a session. The wait belongs to that sign-in and those settings
+        // ([ForkTokenMiss]): a new sign-in, or a changed canvas setting (canvas.md §13 rule 10), is
+        // asked at once.
+        val sameAsk = ForkTokenMiss.keyOf(cookie, ForkCanvasSettings.generation.value)
+        tokenMiss.retryAt(sameAsk, System.currentTimeMillis())?.let { return ForkCanvasLookup.coolingDown("Spotify: the sign-in has no token", it) }
         if (SpotifyToken.accessToken() == null) {
-            tokenMissedAt = System.currentTimeMillis()
+            // Signed out while it minted: nothing to hold back, the next sign-in is a new one.
+            if (AppSettings.spotifySpdcToken.value != cookie) return null
+            val at = tokenMiss.missed(sameAsk, System.currentTimeMillis())
             Log.d(TAG, "Spotify sign-in has no token; not asked for a while")
-            return ForkCanvasLookup.coolingDown("Spotify: the sign-in has no token", tokenMissedAt + ForkCanvas.MISS_MS)
+            return ForkCanvasLookup.coolingDown("Spotify: the sign-in has no token", at)
         }
         val found = try {
             SpotifyCanvas.search(title, artist, album)
@@ -290,5 +306,37 @@ object ForkCanvasSources {
             return null
         }
         return found
+    }
+}
+
+/**
+ * The 10-minute wait after Spotify's signed-in token failed to mint, kept per sign-in and canvas
+ * settings ([keyOf]): a wait taken under one is no wait under another.
+ *
+ * Why (audit 2026-11-26 2a #1): it was one timestamp nothing cleared. `SpotifyToken.invalidate` (a new
+ * sign-in) clears its own harvest backoffs and the lookup notes so a new sign-in is asked at once, but
+ * this wait short-circuited before `SpotifyToken.accessToken` was called, so signed-in Spotify Canvas
+ * stayed off for up to 10 minutes after signing in again, or after changing a canvas setting
+ * (canvas.md §13 rule 10: a changed setting is a new question, asked at once).
+ */
+internal class ForkTokenMiss(private val waitMs: Long) {
+    private class Miss(val key: String, val at: Long)
+
+    @Volatile
+    private var last: Miss? = null
+
+    /** When [key] may be asked again, or null when it may be asked now. */
+    fun retryAt(key: String, now: Long): Long? =
+        last?.takeIf { it.key == key }?.let { it.at + waitMs }?.takeIf { now < it }
+
+    /** [key]'s token failed to mint at [now]; returns when it may be asked again. */
+    fun missed(key: String, now: Long): Long {
+        last = Miss(key, now)
+        return now + waitMs
+    }
+
+    companion object {
+        /** A sign-in (by a hash of its cookie, never the cookie) and the canvas settings' generation. */
+        fun keyOf(cookie: String, generation: Int): String = "${cookie.hashCode()}:$generation"
     }
 }

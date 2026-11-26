@@ -193,11 +193,17 @@ internal object ForkEditorUi {
     var repeatFrom by mutableStateOf("0")
     var repeatLen by mutableStateOf("2")
 
-    /** The popup closed: the drawing's tools start afresh next time (the extension's hide()). */
+    /**
+     * The popup closed: the drawing's tools start afresh next time (the extension's hide()). The replace question and a
+     * song drag go too: both name the pair they were for, and a question left open at the close came back on the next
+     * opening, over any pair, with its Yes still saving into the old one (audit 2026-11-26 3a #8).
+     */
     fun closeDrawing() {
         drawKey = null
         pointDrag = null
         pendingDraw = null
+        askReplace = null
+        drag = null
         undo.clear()
         shownPair = null
     }
@@ -217,10 +223,16 @@ internal object ForkEditorUi {
         shownPair = pair
     }
 
-    /** "Reset to Auto", or another pair: no curve chosen, nothing dragged. */
+    /**
+     * "Reset to Auto", or another pair: no curve chosen, nothing dragged, no Draw waiting on a loop mix's blend and no
+     * replace question. A Draw picked on a loop mix stayed armed through Reset to Auto and started drawing the next time
+     * Custom was picked on the pair (audit 2026-11-26 3a #8).
+     */
     fun stopDrawing() {
         drawKey = null
         pointDrag = null
+        pendingDraw = null
+        askReplace = null
     }
 }
 
@@ -273,8 +285,9 @@ private fun editorModel(view: MixTransitionView?, live: Boolean): EditorModel {
     val shown = planned?.takeIf { view != null && it.isShownAs(view.outgoing.title, view.incoming.title) }
     val f = feed?.takeIf { shown != null && ForkMixPicks.pair(it.fromId, it.toId) == shown.pair }
     val ov = remember(f?.fromId, f?.toId, changes) { f?.let { stored(it) } }
-    remember(f?.fromId, f?.toId) {
-        // the songs' names for a mix file's export (mix-file.md rule 8)
+    LaunchedEffect(f?.fromId, f?.toId) {
+        // the songs' names for a mix file's export (mix-file.md rule 8); an effect, not a `remember` (it was): a write
+        // to a shared store has no place in composition (audit 2026-11-26 3a #7)
         if (f != null && view != null) {
             ForkMixFiles.know(f.fromId, view.outgoing.title, view.outgoing.artist)
             ForkMixFiles.know(f.toId, view.incoming.title, view.incoming.artist)
@@ -437,14 +450,24 @@ private fun nudge(m: EditorModel, out: Boolean, dir: Int) {
     val ov = stored(f)
     val now = (if (out) ov?.out else ov?.`in`)
         ?: G.positionOf(if (out) f.plan.mixOutTrackTime else f.plan.mixInTrackTime, if (out) f.gridOut else f.gridIn, false, false)
-    val pos = G.nudged(now, dir)
+    // held at the window's limits as a drag is (editor.md §6), not only at the 2 s nudge reach
+    val r = G.nudge(now, dir, f.limits.lo(out), f.limits.hi(out), out)
+    val pos = r.pos
     if (pos == null) {
-        ForkEditorUi.refused = m.pairKey!! to G.NUDGE_REFUSED
+        ForkEditorUi.refused = m.pairKey!! to (r.refused ?: G.NUDGE_REFUSED)
         return
     }
     val (o, i) = G.windowWith(ov, out, pos, f.plan.mixOutTrackTime, f.plan.mixInTrackTime, f.gridOut, f.gridIn)
     save(f, G.edited(ov, false) { this.out = o; this.`in` = i })
 }
+
+/**
+ * What "Set" would save from the "B in after" box: its seconds (a comma read as the point) when they are a number and
+ * differ from the [late] saved, else null and the chip is off. An empty box or a lone "." read as null, and
+ * `null != late` left the chip lit with a click that did nothing (audit 2026-11-26 3a #10).
+ */
+internal fun lateToSet(text: String, late: Double): Double? =
+    text.replace(',', '.').toDoubleOrNull()?.takeIf { it != late }
 
 /** B's late entry set in seconds, 0 clearing it (automix-overview.js setLate): saved on the mix-in, placed where the plan has it if unsaved. */
 private fun setLate(m: EditorModel, sec: Double) {
@@ -867,14 +890,6 @@ private fun DrawScope.drawEditorDecks(
         }
     }
 
-    val blend = plan.style == "blend"
-    val glide = plan.glide
-    val outRate = if (blend && glide == null && plan.outRate > 0) plan.outRate else 1.0
-    val inRate = when {
-        blend && glide != null && glide.q > 0 && plan.beatSec > 0 -> plan.bars * 4 * plan.beatSec / glide.q / D
-        blend && plan.rate > 0 -> plan.rate
-        else -> 1.0
-    }
     val outBase = if (drag?.out == true) drag.pos.sec else plan.mixOutTrackTime
     val inBase = if (drag?.out == false) drag.pos.sec else plan.mixInTrackTime
     val late = plan.inDelaySec // B's late entry (mix-file.md rule 2): B is silent, and not drawn, until then
@@ -899,12 +914,8 @@ private fun DrawScope.drawEditorDecks(
             var x = 0f
             while (x < w) {
                 val tm = t(x + step / 2)
-                val song = if (out) {
-                    if (tm < 0) outBase + tm else if (tm <= D) outBase + tm * outRate else outBase + D * outRate + (tm - D)
-                } else {
-                    val tl = tm - late
-                    if (late > 0 && tl < 0) Double.NaN else if (tl < 0) inBase + tl else if (tm <= D) inBase + tl * inRate else inBase + (D - late) * inRate + (tm - D)
-                }
+                // (the plan's rates in the window for any style, each song's playlist speed outside it: spotify-mixes.md rule 10)
+                val song = G.songAt(out, tm, D, if (out) outBase else inBase, late, plan)
                 val i = ((song - deck.waveStart) / perBin).toInt()
                 if (song >= deck.waveStart && i in 0 until bins) {
                     val silent = if (out) tm > D else tm < 0
@@ -1230,8 +1241,9 @@ internal fun ForkTransitionEditor(live: Boolean, view: MixTransitionView?, modif
                 Text("B in after", color = EditorNote, fontSize = 12.sp, modifier = Modifier.padding(top = 5.dp))
                 NumberField(lateText) { lateText = it }
                 Text("s", color = EditorNote, fontSize = 12.sp, modifier = Modifier.padding(top = 5.dp))
-                EditorChip("Set", false, enabled = m.windowEditable && lateText.replace(',', '.').toDoubleOrNull() != late) {
-                    lateText.replace(',', '.').toDoubleOrNull()?.let { setLate(m, it) }
+                val lateSet = lateToSet(lateText, late)
+                EditorChip("Set", false, enabled = m.windowEditable && lateSet != null) {
+                    lateSet?.let { setLate(m, it) }
                 }
             }
         }
@@ -1293,9 +1305,10 @@ internal fun ForkTransitionEditor(live: Boolean, view: MixTransitionView?, modif
 /**
  * One row for the analysis (editor.md §11, spec fef76a9): "Analysing this song / the next song:
  * <stage> · NN%" over a bar filled to NN% (this song before the next, never both), a failure with its
- * reason or another outcome in its own words in its place, else "Looking for a loop mix…" with a
- * moving bar while BitChord's loop-mix search waits. Analysis only: never the addon fetch or the
- * take-over (rule 6).
+ * reason or another outcome in its own words in its place; when those have nothing to say, the
+ * playing song's addon copy (rule 6: asked for, fetched, lined up with YouTube's, switched to; never
+ * the next song's), then "Looking for a loop mix…", both with a moving bar
+ * ([ForkAnalysisProgress.rowFor]).
  *
  * [hidden] during a live mix (the popup shows the mix itself then). Not drawn until it first has
  * something to say; after that it keeps its room when it has nothing (invisible, not gone), so the

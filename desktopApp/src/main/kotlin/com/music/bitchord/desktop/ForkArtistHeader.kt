@@ -184,7 +184,11 @@ private fun ForkArtistMotion(url: String, modifier: Modifier) {
         value = withContext(Dispatchers.IO) {
             com.music.bitchord.data.canvas.ForkCanvasSettings.variantUrl(url, quality.cap) { u ->
                 okhttp3.Request.Builder().url(u).build().let { r ->
-                    com.music.bitchord.data.Http.client.newCall(r).execute().use { if (it.isSuccessful) it.body?.string() else null }
+                    // capped (combined audit 2026-11-26): a master playlist is a few KB, and the body
+                    // was read whole into memory whatever the server sent
+                    com.music.bitchord.data.Http.client.newCall(r).execute().use {
+                        if (it.isSuccessful) com.music.bitchord.data.ForkCappedBody.text(it, 2 * com.music.bitchord.data.ForkCappedBody.MB) else null
+                    }
                 }
             }
         }

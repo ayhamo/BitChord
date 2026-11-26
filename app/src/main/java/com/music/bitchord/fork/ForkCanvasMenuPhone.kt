@@ -79,11 +79,12 @@ internal fun ForkCanvasMenuRows(song: Song, accent: Color, onDone: () -> Unit) {
     val backdrops by ForkCanvasSwitch.backdrops.collectAsStateWithLifecycle()
     val covers by ForkCanvasSwitch.covers.collectAsStateWithLifecycle()
     val videos by ForkCanvasSwitch.videos.collectAsStateWithLifecycle()
+    val spotifyFirst by com.music.bitchord.data.settings.AppSettings.effectivePrioritizeSpotifyCanvas.collectAsStateWithLifecycle() // the player's own order (audit 2026-11-26)
     val choice = remember(song.videoId, generation) { ForkCanvasChoices.of(song.videoId) }
     val note = remember(song.videoId, generation) { ForkCanvasChoices.noteOf(song.videoId) }
-    val rows = remember(choice, note, backdrops, covers, videos) {
+    val rows = remember(choice, note, backdrops, covers, videos, spotifyFirst) {
         ForkCanvasChoices.rows(choice, note, isSong = true, canvasOn = backdrops,
-            order = ForkCanvasSettings.effectiveOrder(backdrops, covers).filter { it != ForkCanvasRules.Source.YOUTUBE_MUSIC_VIDEO || videos })
+            order = ForkCanvasSettings.menuOrder(backdrops, covers, videos, spotifyFirst))
     }
     var sheet by remember { mutableStateOf<String?>(null) }
 

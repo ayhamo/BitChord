@@ -44,6 +44,34 @@ class ForkSongSpeedTest {
         assertEquals(1.08 * 120 / 128, p.rate, 1e-9)
         assertEquals(0, p.rampBeats)
         assertNull(p.glide)
+        // the curves carry the speeds (extension L2): A steady at x1.08, B's glide back ends at its x0.96, not x1
+        val c = p.curves!!
+        assertEquals(listOf(listOf(0.0, 1.08), listOf(p.durationSec, 1.08)), c.out["rate"]!!.map { it.toList() })
+        val inn = c.`in`["rate"]!!
+        assertEquals(p.rate, inn[0][1], 1e-9)
+        assertEquals(0.96, inn.last()[1], 0.0)
+    }
+
+    /** A crossfade at playlist speeds: its curves show A at speedOut and B at speedIn throughout (automix.js blendCurves). */
+    @Test
+    fun aCrossfadesCurvesCarryBothSpeeds() {
+        val p = ForkV2Planner.Plan()
+        p.style = "crossfade"
+        p.durationSec = 6.0
+        p.speedOut = 0.97
+        p.speedIn = 1.25
+        p.rate = 1.25
+        p.outRate = 0.97
+        val c = ForkV2Curves.blend(p)
+        assertEquals(listOf(listOf(0.0, 0.97), listOf(6.0, 0.97)), c.out["rate"]!!.map { it.toList() })
+        assertEquals(listOf(listOf(0.0, 1.25), listOf(6.0, 1.25)), c.`in`["rate"]!!.map { it.toList() })
+        // with no speeds: no tempo curve at all, as before
+        val q = ForkV2Planner.Plan()
+        q.style = "crossfade"
+        q.durationSec = 6.0
+        val d = ForkV2Curves.blend(q)
+        assertNull(d.out["rate"])
+        assertNull(d.`in`["rate"])
     }
 
     @Test

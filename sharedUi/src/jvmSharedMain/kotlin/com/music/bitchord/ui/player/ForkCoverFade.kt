@@ -19,6 +19,7 @@ import androidx.compose.ui.graphics.drawscope.translate
 import coil3.compose.AsyncImagePainter
 import coil3.compose.rememberAsyncImagePainter
 import coil3.request.ImageRequest
+import com.music.bitchord.playback.AutoMixVisualState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlin.math.PI
@@ -140,6 +141,25 @@ fun forkCoverFadeStandsDown(autoMixFrames: Boolean, gateOn: Boolean, mixing: Boo
     autoMixFrames || (gateOn && mixing)
 
 /**
+ * [forkCoverFadeStandsDown]'s `gateOn`: whether the art transition takes *this* mix, read from the
+ * mix's own [visual] state where the platform has one ([PlayerHost.autoMixVisualState]): a mix whose
+ * generation the gate doesn't allow (the transition switched off mid-mix, `skipThrough`) has no
+ * `AutoMixCover` frames, and `enabled` alone stood the fade down for it, so its change was a hard cut
+ * (audit 2026-11-26 2a #3). Without a visual state, the gate's switch as before.
+ */
+internal fun forkMixGateOn(gate: AutoMixArtworkGate, visual: AutoMixVisualState?): Boolean =
+    if (visual == null) gate.enabled else gate.allows(visual.generation)
+
+/**
+ * [forkCoverFadeStandsDown]'s `mixing`: the mix flag, and, where the platform has the mix's visual
+ * state, that state still in its blend. A manual skip cancels the blend (`onSkipRequested`) and the
+ * visual state says CANCELLED for it, so a skip mid-mix gets its fade even in the frame where the
+ * flag hadn't dropped yet (audit 2026-11-24 2a #6 part 2, 2026-11-26 2a #3).
+ */
+internal fun forkMixRunning(flag: Boolean, visual: AutoMixVisualState?): Boolean =
+    if (visual == null) flag else flag && visual.mixActive
+
+/**
  * The fade over a sleeve image drawn from [request]; [loaded] is that request's own "on screen"
  * flag ([PlayerArtwork.loaded]); [autoMix]: the sleeve draws `AutoMixCover` frames for this song
  * ([forkCoverFadeStandsDown]). Goes last in the image's modifier chain (see [ForkCoverFade]).
@@ -153,7 +173,9 @@ fun Modifier.forkCoverFade(request: ImageRequest, loaded: Boolean, autoMix: Bool
     // across a blend's hand-over: this fade stands down for that change, so the two don't draw
     // over each other. Every other change still dissolves.
     val mixing by PlayerSettings.smartMixInProgress.collectAsState()
-    val upstreamArt = forkCoverFadeStandsDown(autoMix, autoMixArtworkGate().enabled, mixing)
+    val visual = PlayerPlatform.host.autoMixVisualState?.collectAsState()?.value // the host's feed is fixed for its life
+    val gate = autoMixArtworkGate()
+    val upstreamArt = forkCoverFadeStandsDown(autoMix, forkMixGateOn(gate, visual), forkMixRunning(mixing, visual))
     // Taken in the composition where the request changes, so the first frame of the new song
     // already has the old cover over it: from an effect it would be one frame late, and that
     // frame is the blank sleeve this exists to hide.

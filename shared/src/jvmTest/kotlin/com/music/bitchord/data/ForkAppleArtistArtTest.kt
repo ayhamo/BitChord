@@ -34,11 +34,11 @@ class ForkAppleArtistArtTest {
     @Test
     fun readsTheLogoAtItsOwnAspect() {
         val header = """
-            {"artistLogo":{"dictionary":{"url":"https://x/logo/{w}x{h}{c}.{f}","width":800,"height":200}},
-             "artwork":{"dictionary":{"url":"https://x/hero/{w}x{h}{c}.{f}","width":1200,"height":600,"bgColor":"000000"}}}
+            {"artistLogo":{"dictionary":{"url":"https://is1-ssl.mzstatic.com/logo/{w}x{h}{c}.{f}","width":800,"height":200}},
+             "artwork":{"dictionary":{"url":"https://is1-ssl.mzstatic.com/hero/{w}x{h}{c}.{f}","width":1200,"height":600,"bgColor":"000000"}}}
         """.trimIndent()
         val art = ForkAppleArtistArtRepository.parseArtistPage(page(header))!!
-        assertEquals("https://x/logo/1000x250bb.png", art.logoUrl)
+        assertEquals("https://is1-ssl.mzstatic.com/logo/1000x250bb.png", art.logoUrl)
         assertEquals(4f, art.logoAspect)
         // No textColor1: the accent is the background; no keyColor: none.
         assertEquals(art.background, art.accent)
@@ -48,9 +48,9 @@ class ForkAppleArtistArtTest {
     @Test
     fun fallsBackToTheColourBackdrop() {
         val header = """
-            {"artistLogo":null,"colorBackdropArtwork":{"dictionary":{"url":"https://x/{w}x{h}{c}.{f}","width":100,"height":100,"bgColor":"ABCDEF"}}}
+            {"artistLogo":null,"colorBackdropArtwork":{"dictionary":{"url":"https://is1-ssl.mzstatic.com/{w}x{h}{c}.{f}","width":100,"height":100,"bgColor":"ABCDEF"}}}
         """.trimIndent()
-        assertEquals("https://x/1200x1200bb.jpg", ForkAppleArtistArtRepository.parseArtistPage(page(header))?.heroUrl)
+        assertEquals("https://is1-ssl.mzstatic.com/1200x1200bb.jpg", ForkAppleArtistArtRepository.parseArtistPage(page(header))?.heroUrl)
     }
 
     @Test
@@ -102,5 +102,22 @@ class ForkAppleArtistArtTest {
             ForkAppleArtistArtRepository.candidates(search, AppleCatalogue.matchKey("Krsna")),
         )
         assertEquals(emptyList(), ForkAppleArtistArtRepository.candidates("not json", "krsna"))
+    }
+
+    /** Audit 2026-11-26: the page's links must be https on Apple's hosts, like a canvas clip. */
+    @Test
+    fun untrustedLinksAreLeftOut() {
+        val bad = listOf("http://is1-ssl.mzstatic.com/", "https://apple.com.evil.example/", "https://u@is1-ssl.mzstatic.com/", "https://is1-ssl.mzstatic.com:8443/")
+        for (base in bad) {
+            assertNull(ForkAppleArtistArtRepository.parseArtistPage(page(heroOnly.replace("https://is1-ssl.mzstatic.com/", base))), base)
+            val header = """
+                {"artistLogo":{"dictionary":{"url":"${base}logo/{w}x{h}{c}.{f}","width":800,"height":200}},
+                 "artwork":{"dictionary":{"url":"https://is1-ssl.mzstatic.com/hero/{w}x{h}{c}.{f}","width":1200,"height":600,"bgColor":"000000"}},
+                 "videoArtwork":{"dictionary":{"motionArtistSquare1x1":{"video":"${base}clip.m3u8"}}}}
+            """.trimIndent()
+            val art = ForkAppleArtistArtRepository.parseArtistPage(page(header))!!
+            assertNull(art.logoUrl, base)
+            assertNull(art.videoUrl, base)
+        }
     }
 }

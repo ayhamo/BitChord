@@ -65,4 +65,22 @@ class ForkAnalysisProgressTest {
         val failed = ForkAnalysisProgress.rowFor("silent", null, false)!!
         assertTrue(failed.text.contains("failed"), failed.text)
     }
+
+    /** editor.md §11 rule 3: a retry stopped or decoded short reads as that, not as the earlier pass's failure. */
+    @Test
+    fun aRetryThatIsStoppedOrShortDropsTheEarlierFailure() {
+        ForkAnalysisProgress.clear()
+        ForkAnalysisProgress.queued("x")
+        ForkAnalysisProgress.failed("x", IllegalStateException("decoder exploded"))
+        ForkAnalysisProgress.ended("x", false)
+        assertTrue(ForkAnalysisProgress.rowFor("x", null, false)!!.text.contains("failed: decoder exploded"))
+        ForkAnalysisProgress.queued("x") // tried again
+        ForkAnalysisProgress.ended("x", null, stopped = true)
+        val stopped = ForkAnalysisProgress.rowFor("x", null, false)!!.text
+        assertTrue(stopped.contains("stopped") && !stopped.contains("failed"), stopped)
+        ForkAnalysisProgress.queued("x")
+        ForkAnalysisProgress.ended("x", null, short = true)
+        val short = ForkAnalysisProgress.rowFor("x", null, false)!!.text
+        assertTrue(short.contains("too short") && !short.contains("failed"), short)
+    }
 }

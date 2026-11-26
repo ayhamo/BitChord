@@ -11,6 +11,7 @@ import com.music.bitchord.data.TrackLog
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.serialization.json.JsonElement
 
 /**
@@ -48,7 +49,8 @@ object ForkAddonLimitsPhone : ForkAddonLimits.Store {
     override fun preset(key: String): String? = _presets.value[key]
 
     override fun savePreset(key: String, presetId: String?) {
-        _presets.value = if (presetId == null) _presets.value - key else _presets.value + (key to presetId)
+        // An atomic update: two Sources rows chosen at once must not drop one (audit 2026-11-26 2b #7).
+        _presets.update { if (presetId == null) it - key else it + (key to presetId) }
         prefs?.edit()?.apply { if (presetId == null) remove("preset_$key") else putString("preset_$key", presetId) }?.apply()
     }
 

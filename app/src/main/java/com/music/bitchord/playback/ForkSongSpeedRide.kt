@@ -37,17 +37,30 @@ object ForkSongSpeedRide {
     /** Between mixes: [player] (the session's) at its song's speed, never over the listener's own. */
     fun hold(player: ExoPlayer) {
         refresh()
-        val want = speedOf(player).toFloat()
-        val cur = player.playbackParameters.speed
+        val h = held(speedOf(player).toFloat(), player.playbackParameters.speed, set, AppSettings.playbackSpeed.value)
+        h.speed?.let { player.setPlaybackSpeed(it) }
+        set = h.set
+    }
+
+    /** What [hold] does: the speed to put on the player (null: leave it), and what [set] is then. */
+    internal class Held(val speed: Float?, val set: Float)
+
+    /**
+     * [hold]'s choice for a player at [cur] whose song wants [want] (1: none), with [set] what this last put there and
+     * [listener] the listener's own speed. A listener's speed other than x1 is theirs, whatever it is: this then puts
+     * nothing on the player and forgets its own. Without that, a listener who set x1.08 by hand while the song had played
+     * at its playlist x1.08 matched [set], and the song's "none" (off with a listener speed) put the player back to x1
+     * over the listener's choice (audit 2026-11-26 part 1b #4; spotify-mixes.md rule 10: "A speed the user set ... is
+     * left alone").
+     */
+    internal fun held(want: Float, cur: Float, set: Float, listener: Float): Held {
+        if (abs(listener - 1f) >= EPS) return Held(null, 0f)
         if (ForkSongSpeed.off1(want.toDouble())) {
-            if (abs(cur - want) > EPS && (abs(cur - 1f) < EPS || (set != 0f && abs(cur - set) < EPS))) {
-                player.setPlaybackSpeed(want)
-                set = want
-            }
-        } else if (set != 0f && abs(cur - set) < EPS) {
-            player.setPlaybackSpeed(1f)
-            set = 0f
+            if (abs(cur - want) > EPS && (abs(cur - 1f) < EPS || (set != 0f && abs(cur - set) < EPS))) return Held(want, want)
+            return Held(null, set)
         }
+        if (set != 0f && abs(cur - set) < EPS) return Held(1f, 0f)
+        return Held(null, set)
     }
 
     /**
@@ -63,7 +76,9 @@ object ForkSongSpeedRide {
     fun easeBase(player: ExoPlayer): Float {
         refresh()
         val s = speedOf(player)
-        if (ForkSongSpeed.off1(s)) set = (AppSettings.playbackSpeed.value * s).toFloat()
+        // (a song with none: nothing of ours on the player after the ease, so a later match with an old one isn't taken
+        // for it)
+        set = if (ForkSongSpeed.off1(s)) (AppSettings.playbackSpeed.value * s).toFloat() else 0f
         return (AppSettings.playbackSpeed.value * s).toFloat()
     }
 

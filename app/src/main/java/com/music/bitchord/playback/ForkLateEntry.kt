@@ -23,6 +23,12 @@ internal class ForkLateEntry {
     /** Incoming media ms the blend had run when B started. */
     private var ranMs = 0.0
 
+    /** Incoming media ms per output ms (B's rate), for B's 10 ms rise in [heardRise]. */
+    private var inRate = 1.0
+
+    /** B was started ([release]): [heardRise] follows its rise from [ranMs]. */
+    private var released = false
+
     /** B is held: its player stays paused (the controller's pause mirror leaves it). */
     var holding = false
         private set
@@ -38,7 +44,8 @@ internal class ForkLateEntry {
     fun begin(holdSec: Double, inRate: Double, outPosMs: Double): Boolean {
         reset()
         if (!(holdSec > 0)) return true
-        holdMs = holdSec * 1000.0 * inRate.coerceAtLeast(0.01)
+        this.inRate = inRate.coerceAtLeast(0.01)
+        holdMs = holdSec * 1000.0 * this.inRate
         outAtStart = outPosMs
         holding = true
         return false
@@ -70,8 +77,25 @@ internal class ForkLateEntry {
     fun release(ran: Double = holdMs): Boolean {
         if (!holding) return false
         holding = false
+        released = true
         ranMs = ran
         return true
+    }
+
+    /**
+     * B's gain as heard, for the blend's headroom trim: 0 while it is held (silent whatever the curve says), then its
+     * 10 ms rise ([ForkMixShelf.LATE_RISE_SEC]) up to its curve's [rise], then the curve. The trim read the curve alone,
+     * which is part-way up during the hold, so A playing on its own was ducked by up to ~2 dB (1 / sqrt(rise + fall)):
+     * past playback.md's 1 dB of the curve (audit 2026-11-26 part 1b #7). And B's entry is a step in its gain, so a
+     * trim that read the curve from the release on stepped A down at once; mix-file.md rule 2 [all] "A while B is held"
+     * (extension 6dcaf08) works the trim out from B's heard gain, heard = clamp((t − inDelaySec) / 0.01, 0, 1), so
+     * there is no separate ramp. [elapsedMs]: the incoming media ms the blend has run ([elapsed]).
+     */
+    fun heardRise(rise: Float, elapsedMs: Double): Float {
+        if (holding) return 0f
+        if (!released) return rise
+        val riseMs = ForkMixShelf.LATE_RISE_SEC * 1000.0 * inRate
+        return rise * ((elapsedMs - ranMs) / riseMs).coerceIn(0.0, 1.0).toFloat()
     }
 
     fun reset() {
@@ -79,6 +103,8 @@ internal class ForkLateEntry {
         outAtStart = 0.0
         ranMs = 0.0
         holding = false
+        released = false
+        inRate = 1.0
         startDue = false
     }
 }

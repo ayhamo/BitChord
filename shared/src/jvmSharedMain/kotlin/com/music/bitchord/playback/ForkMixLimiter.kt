@@ -57,16 +57,7 @@ class ForkMixLimiter(
             need[f] = if (peak > ceiling) ceiling / peak else 1f
         }
         // lookahead: the gain starts down a lookahead before a peak, linearly to its need on the peak
-        val ahead = (lookaheadSec * sampleRate).toInt().coerceAtLeast(1)
-        // forwards, so a ramp only ever lands on frames already passed and never starts a ramp of its own
-        for (f in 0 until live) {
-            val n = need[f]
-            if (n >= 1f) continue
-            for (k in 1..minOf(ahead, f)) {
-                val ramp = n + (1f - n) * k / ahead
-                if (ramp < need[f - k]) need[f - k] = ramp
-            }
-        }
+        lookahead(live, (lookaheadSec * sampleRate).toInt().coerceAtLeast(1))
         // release towards 1, never above the need
         val recover = (1.0 - exp(-1.0 / (releaseSec * sampleRate))).toFloat()
         var g = gain
@@ -79,6 +70,82 @@ class ForkMixLimiter(
             }
         }
         gain = g
+    }
+
+    private var hull = IntArray(0)
+
+    /**
+     * Each frame's need lowered to the lowest of the ramps over it: the ramp of a frame `f` needing `n` reaches frame
+     * `j = f - k` (1 <= k < [ahead]) at `n + (1 - n) * k / ahead`. Walking every ramp frame by frame was O(frames x
+     * ahead) on the audio thread (960 frames a ramp at 192 kHz, on nearly every frame of a loud master: audit 2026-11-26
+     * part 1b #8); this is the same lowest ramp in one backward pass.
+     *
+     * How: a ramp's reduction `1 - ramp` at frame `j` is the line `a * (j - s)` / ahead, with `a = 1 - n` and `s = f - ahead`
+     * (it starts there at 0), live for `s < j < f`. Walking `j` down, ramps join at `j = f - 1` and leave at `j <= s`, both in
+     * order of `f`, so the live ones sit in a queue ([hull]), newest at the front. A newer ramp at least as deep as an
+     * older one (a >= a') beats it on every frame left to both, so the older goes; the queue then runs shallowest to
+     * deepest, and the lines' upper hull is kept (a middle line never above both neighbours goes: once the deeper
+     * neighbour leaves at its s, the shallower one is above the middle one anyway). As `j` falls the best line moves to
+     * the shallower end, so a deepest line beaten by its neighbour goes for good, and the deepest left is the answer.
+     */
+    private fun lookahead(live: Int, ahead: Int) {
+        if (live < 2) return
+        if (hull.size < live) hull = IntArray(live)
+        if (origNeed.size < live) origNeed = FloatArray(live)
+        val q = hull
+        // filled from the array's end towards its start: at most live - 1 ramps ever join, so the front never runs out
+        var head = q.size // the front: the newest ramp (q[head] smallest f)
+        var tail = q.size // one past the back: the oldest
+        var origNext = need[live - 1]
+        for (j in live - 2 downTo 0) {
+            // the ramp of frame j + 1 joins (its need as measured, before this pass lowered it)
+            val f = j + 1
+            val nf = origNext
+            origNext = need[j]
+            if (nf < 1f) {
+                val af = 1.0 - nf
+                // older ramps no deeper than it: beaten on every frame left
+                while (tail > head && 1.0 - need0(q[head]) <= af) head++
+                // the front one never above both its neighbours: off the hull
+                while (tail - head >= 2 && !onHull(f, af, q[head], q[head + 1], ahead)) head++
+                q[--head] = f
+                origNeed[f] = nf
+            }
+            // ramps that ended here (j <= f - ahead: back at 1)
+            while (tail > head && q[tail - 1] - ahead >= j) tail--
+            // the deepest line, beaten by its neighbour now, stays beaten as j falls
+            while (tail - head >= 2 && lift(q[tail - 2], j, ahead) >= lift(q[tail - 1], j, ahead)) tail--
+            if (tail > head) {
+                val g = q[tail - 1]
+                val n = need0(g)
+                val ramp = n + (1f - n) * (g - j) / ahead
+                if (ramp < need[j]) need[j] = ramp
+            }
+        }
+    }
+
+    // a ramp's frame's own need, as measured: [need] is lowered as the pass walks, so the queue keeps its own copy
+    private var origNeed = FloatArray(0)
+
+    private fun need0(f: Int): Float = origNeed[f]
+
+    /** Ramp [f]'s reduction at frame [j], times ahead: (1 - n) * (j - (f - ahead)). */
+    private fun lift(f: Int, j: Int, ahead: Int): Double = (1.0 - need0(f)) * (j - (f - ahead))
+
+    /**
+     * Whether line [m] stays on the upper hull between a new shallower line [l] (slope [al]) and [r]: some frame has it
+     * above both, i.e. it crosses [l] before [r] crosses it.
+     */
+    private fun onHull(l: Int, al: Double, m: Int, r: Int, ahead: Int): Boolean {
+        val am = 1.0 - need0(m)
+        val ar = 1.0 - need0(r)
+        val sl = (l - ahead).toDouble()
+        val sm = (m - ahead).toDouble()
+        val sr = (r - ahead).toDouble()
+        // where l and m cross (m above to the right of it), and where m and r cross (r above to the right of it)
+        val xlm = (al * sl - am * sm) / (al - am)
+        val xmr = (am * sm - ar * sr) / (am - ar)
+        return xlm < xmr
     }
 
     /** Back to no reduction (a flush, a new song). */

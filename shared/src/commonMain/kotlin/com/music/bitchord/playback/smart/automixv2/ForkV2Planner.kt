@@ -1,5 +1,7 @@
 package com.music.bitchord.playback.smart.automixv2
 
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
@@ -386,6 +388,17 @@ object ForkV2Planner {
         }
         val warnings = ArrayList<String>()
         val p = planFor(s, fromId, toId, from, to, durationSec, pos, earliest, sung, ov, warnings, s.curator)
+        // The songs' speeds go on the plan before its curves are built, so the curves' tempo shows them (extension L2;
+        // automix.js plan sets them before blendCurves). They were only set further down, after the curves, which then
+        // drew x1 for a filter mix or crossfade at a playlist speed and glided B back to x1. The block below sets the same.
+        if (s.speeds) {
+            p.speedOut = s.speedOut
+            p.speedIn = s.speedIn
+            if (p.style != "blend") {
+                p.rate = s.speedIn
+                p.outRate = s.speedOut
+            }
+        }
         p.curves = ForkV2Curves.blend(p)
         // A length the planner didn't use (a hand-over, a drop-in's two bars): why, not "fit here"
         // (editor.md §6; automix.js plan, editor-cases.json's last plans case).
@@ -420,6 +433,7 @@ object ForkV2Planner {
         }
         // each song's speed (spotify-mixes.md rule 10): A plays at its own from before the mix (a blend's outRate is
         // it), B at its own, through the mix and after it
+        // (no echo out reaches here: at a song speed the ladder skips its rung, [unmatchedMix]; spotify-mixes.md rule 10)
         if (s.speeds) {
             p.speedOut = s.speedOut
             p.speedIn = s.speedIn
@@ -1195,7 +1209,12 @@ object ForkV2Planner {
         val profile = DoubleArray(12)
         var weight = 0.0
         var frames = 0
-        for (i in c.values.indices) {
+        // Only the frames around [from, to], not the whole song's (each re-plan asked twice, about once a second): a
+        // frame either side of the window's edges, which the time check below then decides exactly as before.
+        val n = c.values.size
+        val i0 = if (c.step > 0) max(0.0, floor((from - c.start) / c.step) - 1).coerceAtMost(n.toDouble()).toInt() else 0
+        val i1 = if (c.step > 0) min(n.toDouble(), ceil((to - c.start) / c.step) + 2).coerceAtLeast(0.0).toInt() else n
+        for (i in i0 until i1) {
             val t = c.start + i * c.step
             val f = c.values[i]
             if (t < from || t > to || f == null) continue
@@ -1286,11 +1305,15 @@ object ForkV2Planner {
     private fun lufs(x: Double): Double = -0.691 + 10 * log10(x + 1e-30)
 
     /** Each region against its whole song; more than 1 dB apart, the louder side is trimmed (at most 6 dB). */
+    /** [regionLoudness] over the whole song, kept per curve ([wholeOf]). */
+    private fun wholeLoudness(a: ForkV2Analysis): Double =
+        if (a.loudnessCurve == null) Double.NaN else wholeOf(a)?.loudness ?: Double.NaN
+
     internal fun loudnessTrim(cur: ForkV2Analysis, outFrom: Double, outDur: Double, next: ForkV2Analysis, inFrom: Double, inDur: Double): Trim? {
         val o = regionLoudness(cur, outFrom, outDur)
         val i = regionLoudness(next, inFrom, inDur)
-        val ow = regionLoudness(cur, 0.0, cur.durationSec)
-        val iw = regionLoudness(next, 0.0, next.durationSec)
+        val ow = wholeLoudness(cur)
+        val iw = wholeLoudness(next)
         if (o.isNaN() || i.isNaN() || ow.isNaN() || iw.isNaN()) return null
         val diff = (o - ow) - (i - iw)
         if (abs(diff) <= TRIM_TOLERANCE_DB) return Trim(r1(diff), 0.0, 0.0)
@@ -1338,17 +1361,52 @@ object ForkV2Planner {
 
     private fun or0(v: Double): Double = if (v.isNaN()) 0.0 else v
 
-    /** The song's 85th-percentile second (amplitude): its usual level. */
-    internal fun usualLevel(a: ForkV2Analysis): Double {
-        val xs = ArrayList<Double>()
-        var t = 0.0
-        while (t + 1 <= a.durationSec) {
-            val v = ampMean(a, t, t + 1)
-            if (!v.isNaN()) xs.add(v)
-            t += 1
+    /** The song's 85th-percentile second (amplitude): its usual level ([wholeOf], walked once per curve). */
+    internal fun usualLevel(a: ForkV2Analysis): Double = wholeOf(a)?.usual ?: Double.NaN
+
+    /**
+     * What the planner reads over a whole song's loudness curve: each second's [ampMean] (its usual level and the
+     * outro search read them), and the song's loudness ([regionLoudness] over all of it, the trim's reference).
+     * Every re-plan asked for them again, about once a second through a blend's approach (`ForkV2Automix`'s memo),
+     * each a walk over the whole curve, both songs' for the trim (the extension's audit 2026-11-26 step 2: its PC
+     * spent 85% of a plan there). Kept on what they are read from: the curve's array (which an analysis copy and
+     * [musicEnd] share), its start and step, and the song's length.
+     */
+    internal class Whole(val values: DoubleArray, val start: Double, val step: Double, val dur: Double, a: ForkV2Analysis) {
+        /** [ampMean] of each second t with t + 1 <= the length; NaN where the curve has none. */
+        val secs: DoubleArray
+        val usual: Double
+        val loudness: Double
+
+        init {
+            wholeWalks++
+            val xs = ArrayList<Double>()
+            var t = 0.0
+            while (t + 1 <= dur) {
+                xs.add(ampMean(a, t, t + 1))
+                t += 1
+            }
+            secs = xs.toDoubleArray()
+            val ok = xs.filter { !it.isNaN() }.sorted()
+            usual = if (ok.isEmpty()) Double.NaN else ok[min(ok.size - 1, floor(ok.size * 0.85).toInt())]
+            loudness = regionLoudness(a, 0.0, dur)
         }
-        xs.sort()
-        return if (xs.isEmpty()) Double.NaN else xs[min(xs.size - 1, floor(xs.size * 0.85).toInt())]
+    }
+
+    private const val WHOLE_KEEP = 8
+    private val wholes = MutableStateFlow<List<Whole>>(emptyList())
+
+    /** Tests: how many whole-curve walks [wholeOf] has made. */
+    internal var wholeWalks = 0
+        private set
+
+    internal fun wholeOf(a: ForkV2Analysis): Whole? {
+        val c = a.loudnessCurve ?: return null
+        val d = a.durationSec
+        wholes.value.firstOrNull { it.values === c.values && it.start == c.start && it.step == c.step && it.dur == d }?.let { return it }
+        val w = Whole(c.values, c.start, c.step, d, a)
+        wholes.update { (listOf(w) + it).take(WHOLE_KEEP) }
+        return w
     }
 
     private fun meanOf(xs: List<Double>): Double {
@@ -1419,10 +1477,13 @@ object ForkV2Planner {
         // the outro (Prism's finding): energy over 3 s under 0.6 of the body's median to the end, 6 s or
         // more; the blend ENDS on the phrase that opens it (else the first beat in it), so the next song
         // is in by the time the playing one drops. Its music doesn't count as cut.
+        // the seconds up to the audible end, from the song's whole walk ([wholeOf]: the same [ampMean] of each)
         val secs = ArrayList<Double>()
+        val each = wholeOf(cur)?.secs ?: DoubleArray(0)
         var s1 = 0.0
         while (s1 + 1 <= audible) {
-            secs.add(or0(ampMean(cur, s1, s1 + 1)))
+            val k = s1.toInt()
+            secs.add(or0(if (k < each.size) each[k] else ampMean(cur, s1, s1 + 1)))
             s1 += 1
         }
         val body = if (secs.isEmpty()) Double.NaN else secs.sorted()[secs.size / 2]
@@ -1484,8 +1545,17 @@ object ForkV2Planner {
             f.clash > V2_CLASH_MAX -> ", both would sing " + jround(f.clash * 100) + "% of a filter mix"
             else -> ""
         }
-        val e = if (avoid == "echo") null else echoOut(cur, next, fromGrid, toGrid, lo, "$why$sang: an echo out (no beat match)", sung)
-        return e ?: handoff(cur, next, earliest, "$why$sang, and no " + (if (avoid == "echo") "third echo out in a row or " else "") + "filter mix or echo out fits", sung)
+        // No echo out at a playlist speed (spotify-mixes.md rule 10 [all], b74ce10; automix.js unmatchedMix): it is planned
+        // as a blend at rate 1, so B would start at x1 and glide to its speed after the hand-over. The ladder goes on from
+        // the filter mix to the hand-over. (Audit 2026-11-26 part 1a #1 had the echo out take both speeds instead; the
+        // owner's ruling of 2026-11-26 replaced that in every app.)
+        val e = if (avoid == "echo" || s.speeds) null else echoOut(cur, next, fromGrid, toGrid, lo, "$why$sang: an echo out (no beat match)", sung)
+        return e ?: handoff(
+            cur, next, earliest,
+            "$why$sang, and no " + (if (avoid == "echo") "third echo out in a row or " else "") +
+                "filter mix" + (if (s.speeds) " (no echo out at a playlist speed)" else " or echo out") + " fits",
+            sung,
+        )
     }
 
     // ───────── Automix v2: an adlib outro (versions.md "Adlib outro"; Orchard transitionFlow.js singsOut) ─────────

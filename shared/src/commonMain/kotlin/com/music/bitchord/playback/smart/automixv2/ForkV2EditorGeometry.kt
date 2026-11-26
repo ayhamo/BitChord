@@ -168,6 +168,24 @@ object ForkV2EditorGeometry {
         return ForkV2MixOverride.Position(now.bar, now.beat, n, round((now.sec + dir * NUDGE_MS / 1000.0) * 1000) / 1000, now.delaySec)
     }
 
+    /** A nudge's outcome: the position to save, or the line the editor shows instead ([NUDGE_REFUSED], "Held: …"). */
+    class Nudge(val pos: ForkV2MixOverride.Position?, val refused: String?)
+
+    /**
+     * [nudged], held at the window's limits as a drag is (editor.md §6; automix.js nudgeWindow): a step that would take
+     * the position below [lo] or past [hi] is refused with "Held: " and that side's reason ([out]: A's mix-out), a step
+     * back towards them from outside is allowed. Without this the editor saved a 10 ms step past a limit (B's mix-in at
+     * -0.01 s, A's past its music's end), which the planner then clamped back, so the nudge saved a position that never
+     * played (audit 2026-11-26 part 1a #2).
+     */
+    fun nudge(now: ForkV2MixOverride.Position, dir: Int, lo: Double, hi: Double, out: Boolean): Nudge {
+        val p = nudged(now, dir) ?: return Nudge(null, NUDGE_REFUSED)
+        val why = if (out) LIMIT_WHY_OUT else LIMIT_WHY_IN
+        if (dir < 0 && p.sec < lo - 1e-6) return Nudge(null, "Held: " + why[0])
+        if (dir > 0 && p.sec > hi + 1e-6) return Nudge(null, "Held: " + why[1])
+        return Nudge(p, null)
+    }
+
     /**
      * The window with B's late entry set to [sec] (mix-file.md rule 2, the editor's "B in after N s"; 0 clears it;
      * automix-overview.js setLate): the mix-in as saved, or where the plan has it, with its delay, 0 to 60 s to 1 ms;
@@ -334,6 +352,44 @@ object ForkV2EditorGeometry {
             }
         }
         return pts[pts.size - 1][1]
+    }
+
+    /**
+     * The song second a deck plays at mix second [tm] (0 the window's start, [D] its end), for the overview's waveforms;
+     * NaN for B before its late entry ([lateSec], mix-file.md rule 2: silent, not drawn). [base] is the deck's mix-out or
+     * mix-in (a dragged one while dragging).
+     *
+     * Inside the window each deck runs at the plan's rate for any style: the planner sets `outRate`/`rate` to the songs'
+     * playlist speeds for a crossfade or filter mix too (spotify-mixes.md rule 10), while only a blend read them here, so a
+     * filter mix of songs at x1.25 drew both at x1 and the waveforms slid off what plays. A blend's glide steps its rate
+     * every beat: A is drawn at x1 and B at its mean rate over the window, as before. Outside the window each song is at
+     * its own speed (A at `speedOut` before, B at `speedIn` after: a glide back ends there, not at x1), as the extension's
+     * automix-overview.js `songTimes` maps it; A after the window and B before it are drawn greyed at that speed too.
+     */
+    fun songAt(out: Boolean, tm: Double, D: Double, base: Double, lateSec: Double, plan: ForkV2Planner.Plan): Double {
+        val glide = if (plan.style == "blend") plan.glide else null
+        val speed = if (out) plan.speedOut else plan.speedIn
+        val own = if (speed > 0) speed else 1.0
+        if (out) {
+            val rate = if (glide == null && plan.outRate > 0) plan.outRate else 1.0
+            return when {
+                tm < 0 -> base + tm * own
+                tm <= D -> base + tm * rate
+                else -> base + D * rate + (tm - D) * own
+            }
+        }
+        val rate = when {
+            glide != null && glide.q > 0 && plan.beatSec > 0 -> plan.bars * 4 * plan.beatSec / glide.q / D
+            plan.rate > 0 -> plan.rate
+            else -> 1.0
+        }
+        val tl = tm - lateSec
+        return when {
+            lateSec > 0 && tl < 0 -> Double.NaN
+            tl < 0 -> base + tl * own
+            tm <= D -> base + tl * rate
+            else -> base + (D - lateSec) * rate + (tm - D) * own
+        }
     }
 
     /** dB as a lane's height, 0..1: 0 dB at the top, [ForkV2Planner.BASS_CUT_DB] (−18) at the bottom. */

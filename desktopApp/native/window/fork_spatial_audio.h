@@ -23,13 +23,31 @@
 // into a ring here and the render thread deinterleaves them into the objects. While paused, or when
 // the ring runs dry, the objects get silence and nothing is counted as played.
 
+/**
+ * What one render thread works on, handed to it at its start and never changed after. Heap-held so
+ * a thread that won't stop can be left with it: fork_spatial_release_stream waits 5 s for the
+ * thread, and when the renderer keeps it (a driver stuck in BeginUpdatingAudioObjects) the global
+ * state below is cleared and reused for the next open. Before, the thread read the stream, event,
+ * stop flag and ring straight off the global, so a thread that came back later dereferenced the
+ * nulled stream, divided by a zeroed capacity or wrote into the next session's ring (audit
+ * 2026-11-26 3a #1). Now a stuck thread's session is leaked, never freed under it, its `stop` stays
+ * true, and it touches the shared ring only while it is still the current session (checked under
+ * the ring's mutex).
+ */
+struct ForkSpatialSession {
+    ISpatialAudioObjectRenderStream* stream = nullptr;
+    HANDLE event = nullptr;
+    std::vector<AudioObjectType> types;
+    std::atomic<bool> stop{false};
+};
+
 struct ForkSpatialState {
     std::mutex mutex; // the ring, counters and flags below; never held while waiting on the device
     ISpatialAudioClient* client = nullptr;
     ISpatialAudioObjectRenderStream* stream = nullptr;
     HANDLE event = nullptr;
     HANDLE thread = nullptr;
-    std::atomic<bool> stop{false};
+    ForkSpatialSession* session = nullptr; // the running thread's; swapped under `mutex`
     std::atomic<bool> broken{false}; // the render thread lost the device; the next write rebuilds
 
     std::vector<AudioObjectType> types; // one per channel, in interleaving (mask bit) order
@@ -138,29 +156,43 @@ int fork_spatial_rate(const std::wstring& wanted) {
     return rate;
 }
 
-DWORD WINAPI fork_spatial_render(LPVOID) {
+/**
+ * Marks the line broken so the next write rebuilds it, but only while [session] is still the one
+ * playing: a thread left behind by a timed-out release must not send the next session into a rebuild.
+ */
+void fork_spatial_mark_broken(ForkSpatialSession* session) {
+    std::lock_guard<std::mutex> guard(g_fork_spatial.mutex);
+    if (g_fork_spatial.session == session) g_fork_spatial.broken = true;
+}
+
+DWORD WINAPI fork_spatial_render(LPVOID param) {
     ComScope com;
     ForkSpatialState& s = g_fork_spatial;
-    std::vector<ISpatialAudioObject*> objects(s.types.size(), nullptr);
-    std::vector<float*> buffers(s.types.size(), nullptr);
-    HRESULT status = s.stream->Start();
-    if (FAILED(status)) s.broken = true;
-    while (!s.stop && !s.broken) {
+    // Everything device-side comes from the session, never from `s`, which a timed-out release
+    // clears and the next open refills while this thread may still be running.
+    ForkSpatialSession* session = static_cast<ForkSpatialSession*>(param);
+    ISpatialAudioObjectRenderStream* stream = session->stream;
+    std::vector<ISpatialAudioObject*> objects(session->types.size(), nullptr);
+    std::vector<float*> buffers(session->types.size(), nullptr);
+    bool failed = false;
+    HRESULT status = stream->Start();
+    if (FAILED(status)) failed = true;
+    while (!session->stop && !failed) {
         // Signalled each period the renderer wants data. A timeout means the device went quiet
         // under us (OpenAL Soft resets here); Begin… below then reports what happened.
-        WaitForSingleObject(s.event, 1000);
-        if (s.stop) break;
+        WaitForSingleObject(session->event, 1000);
+        if (session->stop) break;
         UINT32 dynamic = 0;
         UINT32 frames = 0;
-        status = s.stream->BeginUpdatingAudioObjects(&dynamic, &frames);
+        status = stream->BeginUpdatingAudioObjects(&dynamic, &frames);
         if (FAILED(status)) {
-            s.broken = true;
+            failed = true;
             break;
         }
         bool ok = true;
         for (size_t index = 0; index < objects.size() && ok; ++index) {
             if (objects[index] == nullptr) {
-                ok = SUCCEEDED(s.stream->ActivateSpatialAudioObject(s.types[index], &objects[index])) &&
+                ok = SUCCEEDED(stream->ActivateSpatialAudioObject(session->types[index], &objects[index])) &&
                     objects[index] != nullptr;
                 if (!ok) break;
             }
@@ -172,9 +204,13 @@ DWORD WINAPI fork_spatial_render(LPVOID) {
         }
         if (ok) {
             std::lock_guard<std::mutex> guard(s.mutex);
-            const uint64_t queued = s.written - s.read;
-            const UINT32 take = s.paused ? 0 : static_cast<UINT32>(std::min<uint64_t>(queued, frames));
-            const UINT32 ch = s.channels;
+            // Left behind (stopped, or the ring now belongs to another session, maybe in another
+            // layout or cleared to capacity 0): silence, and the ring is not touched.
+            const bool mine = s.session == session && !session->stop &&
+                s.capacity != 0 && s.channels == objects.size();
+            const uint64_t queued = mine ? s.written - s.read : 0;
+            const UINT32 take = (!mine || s.paused) ? 0 : static_cast<UINT32>(std::min<uint64_t>(queued, frames));
+            const UINT32 ch = static_cast<UINT32>(objects.size());
             for (UINT32 frame = 0; frame < take; ++frame) {
                 const float* source = &s.ring[((s.read + frame) % s.capacity) * ch];
                 for (UINT32 c = 0; c < ch; ++c) buffers[c][frame] = source[c];
@@ -185,13 +221,14 @@ DWORD WINAPI fork_spatial_render(LPVOID) {
             s.read += take;
             s.played += take;
         }
-        status = s.stream->EndUpdatingAudioObjects();
+        status = stream->EndUpdatingAudioObjects();
         if (!ok || FAILED(status)) {
-            s.broken = true;
+            failed = true;
             break;
         }
     }
-    s.stream->Stop();
+    if (failed) fork_spatial_mark_broken(session);
+    stream->Stop();
     for (ISpatialAudioObject* object : objects) {
         if (object != nullptr) object->Release();
     }
@@ -202,17 +239,27 @@ DWORD WINAPI fork_spatial_render(LPVOID) {
 void fork_spatial_release_stream() {
     ForkSpatialState& s = g_fork_spatial;
     if (s.thread != nullptr) {
-        s.stop = true;
+        ForkSpatialSession* session = s.session;
+        if (session != nullptr) session->stop = true;
+        {
+            // From here the thread no longer counts as the current one: it can't touch the ring
+            // or mark the line broken, whatever it does when (if) the renderer lets it go.
+            std::lock_guard<std::mutex> guard(s.mutex);
+            s.session = nullptr;
+        }
         if (s.event != nullptr) SetEvent(s.event);
         const DWORD joined = WaitForSingleObject(s.thread, 5000);
         CloseHandle(s.thread);
         s.thread = nullptr;
         if (joined != WAIT_OBJECT_0) {
             // The render thread is stuck inside the renderer: releasing what it is using would be a
-            // use-after-free. Leak the stream and its event instead, and start clean.
+            // use-after-free. Leak the stream, its event, the client and the thread's session
+            // (whose stop stays set) instead, and start clean.
             s.stream = nullptr;
             s.client = nullptr;
             s.event = nullptr;
+        } else {
+            delete session;
         }
     }
     if (s.stream != nullptr) {
@@ -228,7 +275,6 @@ void fork_spatial_release_stream() {
         CloseHandle(s.event);
         s.event = nullptr;
     }
-    s.stop = false;
     s.broken = false;
     s.endpoint.clear();
     s.name.clear();
@@ -297,8 +343,21 @@ bool fork_spatial_start_on(IMMDevice* device) {
         s.capacity = std::max<size_t>(static_cast<size_t>(s.rate) / 5, size_t{period} * 4);
         s.ring.assign(s.capacity * s.channels, 0.0f);
     }
-    s.thread = CreateThread(nullptr, 0, fork_spatial_render, nullptr, 0, nullptr);
+    ForkSpatialSession* session = new ForkSpatialSession();
+    session->stream = s.stream;
+    session->event = s.event;
+    session->types = s.types;
+    {
+        std::lock_guard<std::mutex> guard(s.mutex);
+        s.session = session;
+    }
+    s.thread = CreateThread(nullptr, 0, fork_spatial_render, session, 0, nullptr);
     if (s.thread == nullptr) {
+        {
+            std::lock_guard<std::mutex> guard(s.mutex);
+            s.session = nullptr;
+        }
+        delete session;
         g_audio_error = L"Starting the Spatial Sound thread failed";
         fork_spatial_release_stream();
         return false;

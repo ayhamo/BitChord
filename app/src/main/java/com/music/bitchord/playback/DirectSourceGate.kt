@@ -168,6 +168,9 @@ object DirectSourceGate {
 
     private val bypass = ThreadLocal<Boolean>()
 
+    /** Whether the calling thread is inside [ungated] (Cast), for the fork's read-ahead hold too. */
+    fun forkUngated(): Boolean = bypass.get() == true // fork: ForkReadAhead honours the same bypass (audit 2026-11-26 2b #2)
+
     /**
      * Runs [block] with the gate open, for a resolve made on behalf of
      * something other than this device's player. A Cast receiver is handed

@@ -91,8 +91,13 @@ object ForkMixFiles {
 
     private val scope by lazy { CoroutineScope(SupervisorJob() + Dispatchers.Main) }
 
-    /** The songs' titles and artists this app has seen (the editor's songs, imported files), for an export's songs. */
-    private val songs = HashMap<String, ForkV2MixFile.Song>()
+    /**
+     * The songs' titles and artists this app has seen (the editor's songs, imported files), for an export's songs.
+     * Concurrent: the editor adds to it from the UI while an export or Play these mixes reads it from [scope]'s
+     * coroutines and their lookups (audit 2026-11-26 3a #7; it was a plain HashMap). Typed as a MutableMap on purpose:
+     * on a ConcurrentHashMap `id in songs` would call its legacy `contains`, which looks for a value.
+     */
+    private val songs: MutableMap<String, ForkV2MixFile.Song> = java.util.concurrent.ConcurrentHashMap()
 
     /** The editor's songs, so an export names them (rule 8: titles and artists where the app knows them). */
     fun know(videoId: String, title: String?, artist: String?) {
@@ -111,11 +116,13 @@ object ForkMixFiles {
 
     fun importMixes() {
         val pick = open ?: return
-        pick({ text -> imported(text) }, { why -> status = "Not imported: $why." })
+        // A file of up to 2 MB is parsed off the UI thread (audit 2026-11-26 3a #5); what it changes is applied on it.
+        pick({ text -> scope.launch { imported(withContext(Dispatchers.Default) { ForkV2MixFile.read(text) }) } }, { why -> status = "Not imported: $why." })
     }
 
-    internal fun imported(text: String) {
-        val r = ForkV2MixFile.read(text)
+    internal fun imported(text: String) = imported(ForkV2MixFile.read(text))
+
+    private fun imported(r: ForkV2MixFile.Read) {
         if (r.refused != null) {
             status = "Not imported: ${r.refused}."
             return
@@ -210,8 +217,20 @@ object ForkMixFiles {
     private suspend fun resolved(ids: List<String>): List<Song> = coroutineScope {
         // eight at a time: a 300-mix file is up to 600 songs
         ids.chunked(8).flatMap { chunk ->
-            chunk.map { id -> async { runCatching { lookup(id) }.getOrNull()?.takeIf { it.videoId == id } ?: fallback(id) } }.awaitAll()
+            chunk.map { id -> async { lookupOrNull(id)?.takeIf { it.videoId == id } ?: fallback(id) } }.awaitAll()
         }
+    }
+
+    /**
+     * [lookup]'s song, null when it failed; a cancellation goes on up. `runCatching` swallowed it, so a cancelled
+     * Play these mixes or export went on looking up and then queued or wrote the fallbacks (audit 2026-11-26 3a #7).
+     */
+    private suspend fun lookupOrNull(id: String): Song? = try {
+        lookup(id)
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        null
     }
 
     private fun fallback(id: String): Song {

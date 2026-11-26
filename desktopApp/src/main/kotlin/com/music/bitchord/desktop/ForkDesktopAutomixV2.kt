@@ -160,6 +160,9 @@ internal object ForkDesktopV2 {
     /** Frames of B's rise after its late entry played ([lateRise]); -1: none under way. */
     private var riseAt = -1
 
+    /** [riseAt] as this block's [lateRise] found it (from the entry when the entry is in this block), for [heardInto]. */
+    private var riseFrom = -1
+
     /**
      * B's late entry (mix-file.md rule 2): its gain is 0 until the delay ends ([heldSamples] of [block] are silent and
      * unread), then rises to the curve over [ForkMixShelf]'s 10 ms ([com.music.bitchord.playback.ForkMixShelf.LATE_RISE_SEC]):
@@ -167,6 +170,7 @@ internal object ForkDesktopV2 {
      */
     fun lateRise(block: FloatArray?, held: Int, count: Int, channels: Int, sampleRate: Int) {
         if (held > 0) riseAt = 0
+        riseFrom = riseAt
         if (riseAt < 0 || block == null || channels < 1 || sampleRate <= 0) return
         val len = maxOf(1, (com.music.bitchord.playback.ForkMixShelf.LATE_RISE_SEC * sampleRate).toInt())
         var i = held
@@ -249,6 +253,15 @@ internal object ForkDesktopV2 {
         outgoingShelf.flush()
         incomingShelf.flush()
         fx.clear()
+        // The cut mix's state outside the shelves and returns: a rise half done would fade the next
+        // song's first 10 ms, a noise level would ramp down from the old mix's on the next one
+        // (audit 2026-11-26 3a #4). The next blend sets them again ([arm], [shelve]).
+        riseAt = -1
+        feeding = false
+        noiseOut = 0f
+        noiseIn = 0f
+        noiseOutWas = 0f
+        noiseInWas = 0f
     }
 
     /** Sample [i] of the blend's block: the decks after their faders ([leaving], [arriving]) to the returns. */
@@ -299,6 +312,24 @@ internal object ForkDesktopV2 {
         val frames = kotlin.math.ceil(hold / t.outputSeconds * (total / channels)).toLong()
         val left = frames * channels - elapsed
         return left.coerceIn(0L, count.toLong()).toInt()
+    }
+
+    /**
+     * The incoming gain the blend's headroom trim counts for the sub-block starting at sample [index]: B's gain as heard,
+     * not its curve (mix-file.md rule 2 "[all] A while B is held", extension 6dcaf08): 0 while its late entry still holds
+     * it silent ([held], [heldSamples]), then its 10 ms [lateRise] (where this block's rise stood, [riseFrom], plus the
+     * frames from [held] to [index]), then [into]. B's curve can be up from the mix's start (`overlap`, `smooth`) while the
+     * deck is unread, and trimming for it ducked A by up to 3 dB while A played alone (audit 2026-11-26 3a #3, 1b #7);
+     * counting B as silent until its entry and full at once then stepped A's trim by up to 3 dB in one sub-block. Read
+     * this way A's trim follows B in, with no step in the output and no ramp of its own; the curves are unchanged.
+     * Called after this block's [lateRise].
+     */
+    fun heardInto(into: Float, index: Int, held: Int, channels: Int, sampleRate: Int): Float {
+        if (index < held) return 0f
+        if (riseFrom < 0 || channels < 1 || sampleRate <= 0) return into
+        val len = maxOf(1, (com.music.bitchord.playback.ForkMixShelf.LATE_RISE_SEC * sampleRate).toInt())
+        val frames = riseFrom + (index - held) / channels
+        return into * (frames.toFloat() / len).coerceIn(0f, 1f)
     }
 
     /**

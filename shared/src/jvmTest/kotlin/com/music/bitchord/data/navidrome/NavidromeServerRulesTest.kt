@@ -94,6 +94,13 @@ class NavidromeServerRulesTest {
     }
 
     @Test
+    fun `the login never goes onto a plain http copy of an https server's address`() {
+        val client = NavidromeClient("https://music.example.test:4533", "me", "not-a-real-password", "abc")
+        assertTrue("t=" in client.withLogin("https://music.example.test:4533/rest/stream?id=1"))
+        assertEquals("http://music.example.test:4533/rest/stream?id=1", client.withLogin("http://music.example.test:4533/rest/stream?id=1"))
+    }
+
+    @Test
     fun `genre tiles look their covers up a few at a time`() = runBlocking {
         val server = MockWebServer()
         val inFlight = AtomicInteger()

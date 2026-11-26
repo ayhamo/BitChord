@@ -337,7 +337,10 @@ class ForkCanvasCasesTest {
                 "meshLift" -> skip(g, "meshLift: run in sharedUi ForkCanvasBackdropCasesTest against ArtworkMeshBackdrop's lifted()")
                 // §10 is "[phone only]": Metrolist's bleed, which the phone extension blends onto YouTube's own
                 // art. BitChord's player draws its own mesh (§9) instead; FORK.md records it as not BitChord's.
-                else -> skip(g, "${c.str("kind")}: Metrolist's art bleed (§10, phone only); BitChord's player draws its own mesh (§9), not ported")
+                "bleedRows", "blurRadius", "coverZoom", "stripRows" ->
+                    skip(g, "${c.str("kind")}: Metrolist's art bleed (§10, phone only); BitChord's player draws its own mesh (§9), not ported")
+                // A kind the spec adds later fails until it is run or listed as skipped here (audit 2026-11-26: `else -> skip` passed any)
+                else -> check(g, c, false, "unknown kind ${c.str("kind")}")
             }
             "badge" -> when (c.str("kind")) {
                 "bandCentre" -> {
@@ -345,7 +348,8 @@ class ForkCanvasCasesTest {
                     val got = ForkCanvasRules.bandCentre(i.num("progress").toFloat(), i.num("width").toFloat())
                     check(g, c, near(got.toDouble(), num(want), 1e-5), got)
                 }
-                else -> skip(g, "chromeWhite: run in sharedUi ForkCanvasBackdropCasesTest against PlayerChrome's chromeWhite")
+                "chromeWhite" -> skip(g, "chromeWhite: run in sharedUi ForkCanvasBackdropCasesTest against PlayerChrome's chromeWhite")
+                else -> check(g, c, false, "unknown kind ${c.str("kind")}")
             }
             // §13 Settings: the stored order and sources-on strings, and Apple's rendition pick.
             "settings" -> {

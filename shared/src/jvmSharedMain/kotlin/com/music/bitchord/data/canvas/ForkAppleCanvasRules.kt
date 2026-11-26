@@ -109,6 +109,34 @@ object ForkAppleCanvasRules {
         return Motion(primary, alternate, tall)
     }
 
+    /**
+     * Whether [url] may be played or shown as Apple's art: https, no user info, the default port,
+     * on Apple's own hosts (apple.com, mzstatic.com and their subdomains).
+     *
+     * Audit 2026-11-26: Apple's answer (an `editorialVideo` link, an artist page's hero, logo or
+     * clip) went to the player as given, and `ForkCanvasSettings.variantUrl` hands back an untrusted
+     * master unchanged, so an http link, a look-alike host (`apple.com.evil.example`) or a
+     * `user@host` link was played. Every Apple URL now passes this, saved answers read back too.
+     */
+    fun trustedMotion(url: String?): Boolean {
+        if (url.isNullOrBlank()) return false
+        return runCatching {
+            val u = java.net.URI(url)
+            val host = u.host?.lowercase() ?: return false
+            u.scheme?.lowercase() == "https" && u.rawUserInfo == null && (u.port == -1 || u.port == 443) &&
+                (host == "apple.com" || host.endsWith(".apple.com") || host == "mzstatic.com" || host.endsWith(".mzstatic.com"))
+        }.getOrDefault(false)
+    }
+
+    /**
+     * Apple's clip with only trusted URLs ([trustedMotion]): null when the clip itself is not, an
+     * untrusted fallback or tall clip dropped. Run on a fresh answer and on one read back from the
+     * canvas store, so an answer saved before this check is held to it too.
+     */
+    fun trustedArt(art: CanvasArtwork): CanvasArtwork? =
+        if (!trustedMotion(art.url)) null
+        else art.copy(fallbackUrl = art.fallbackUrl?.takeIf(::trustedMotion), portraitUrl = art.portraitUrl?.takeIf(::trustedMotion))
+
     /** An asset's URL out of `editorialVideo[key]`, in the rule's field order; blank is none. */
     fun assetUrl(video: JsonObject, key: String): String? {
         val asset = video[key] as? JsonObject ?: return null

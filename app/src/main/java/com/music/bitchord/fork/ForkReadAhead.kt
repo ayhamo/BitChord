@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.media3.common.C
 import androidx.media3.exoplayer.ExoPlayer
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.ForkReadAheadWindow
 import com.music.bitchord.data.sources.SourceKind
@@ -51,24 +52,40 @@ object ForkReadAhead {
     private val open = MutableStateFlow(ForkReadAheadWindow.Open())
 
     /** Whether normal mode holds anything: Direct Source Stream holds its own, and with no addon nothing is asked. */
-    private fun gates(row: Boolean): Boolean {
-        if (DirectSourceGate.isActive()) return false
-        return if (row) {
+    private fun gates(row: Boolean): Boolean = holds(
+        directActive = DirectSourceGate.isActive(),
+        inParty = ListenTogether.state.value.inParty,
+        addons = if (row) {
             SourceRegistry.activeForPlayback().any { it.kind == SourceKind.ADDON }
         } else {
             SourceResolver.directAddons().isNotEmpty()
-        }
-    }
+        },
+    )
+
+    /**
+     * The hold's rule. Never in a Listen Together party, for upstream's reason on [DirectSourceGate.isActive]:
+     * a party seeks every member to the host's position and expects the song to be there. Before
+     * 2026-11-26 (audit 2b #2) this read only `DirectSourceGate.isActive()`, which is false in a party,
+     * so a party re-engaged this hold, the very one upstream switches off for it.
+     */
+    internal fun holds(directActive: Boolean, inParty: Boolean, addons: Boolean): Boolean =
+        !directActive && !inParty && addons
 
     /**
      * Holds [mediaId]'s open until it plays or its window opens. [row]: a picked addon row, held while
      * any addon is on (the ranking against YouTube doesn't apply to it).
+     *
+     * Never held inside `DirectSourceGate.ungated`: a Cast receiver resolves songs this player isn't
+     * on, so the window (which only opens while the local player plays) never admitted them and the
+     * cast resolve waited for good (audit 2026-11-26 2b #2). The thread-local is read before the
+     * first suspension, on the caller's own `runBlocking` thread, as `DirectSourceGate.awaitOpen` does.
      */
     suspend fun awaitOpen(mediaId: String, row: Boolean = false) {
+        if (DirectSourceGate.forkUngated()) return
         if (open.value.admits(mediaId) || !gates(row)) return
         if (!row && StreamChoice.substitutesRefused(mediaId)) return
         TrackLog.d(TAG, "holding $mediaId's addon lookup until it is within ${ForkReadAheadWindow.LEAD_MS / 1000}s of playing", about = mediaId)
-        combine(open, AppSettings.directSourceStream) { state, _ -> state.admits(mediaId) || !gates(row) }
+        combine(open, AppSettings.directSourceStream, ListenTogether.state) { state, _, _ -> state.admits(mediaId) || !gates(row) }
             .first { it }
         TrackLog.d(TAG, "released $mediaId's addon lookup", about = mediaId)
     }

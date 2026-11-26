@@ -58,9 +58,17 @@ class ForkMixShelf {
     /** The phone's effect returns and noise for this deck (after [aimFader]'s fader). */
     val fx = ForkMixFx()
 
-    @Volatile private var targetFader = 1f
-    @Volatile private var faderOn = false
-    @Volatile private var faderSnap = false
+    /**
+     * The fader's aim, the main thread's only write to it: 0..1 aimed, NaN released (glide back to 1, then let go). The
+     * audio thread alone owns [faderOn] and [fader]. Both threads wrote faderOn and a release flag before, so an aim
+     * landing as the audio thread finished a release (it saw faderOn still set, skipped its snap, then the audio thread
+     * cleared faderOn) left the new mix's fader off and its deck at full level (audit 2026-11-26 part 1b #3).
+     */
+    @Volatile private var targetFader = Float.NaN
+
+    /** [reset]'s ask: off at once, at 1, no glide (consumed by the audio thread before it reads [targetFader]). */
+    @Volatile private var faderDropPending = false
+    private var faderOn = false
     private var fader = 1f
 
     /** The mid band's aim in dB (editor.md §12; 0: flat), any thread. */
@@ -74,14 +82,7 @@ class ForkMixShelf {
      */
     fun aimFader(g: Float) {
         targetFader = if (g.isNaN()) 1f else g.coerceIn(0f, 1f)
-        faderRelease = false
-        if (!faderOn) {
-            faderOn = true
-            faderSnap = true
-        }
     }
-
-    @Volatile private var faderRelease = false
 
     // ───────── B's late entry (mix-file.md rule 2) ─────────
 
@@ -133,8 +134,7 @@ class ForkMixShelf {
 
     /** The mix is over: the fader back up, the mid band flat, nothing sent and no loop; the returns ring on. */
     fun fxRest() {
-        targetFader = 1f
-        faderRelease = true
+        targetFader = Float.NaN
         targetMidDb = 0f
         fx.rest()
         loopStop()
@@ -148,11 +148,22 @@ class ForkMixShelf {
     private var loopLen = 0
     private var loopFilled = 0
     private var loopAt = 0
-    private var loopOn = false
+    private var loopChannels = 0
+    private var loopRate = 0
 
-    /** From the next block, the next [sec] seconds of this deck repeat (once until [loopStop]). */
+    /** Written by the audio thread only ([loop]), read by [loopStart] on the main thread. */
+    @Volatile private var loopOn = false
+
+    /**
+     * From the next block, the next [sec] seconds of this deck repeat (once until [loopStop]). A stop the audio thread
+     * hasn't reached yet doesn't hold a new start back: [loop] takes the stop first, then this. It did before, and a
+     * sink whose player was retired before another block ran kept loopOn for good, so a later mix's Looping lane on it
+     * never engaged (audit 2026-11-26 part 1b #2).
+     */
     fun loopStart(sec: Double) {
-        if (!(sec > 0) || !sec.isFinite() || loopAsk > 0 || loopOn) return
+        // (the stop read before the loop: [loop] clears loopOn before it clears the stop, so no order of the two threads
+        // reads a loop on with its stop already gone)
+        if (!(sec > 0) || !sec.isFinite() || loopAsk > 0 || (!loopStopPending && loopOn)) return
         loopAsk = sec
     }
 
@@ -163,9 +174,13 @@ class ForkMixShelf {
 
     private fun loop(samples: FloatArray, sampleCount: Int, channelCount: Int, sampleRate: Int) {
         if (loopStopPending) {
-            loopStopPending = false
+            // (loopOn first: [loopStart] reading between the two writes sees the stop pending or the loop off, never
+            // a loop on with no stop to come)
             loopOn = false
+            loopStopPending = false
         }
+        // what it kept is in another format now: played on, it would come out at the wrong speed or channel layout
+        if (loopOn && (channelCount != loopChannels || sampleRate != loopRate)) loopOn = false
         val ask = loopAsk
         if (ask > 0 && !loopOn) {
             loopAsk = 0.0
@@ -173,6 +188,8 @@ class ForkMixShelf {
             if (loopBuf.size < loopLen) loopBuf = FloatArray(loopLen)
             loopFilled = 0
             loopAt = 0
+            loopChannels = channelCount
+            loopRate = sampleRate
             loopOn = true
         }
         if (!loopOn) return
@@ -256,8 +273,8 @@ class ForkMixShelf {
         snap(0f, 0f)
         echoPark()
         targetMidDb = 0f
-        targetFader = 1f
-        faderOn = false
+        targetFader = Float.NaN
+        faderDropPending = true
         fx.clear()
         loopStop()
     }
@@ -268,25 +285,36 @@ class ForkMixShelf {
 
     /** Whether the loop, the fader or the effects touch a block (besides the filters). */
     private val extra: Boolean
-        get() = loopOn || loopAsk > 0 || loopStopPending || faderOn || fx.busy || lateGate != 0
+        get() = loopOn || loopAsk > 0 || loopStopPending || faderBusy || fx.busy || lateGate != 0
+
+    /** Whether [fade] has anything to do: the fader is on, aimed, or a reset waits (audio thread). */
+    private val faderBusy: Boolean get() = faderOn || faderDropPending || !targetFader.isNaN()
 
     /** Interleaved [samples], [sampleCount] of them, in place. */
     fun process(samples: FloatArray, sampleCount: Int, channelCount: Int, sampleRate: Int) {
         if (channelCount < 1 || sampleRate <= 0 || sampleCount <= 0) return
         if (loopOn || loopAsk > 0 || loopStopPending) loop(samples, sampleCount, channelCount, sampleRate)
         shape(samples, sampleCount, channelCount, sampleRate)
-        if (faderOn) fade(samples, sampleCount, channelCount, sampleRate)
+        if (faderBusy) fade(samples, sampleCount, channelCount, sampleRate)
         fx.process(samples, sampleCount, channelCount, sampleRate)
         if (lateGate != 0) gate(samples, sampleCount, channelCount, sampleRate)
     }
 
     /** The in-sink fader, ramped per frame at most [FADER_SEC] for a full swing; back at 1 with nothing aimed, it lets go. */
     private fun fade(samples: FloatArray, sampleCount: Int, channelCount: Int, sampleRate: Int) {
-        val target = targetFader
-        if (faderSnap) {
-            faderSnap = false
-            fader = target
+        if (faderDropPending) {
+            faderDropPending = false
+            faderOn = false
+            fader = 1f
         }
+        val aimed = targetFader
+        if (!faderOn) {
+            if (aimed.isNaN()) return
+            // the first aim starts there with no glide (the incoming deck is silent then)
+            faderOn = true
+            fader = aimed
+        }
+        val target = if (aimed.isNaN()) 1f else aimed
         val step = 1f / (FADER_SEC * sampleRate)
         val frames = sampleCount / channelCount
         for (f in 0 until frames) {
@@ -296,10 +324,7 @@ class ForkMixShelf {
             val base = f * channelCount
             for (c in 0 until channelCount) samples[base + c] *= fader
         }
-        if (faderRelease && fader == 1f && target == 1f) {
-            faderOn = false
-            faderRelease = false
-        }
+        if (aimed.isNaN() && fader == 1f) faderOn = false
     }
 
     private fun shape(samples: FloatArray, sampleCount: Int, channelCount: Int, sampleRate: Int) {

@@ -2045,7 +2045,7 @@ class CrossfadeController(
         out.volume = if (ranOn(out)) 0f else fall
         ForkV2Ride.volumes(planInFlight?.forkV2, player, out, ranOn(out)) // fork: an editor mix's effects fade in the sinks (ForkV2Ride)
         onBlendHeadroom(
-            headroomFor(mixRise(outgoingAt), outgoingLevel(elapsed / wallSpan + tracks.outgoingLeadMs() / span.toFloat(), wallSpan)),
+            headroomFor(forkLate.heardRise(mixRise(outgoingAt), elapsed + tracks.outgoingLeadMs() * mediaRatio) /* fork: B as heard: 0 while its late entry holds it, then its 10 ms rise (ForkLateEntry) */, outgoingLevel(elapsed / wallSpan + tracks.outgoingLeadMs() / span.toFloat(), wallSpan)),
         )
         if (render.phaseLock) holdPhase(out, player, progress)
 
@@ -3198,6 +3198,7 @@ class CrossfadeController(
         // lifted out. Dropping a 24 dB/octave filter in one buffer is the click
         // this ramp exists to avoid.
         filters.open()
+        filters.forkEcho(true) { it.fxRest() } // fork: the kept (session) side's in-sink fader up, sends and noise off, loop stopped now, as its volume is (ForkV2Ride)
         // Whichever track is *not* the session's is the one ramped away: the
         // outgoing tail after the handoff, the incoming track before it.
         if (handedOff) incoming?.volume = 1f else outgoing?.volume = 1f
@@ -3273,6 +3274,7 @@ class CrossfadeController(
         queuedItemCount = 0
         incomingCueTimeMs = 0L
         forkLate.reset() // fork
+        ForkV2Ride.reset() // fork: no blend's marks carry into the next, a latched replay included
         forkLateShelf?.lateOff() // fork
         forkLateShelf = null // fork
         incomingPlaybackRate = 1.0

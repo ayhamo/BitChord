@@ -42,6 +42,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.music.bitchord.data.ForkAppleArtistArt
+import com.music.bitchord.data.ForkCappedBody
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.navidrome.NavidromeArtistInfo
 import com.music.bitchord.ui.graphics.argbPixels
@@ -105,6 +106,10 @@ internal object ForkArtistSignatures {
     private const val KEY_URL = "signature_api_url"
     private const val CACHE_SIZE = 64
     const val MAX_BASE_URL_LENGTH = 500
+
+    /** The lookup answer's cap (a small JSON) and the signature image's (an SVG or PNG of tens of KB). */
+    internal const val JSON_MAX = 512 * ForkCappedBody.KB
+    internal const val IMAGE_MAX = 4 * ForkCappedBody.MB
 
     /** Phone's `SVG_DECODE_WIDTH`: vectors are drawn large so they stay crisp laid out large. */
     const val SVG_RENDER_WIDTH = 1600
@@ -208,10 +213,13 @@ internal object ForkArtistSignatures {
         val base = normalizeBaseUrl(baseUrl)
         if (!isValidBaseUrl(base)) return Entry(null)
         val url = "$base/v1/signatures?artist=${URLEncoder.encode(artistName, "UTF-8")}"
+        // Capped (combined audit 2026-11-26): the answer is a small JSON, and it was read whole into
+        // memory whatever the server at the user-set base URL sent. Past the cap (or empty) it is an
+        // IOException, which [signatureFor] logs and doesn't cache.
         val body = Http.client.newCall(request(url)).execute().use { response ->
             if (!response.isSuccessful) return null
-            response.body?.string()
-        } ?: return null
+            ForkCappedBody.text(response, JSON_MAX)
+        }
         return Entry(parse(body))
     }
 
@@ -318,8 +326,9 @@ internal object ForkArtistSignatures {
             runCatching {
                 val bytes = Http.client.newCall(request(signature.imageUrl)).execute().use { response ->
                     if (!response.isSuccessful) return@runCatching null
-                    response.body?.bytes()
-                } ?: return@runCatching null
+                    // capped (combined audit 2026-11-26): a signature image is tens of KB
+                    ForkCappedBody.bytes(response, IMAGE_MAX)
+                }
                 if (signature.isSvg || bytes.looksLikeSvg()) renderSvg(bytes, signature.aspect) else inkRaster(bytes)
             }.onFailure { DesktopTrackLog.log("Artist signature: the image did not draw ($it)") }.getOrNull()
         } ?: return null

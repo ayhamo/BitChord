@@ -37,4 +37,12 @@ class ForkCanvasStoreTrustTest {
         assertNull(read("""{"url":"https://scdn.co.evil.example/a.mp4","source":"SPOTIFY"}"""))
         assertNull(read("""{"url":"https://canvaz.scdn.co:8443/a.mp4","source":"SPOTIFY"}"""))
     }
+
+    /** Audit 2026-11-26: a saved Apple clip off Apple's https hosts reads back as nothing. */
+    @Test
+    fun aSavedAppleEntryOffApplesHostsReadsAsNothing() {
+        assertNull(read("""{"url":"https://apple.com.evil.example/b.m3u8","source":"APPLE"}"""))
+        assertNull(read("""{"url":"https://user@mvod.itunes.apple.com/b.m3u8","source":"APPLE"}"""))
+        assertNull(read("""{"url":"https://mvod.itunes.apple.com/b.m3u8","fallbackUrl":"https://cdn.example.com/c.mp4","source":"APPLE"}"""))
+    }
 }

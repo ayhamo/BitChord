@@ -2298,6 +2298,7 @@ fun NowPlayingScreen(
                                 ?.let { it.start..it.end },
                             onScrub = onScrub,
                             onScrubFinished = onScrubFinished,
+                            forkSongId = song.videoId, // fork: the best part's mark is this song's only
                         ) {
                             PlaybackQualityLabel(
                                 song = song,
@@ -2578,6 +2579,7 @@ fun NowPlayingScreen(
                                         ?.let { it.start..it.end },
                                     onScrub = onScrub,
                                     onScrubFinished = onScrubFinished,
+                                    forkSongId = song.videoId, // fork: the best part's mark is this song's only
                                 ) {
                                     PlaybackQualityLabel(
                                         song = song,
@@ -4637,6 +4639,7 @@ fun NowPlayingScreen(
                             ?.let { it.start..it.end },
                         onScrub = onScrub,
                         onScrubFinished = onScrubFinished,
+                        forkSongId = song.videoId, // fork: the best part's mark is this song's only
                     ) {
                         PlaybackQualityLabel(
                             song = song,

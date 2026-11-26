@@ -113,9 +113,15 @@ class ForkMixFx {
         if (inputs[0].size < n) inputs = arrayOf(FloatArray(n), FloatArray(n), FloatArray(n))
         for (k in 0..2) inputs[k].fill(0f, 0, n)
         fed.fill(false)
-        if (channelCount != channels || sampleRate != rate || clearPending) {
+        if (channelCount != channels || sampleRate != rate) {
             clearPending = false
             setUp(channelCount, sampleRate)
+        } else if (clearPending) {
+            // A seek, flush or reset on the same format: silence what is there. It ran [setUp] before, which made a new
+            // hall (its impulse and ~226 FFTs) and ~2.4 MB of delay lines on the audio thread at every flush (audit
+            // 2026-11-26 part 1b #1).
+            clearPending = false
+            silence()
         }
     }
 
@@ -177,7 +183,17 @@ class ForkMixFx {
         lowpass(toneCoef, 3000.0, webQ(0.5), sampleRate)
         noiseState = Array(2) { FloatArray(channelCount * 2) }
         highpass(noiseCoef, 1500.0, webQ(0.7), sampleRate)
-        reverb = reverbFor(sampleRate)?.also { it.reset() }
+        reverb = reverbFor(sampleRate)
+        silence()
+    }
+
+    /** No history and nothing ringing, the format kept: the lines, the filters' states and the reverb's input zeroed. */
+    private fun silence() {
+        for (line in lines) for (c in line) c.fill(0f)
+        writeAt.fill(0)
+        toneState.fill(0f)
+        for (st in noiseState) st.fill(0f)
+        reverb?.reset()
         quiet.fill(Int.MAX_VALUE / 2)
         ringing = false
         lastSends.fill(0f)
@@ -236,17 +252,43 @@ class ForkMixFx {
     // ───────── the reverb: a uniformly partitioned convolution ─────────
 
     /**
+     * An impulse's partitions' spectra ([part][bin] re, im per channel), read only once made: one per sample rate, shared
+     * by every [Convolver] at that rate ([reverbFor]).
+     */
+    internal class Hall(impulse: Array<FloatArray>) {
+        val parts = (impulse[0].size + BLOCK - 1) / BLOCK
+        val hRe = Array(2) { Array(parts) { FloatArray(BLOCK + 1) } }
+        val hIm = Array(2) { Array(parts) { FloatArray(BLOCK + 1) } }
+
+        init {
+            val n = 2 * BLOCK
+            val re = FloatArray(n)
+            val im = FloatArray(n)
+            val fft = Fft(n)
+            for (c in 0..1) for (p in 0 until parts) {
+                re.fill(0f); im.fill(0f)
+                val from = p * BLOCK
+                val to = min(impulse[c].size, from + BLOCK)
+                for (i in from until to) re[i - from] = impulse[c][i]
+                fft.run(re, im, inverse = false)
+                for (k in 0..BLOCK) { hRe[c][p][k] = re[k]; hIm[c][p][k] = im[k] }
+            }
+        }
+    }
+
+    /**
      * The 2.4 s hall as Web Audio would play it: L convolved with the impulse's left channel, R with its right (a mono
      * deck: its one channel with the left). Both channels go through one complex FFT (L real, R imaginary).
      */
-    internal class Convolver(val sampleRate: Int, impulse: Array<FloatArray>) {
+    internal class Convolver(val sampleRate: Int, val hall: Hall) {
+        constructor(sampleRate: Int, impulse: Array<FloatArray>) : this(sampleRate, Hall(impulse))
+
         private val b = BLOCK
         private val n = 2 * b
         private val bins = b + 1
-        private val parts = (impulse[0].size + b - 1) / b
-        /** The impulse's partitions' spectra: [part][bin] re, im per channel. */
-        private val hRe = Array(2) { Array(parts) { FloatArray(bins) } }
-        private val hIm = Array(2) { Array(parts) { FloatArray(bins) } }
+        private val parts = hall.parts
+        private val hRe = hall.hRe
+        private val hIm = hall.hIm
         /** The input's spectra, newest at [head]; [live]: a partition that wasn't silent. */
         private val xRe = Array(2) { Array(parts) { FloatArray(bins) } }
         private val xIm = Array(2) { Array(parts) { FloatArray(bins) } }
@@ -267,23 +309,15 @@ class ForkMixFx {
         /** How long it rings after its last input: the impulse, plus the block it is late by and one to spare. */
         val tailFrames = parts * b + 2 * b
 
-        init {
-            for (c in 0..1) for (p in 0 until parts) {
-                re.fill(0f); im.fill(0f)
-                val from = p * b
-                val to = min(impulse[c].size, from + b)
-                for (i in from until to) re[i - from] = impulse[c][i]
-                fft.run(re, im, inverse = false)
-                for (k in 0 until bins) { hRe[c][p][k] = re[k]; hIm[c][p][k] = im[k] }
-            }
-        }
-
         fun reset() {
             for (c in 0..1) for (p in 0 until parts) { xRe[c][p].fill(0f); xIm[c][p].fill(0f) }
             live.fill(false)
             inL.fill(0f); inR.fill(0f); outL.fill(0f); outR.fill(0f)
             pos = 0
             head = 0
+            // (left set, the first block after a reset was taken as fed and its silence transformed as input)
+            blockFed = false
+            lastFed = false
         }
 
         fun run(input: FloatArray, out: FloatArray, frames: Int, ch: Int, level: Float) {
@@ -430,16 +464,18 @@ class ForkMixFx {
         private const val GAIN_CALIBRATION_RATE = 44100f
         private const val MIN_POWER = 0.000125f
 
-        private val convolvers = HashMap<Int, Convolver>()
+        private val halls = HashMap<Int, Hall>()
 
         /**
          * The hall for [sampleRate], made once per rate and kept (each deck's sink and the PC's mixer share the impulse
-         * and its spectra, read only; the convolver's running state is its own, so each user gets a copy of that).
+         * and its spectra, read only; the convolver's running state is its own, so each user gets a copy of that). The
+         * cache was declared but never filled, so every set-up made the impulse and its ~226 FFTs again, on the audio
+         * thread (audit 2026-11-26 part 1b #1); now only a rate's first set-up does.
          */
         @Synchronized
         internal fun reverbFor(sampleRate: Int): Convolver? {
             if (sampleRate !in 8_000..384_000) return null
-            return Convolver(sampleRate, impulse(sampleRate))
+            return Convolver(sampleRate, halls.getOrPut(sampleRate) { Hall(impulse(sampleRate)) })
         }
 
         /** Stereo white noise decaying by 60 dB over 2.4 s (crossfade.js hallImpulse), normalized as Web Audio does. */

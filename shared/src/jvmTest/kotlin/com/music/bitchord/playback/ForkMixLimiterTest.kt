@@ -77,4 +77,57 @@ class ForkMixLimiterTest {
         limiter.process(after, after.size, 1, rate, active = 0)
         assertTrue(after.all { it == 0.5f })
     }
+
+    /**
+     * The one-pass lookahead gives the ramps the frame-by-frame walk gave (audit 2026-11-26 part 1b #8): loud random
+     * blocks, sparse and dense peaks, mono and stereo, several lookaheads and active spans, against that walk.
+     */
+    @Test
+    fun theOnePassLookaheadMatchesTheFrameByFrameWalk() {
+        val rnd = java.util.Random(7)
+        for (trial in 0 until 300) {
+            val ahead = intArrayOf(1, 2, 5, 17, 64, 240)[trial % 6]
+            val channels = 1 + trial % 2
+            val frames = 1 + rnd.nextInt(700)
+            val dense = trial % 3
+            val x = FloatArray(frames * channels) {
+                val loud = when (dense) { 0 -> rnd.nextInt(40) == 0; 1 -> rnd.nextInt(3) == 0; else -> true }
+                (if (loud) 0.5f + 2.5f * rnd.nextFloat() else 0.8f * rnd.nextFloat()) * (if (rnd.nextBoolean()) 1f else -1f)
+            }
+            val active = if (trial % 4 == 0) rnd.nextInt(frames + 1) else Int.MAX_VALUE
+            val got = x.copyOf()
+            ForkMixLimiter(lookaheadSec = ahead / 1000.0).process(got, got.size, channels, 1000, active)
+            val want = x.copyOf()
+            walked(want, channels, ((ahead / 1000.0) * 1000).toInt().coerceAtLeast(1), active) // (the limiter's own rounding)
+            for (i in got.indices) assertEquals(want[i], got[i], 2e-6f, "trial $trial (ahead $ahead, $channels ch) at $i")
+        }
+    }
+
+    /** The limiter as it was, its lookahead walking each ramp frame by frame, from rest. */
+    private fun walked(samples: FloatArray, channels: Int, ahead: Int, active: Int) {
+        val frames = samples.size / channels
+        val live = active.coerceIn(0, frames)
+        val need = FloatArray(frames) { f ->
+            if (f >= live) 1f else {
+                var peak = 0f
+                for (c in 0 until channels) peak = maxOf(peak, abs(samples[f * channels + c]))
+                if (peak > ForkMixLimiter.CEILING) ForkMixLimiter.CEILING / peak else 1f
+            }
+        }
+        for (f in 0 until live) {
+            val n = need[f]
+            if (n >= 1f) continue
+            for (k in 1..minOf(ahead, f)) {
+                val ramp = n + (1f - n) * k / ahead
+                if (ramp < need[f - k]) need[f - k] = ramp
+            }
+        }
+        val recover = (1.0 - kotlin.math.exp(-1.0 / (ForkMixLimiter.RELEASE_SEC * 1000))).toFloat()
+        var g = 1f
+        for (f in 0 until frames) {
+            g = minOf(need[f], g + (1f - g) * recover)
+            if (g > 0.99988f) g = 1f
+            if (g < 1f) for (c in 0 until channels) samples[f * channels + c] *= g
+        }
+    }
 }

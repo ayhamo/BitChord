@@ -762,6 +762,7 @@ object AudioCache {
     fun recordServed(spec: DataSpec, servedUrl: String) {
         if (!::cache.isInitialized) return
         if (spec.uri.scheme != "bitchord") return
+        if (com.music.bitchord.fork.ForkManifestOpen.skipsCache(spec.uri.toString()) || StreamContainer.isManifest(servedUrl)) return // fork: an open that bypasses the cache tags no entry (rulebook 8.1.6, audit 2026-11-26 2b #5)
         val mediaId = mediaIdIn(spec.uri) ?: return
         val key = spec.key ?: keyFactory.buildCacheKey(spec)
         val origin = originOf(spec.uri, mediaId, servedUrl)

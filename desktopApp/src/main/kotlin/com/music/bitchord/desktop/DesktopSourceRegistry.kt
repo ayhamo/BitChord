@@ -458,6 +458,7 @@ internal object DesktopSourceRegistry {
         var held: DesktopStream? = null
         var graceEndsAt = 0L
         try {
+            ForkAddonCopyPc.asking(song.videoId) // fork: the progress row's "Asking your addons…" (editor.md §11 rule 6)
             while (running.isNotEmpty()) {
                 val done = if (held == null) {
                     select<Deferred<DesktopStream?>> {
@@ -489,6 +490,7 @@ internal object DesktopSourceRegistry {
             held
         } finally {
             running.forEach { it.cancel() }
+            ForkAddonCopyPc.asked(song.videoId) // fork
         }
     }
 
@@ -579,12 +581,13 @@ internal object DesktopSourceRegistry {
         val wantsLossless = ceiling(quality) == DesktopAudioQuality.LOSSLESS
         var settleFor: DesktopStream? = null
         for (match in ForkDesktopAddonLimits.cachedFirst(source.config, ForkNextRowPc.left(song, source.config.id, preferred(matches, song, wantsLossless))).take(STREAM_ATTEMPTS)) { // fork: cached rows first within a tier; a row refused for the song passed over (rulebook 8.1.4)
-            val stream = source.resolve(match, quality).getOrNull() ?: continue
+            val stream = source.resolve(match, quality).getOrNull()?.let(ForkNextRowPc::asAnnounced) ?: continue // fork: asAnnounced, an HLS/DASH row plays from its own URL (rulebook 8.1.5 rule 6, case 1)
             ForkNextRowPc.opened(stream.url, source.config.id, match.videoId) // fork: which row this URL came from, for a refusal (rulebook 8.1.4)
-            if (ForkNextRowPc.refusesManifest(song, source.config, stream)) { if (ForkNextRowPc.exhausted(song)) break else continue } // fork: an addon's manifest is refused, the next row opens (rulebook 8.1.4 + 8.1.6)
+            if (ForkNextRowPc.refusesManifest(song, source.config, stream)) { if (ForkNextRowPc.exhausted(song)) break else continue } // fork: a file's row answering a manifest is refused, the next row opens (rulebook 8.1.5 rule 6, case 2)
             if (!playableHere(source, stream)) continue
             if (!ForkAddonFloorPc.admits(source.config, stream, forkMinRank, floor = forkNoteHandoff)) continue // fork: the rulebook's lossy floor inside the race, and the pass's rank (8.2.1); a download's legs keep their own rule
             if (forkDirect && ForkDirectSourceCheck.cutShort(source.descriptor.name, match, stream, song)) continue // fork: a preview or cut-off file is not the recording
+            if (forkNoteHandoff && !ForkNextRowPc.assembles(song, source.config, stream)) { if (ForkNextRowPc.exhausted(song)) break else continue } // fork: an HLS/DASH row put together into one file, or refused like a bad fit (rulebook 8.1.5 rule 5)
             if (forkNoteHandoff) ForkHandoffDesktop.noteOpened(song, source.config.id, match.videoId) // fork: which row this source served, for the handoff note
             val served = stream.format
             if (!wantsLossless || served.isLossless || served.isDolbyAtmos) {

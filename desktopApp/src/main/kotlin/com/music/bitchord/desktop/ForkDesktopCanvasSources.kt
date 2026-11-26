@@ -6,6 +6,7 @@ import androidx.compose.runtime.getValue
 import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.canvas.CanvasSource
 import com.music.bitchord.data.canvas.ForkAnonymousSpotifyCanvas
+import com.music.bitchord.data.canvas.ForkAppleCanvasRules
 import com.music.bitchord.data.canvas.ForkBestParts
 import com.music.bitchord.data.canvas.ForkCanvasChoices
 import com.music.bitchord.data.canvas.ForkCanvasRules
@@ -39,8 +40,11 @@ import java.io.File
  *    ([ForkAnonymousSpotifyCanvas]), else none.
  *
  * The client's `firstHit` moves its last source to the front when "Prioritize Spotify Canvas" is on
- * (`ForkSpotifyCanvasFirst.ordered`, for the album lists too). So [song] always ends with Spotify,
- * and puts the video first when Spotify is prioritised: Spotify, then the video, then the covers.
+ * (`ForkSpotifyCanvasFirst.ordered`, for the album lists too). [song] builds its list in the order it
+ * is to be asked (the saved clips by id, then the covers and the backdrops, or with Spotify
+ * prioritised the backdrops in their order before the covers) and hands it over through
+ * `ForkSpotifyCanvasFirst.forOrdered`, which turns it the other way so that move gives that order back.
+ * (It used to put Spotify last for the move instead: audit 2026-11-24.)
  */
 internal object ForkDesktopCanvasSources {
 
@@ -154,7 +158,7 @@ internal object ForkDesktopCanvasSources {
         // A cover found is noted for the song's menu (its Animated cover switch and Use, §15).
         val had = { a: DesktopCanvasArtwork? -> a?.also { ForkCanvasChoices.noteHad(song.videoId, ForkCanvasRules.Source.APPLE_MUSIC) } }
         return listOf<suspend () -> DesktopCanvasArtwork?>(
-            { had(byId(idKey, title, artist, album) { cached(appleKey, saveMiss = album != null) { DesktopAppleMusicCanvas.search(title, artist, album)?.let(::rendition) } }) },
+            { had(byId(idKey, title, artist, album) { cached(appleKey, saveMiss = album != null) { DesktopAppleMusicCanvas.search(title, artist, album)?.let { rendition(it) } }?.let(::trustedApple) }) },
             { had(byId(idKey, title, artist, album) { DesktopTidalCanvas.search(title, artist, album) }) },
             { had(byId(idKey, title, artist, album) { DesktopCommunityCanvas.search(title, artist, album) }) },
         )
@@ -164,13 +168,26 @@ internal object ForkDesktopCanvasSources {
     private suspend fun byId(key: String?, title: String, artist: String, album: String?, lookUp: suspend () -> DesktopCanvasArtwork?): DesktopCanvasArtwork? =
         ForkDownloadedCanvas.through(key, { it.toDesktop().matches(title, artist, album) }) { lookUp()?.toShared() }?.toDesktop()
 
-    /** Apple's clip as the rendition rule 13.5 picks from its HLS master list (the master when it can't be read). */
-    private fun rendition(art: DesktopCanvasArtwork): DesktopCanvasArtwork {
+    /**
+     * Apple's clip as the rendition rule 13.5 picks from its HLS master list (the master when it can't be read).
+     * Audit 2026-11-26: variantUrl hands an untrusted master back unchanged, so the clip is held to
+     * Apple's https hosts ([ForkAppleCanvasRules.trustedMotion]) before its list is read and after the
+     * pick: null for an untrusted clip, an untrusted fallback dropped. [read]: the list's text (a test passes its own).
+     */
+    internal fun rendition(
+        art: DesktopCanvasArtwork,
+        read: (String) -> String? = { url -> runCatching { readText(url) }.getOrNull() },
+    ): DesktopCanvasArtwork? {
+        val trusted = trustedApple(art) ?: return null
         val cap = ForkCanvasSettings.coverQuality.value.cap
-        val read = { url: String -> runCatching { readText(url) }.getOrNull() }
         fun pick(url: String?) = url?.let { ForkCanvasSettings.variantUrl(it, cap, read) }
-        return art.copy(url = pick(art.url) ?: art.url, fallbackUrl = pick(art.fallbackUrl))
+        return trustedApple(trusted.copy(url = pick(trusted.url) ?: trusted.url, fallbackUrl = pick(trusted.fallbackUrl)))
     }
+
+    /** [ForkAppleCanvasRules.trustedArt] for the PC's artwork type: run on a fresh answer and on a saved one read back. */
+    internal fun trustedApple(art: DesktopCanvasArtwork): DesktopCanvasArtwork? =
+        if (!ForkAppleCanvasRules.trustedMotion(art.url)) null
+        else art.copy(fallbackUrl = art.fallbackUrl?.takeIf(ForkAppleCanvasRules::trustedMotion))
 
     private fun readText(url: String): String? {
         val request = okhttp3.Request.Builder().url(url).build()
@@ -241,9 +258,15 @@ internal object ForkDesktopCanvasSources {
         val next = ForkCanvasChoices.picking(ForkCanvasChoices.of(song.videoId), videoId)
         val suffix = ForkCanvasSettings.videoKeySuffix() + ForkCanvasChoices.keySuffixOf(next)
         val songMs = ForkMusicVideoMatch.lengthOf(song.durationText) * 1000
-        val made = runCatching {
+        // A failure is "no loop"; a cancellation (the picker closed) goes on up, never read as a failed pick
+        // (audit 2026-11-26 3a #11, the phone's 2a #9).
+        val made = try {
             ForkVideoCanvas.tryPicked(song.videoId, song.title, songMs, dir, 1080, ForkDesktopVideoCanvas, wish(song, next, suffix)) is ForkVideoCanvas.Result.Clip
-        }.getOrDefault(false)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            false // as runCatching had it: a native cut's error too
+        }
         if (made) ForkCanvasChoices.pick(song.videoId, videoId)
         made
     }

@@ -115,11 +115,16 @@ object ForkAddonRefusals {
             if (refusals(song) == 0) rows else rows.filterNot { skips(song, source, idOf(it)) }
 
         /**
-         * An addon's `/stream` answer at [url] for [song]: when it [isManifest] (an HLS playlist or a
-         * DASH manifest, by its declared transport or its URL) it is refused like a copy the fit
-         * refused, so the race's next row opens (protocol.md 8.1.4 and 8.1.6: the PC's `refused` on the
-         * FETCH answer). True when refused; the caller goes on to the next row. Not for other sources
-         * ([isAddon] false): a module or catalogue may serve HLS/DASH as its normal answer.
+         * An addon's `/stream` answer at [url] for [song]: when it [isManifest] it is refused like a
+         * copy the fit refused, so the race's next row opens (protocol.md 8.1.4). True when refused;
+         * the caller goes on to the next row. Not for other sources ([isAddon] false): a module or
+         * catalogue may serve HLS/DASH as its normal answer.
+         *
+         * [isManifest] is the *content* check, the answer's Content-Type or first bytes
+         * ([ForkAddonRefusals.isManifest]) on an answer announced as a file (8.1.5 rule 6). An answer
+         * announced as HLS/DASH (its transport, or a `.m3u8`/`.mpd` path) is played, not refused
+         * (rule 5); callers passed the announcement here until 2026-11-26 (the phone fixed then, see
+         * `ForkNextRowPhone.refusesManifest`).
          */
         @Synchronized
         fun refuseManifest(song: String, url: String, isAddon: Boolean, isManifest: Boolean): Verdict? =

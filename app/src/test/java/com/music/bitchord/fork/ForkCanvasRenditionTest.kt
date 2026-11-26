@@ -4,6 +4,7 @@ import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.canvas.CanvasSource
 import com.music.bitchord.data.canvas.ForkCanvasSettings
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 /** Fork: Apple's clip played at the "Animated cover quality" in every shape, the tall one too. */
@@ -25,9 +26,30 @@ class ForkCanvasRenditionTest {
     fun theTallClipIsResolvedLikeTheSquareOne() {
         val cap = ForkCanvasSettings.coverQuality.value.cap
         val art = CanvasArtwork(url = master("square"), source = CanvasSource.APPLE, portraitUrl = master("tall"))
-        val got = ForkCanvasSources.rendition(art) { lists }
+        val got = ForkCanvasSources.rendition(art) { lists }!!
         assertEquals(ForkCanvasSettings.variantUrl(master("square"), cap) { lists }, got.url)
         assertEquals(ForkCanvasSettings.variantUrl(master("tall"), cap) { lists }, got.portraitUrl)
         assertEquals("https://mvod.itunes.apple.com/itunes-assets/tall/p720.m3u8", got.portraitUrl) // the default, 720p
+    }
+
+    /** Audit 2026-11-26: Apple's clip is played only from https on Apple's own hosts. */
+    @Test
+    fun anUntrustedClipIsNoClipAndAnUntrustedFallbackIsDropped() {
+        val bad = listOf(
+            "http://mvod.itunes.apple.com/itunes-assets/x/master.m3u8",
+            "https://apple.com.evil.example/master.m3u8",
+            "https://user@mvod.itunes.apple.com/itunes-assets/x/master.m3u8",
+            "https://mvod.itunes.apple.com:8443/itunes-assets/x/master.m3u8",
+        )
+        for (url in bad) {
+            var read = false
+            assertNull(url, ForkCanvasSources.rendition(CanvasArtwork(url = url, source = CanvasSource.APPLE)) { read = true; lists })
+            assertEquals("no list read from $url", false, read)
+            val got = ForkCanvasSources.rendition(
+                CanvasArtwork(url = master("square"), fallbackUrl = url, portraitUrl = url, source = CanvasSource.APPLE),
+            ) { lists }!!
+            assertNull(got.fallbackUrl)
+            assertNull(got.portraitUrl)
+        }
     }
 }

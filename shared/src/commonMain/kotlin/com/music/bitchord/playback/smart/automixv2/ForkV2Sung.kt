@@ -138,6 +138,46 @@ object ForkV2Sung {
     fun carveSung(spans: Array<DoubleArray>?, a: ForkV2Analysis?): Array<DoubleArray>? {
         if (spans == null || a == null || a.vocals.isEmpty()) return spans
         val beat = if (a.beatIntervalSec > 0) a.beatIntervalSec else 0.5
+        // (the walk is 50 steps a second over every sung second; the planner re-plans each second of
+        // the song on a copy of the analysis, so the answer is kept on what it is made of, never the copy)
+        carved.value.firstOrNull { it.spans === spans && it.beat == beat && sameMask(it.curves, a.vocals) }
+            ?.let { return copyOf(it.out) }
+        val out = walk(spans, a, beat)
+        carved.update { (listOf(Carved(spans, a.vocals.map { w -> w.curve }, beat, out)) + it).take(CARVED_KEEP) }
+        return copyOf(out)
+    }
+
+    /**
+     * The last carves, newest first: [carveSung]'s answer for the same spans, the same vocal mask
+     * (each window's curve, the very arrays every copy the planner makes of an analysis shares) and
+     * the same beat.
+     * The extension's PC (c42bb5f) keyed its cache on the analysis object, which the planner copies
+     * on every plan, so it never hit and the mask walk took 77 % of its main thread; here each pair's
+     * re-plan (once a second, `ForkV2Automix.planTransition`'s memo) carved both songs again.
+     */
+    private class Carved(
+        val spans: Array<DoubleArray>,
+        val curves: List<FloatArray>,
+        val beat: Double,
+        val out: Array<DoubleArray>,
+    )
+
+    private const val CARVED_KEEP = 8
+    private val carved = MutableStateFlow<List<Carved>>(emptyList())
+
+    /** Carves made since start (tests: a copy of an analysis carves nothing new). */
+    internal var carves = 0
+        private set
+
+    /** Whether [vocals] are the windows whose curves [curves] holds (by identity: the arrays are never changed in place). */
+    private fun sameMask(curves: List<FloatArray>, vocals: List<ForkV2Analysis.VocalWindow>): Boolean =
+        curves.size == vocals.size && curves.indices.all { curves[it] === vocals[it].curve }
+
+    /** A copy the caller may change without touching the kept answer. */
+    private fun copyOf(spans: Array<DoubleArray>): Array<DoubleArray> = Array(spans.size) { spans[it].copyOf() }
+
+    private fun walk(spans: Array<DoubleArray>, a: ForkV2Analysis, beat: Double): Array<DoubleArray> {
+        carves++
         val runs = ArrayList<DoubleArray>()
         for (s in spans.sortedBy { it[0] }) {
             val last = runs.lastOrNull()
@@ -250,5 +290,6 @@ object ForkV2Sung {
     /** Tests: start empty. */
     fun clear() {
         known.value = emptyMap()
+        carved.value = emptyList()
     }
 }

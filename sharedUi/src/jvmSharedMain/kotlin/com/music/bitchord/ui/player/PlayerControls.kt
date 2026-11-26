@@ -228,6 +228,7 @@ internal fun PlayerScrubber(
     transitionWindow: ClosedFloatingPointRange<Float>?,
     onScrub: (Float) -> Unit,
     onScrubFinished: () -> Unit,
+    forkSongId: String? = null, // fork: whose best part the mark may show (ForkBestParts.markFor); before centerLabel, which callers pass as a trailing lambda
     centerLabel: @Composable BoxScope.() -> Unit = {},
 ) {
     val shown = shown()
@@ -263,7 +264,7 @@ internal fun PlayerScrubber(
                 // so pull the labels back up under it.
                 .offset(y = -SCRUBBER_LABEL_LIFT),
         ) {
-            ForkBestPartMark(durationMs) // fork: the best part's mark under the bar (canvas.md §14 rule 4)
+            ForkBestPartMark(durationMs, forkSongId) // fork: the best part's mark under the bar (canvas.md §14 rule 4), the playing song's only
             // Dodged like the bottom row's glyphs — see [SCRUBBER_LABELS_DODGED].
             val chrome = LocalPlayerChrome.current
             val dodged = chrome && SCRUBBER_LABELS_DODGED

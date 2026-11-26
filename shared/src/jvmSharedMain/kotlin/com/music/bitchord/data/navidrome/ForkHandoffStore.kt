@@ -208,7 +208,9 @@ object ForkHandoffStore {
         } catch (e: IOException) {
             error = e.message
         } finally {
-            probeId?.let { id -> runCatching { client.deletePlaylist(id) }.onFailure { error = (error?.let { "$it; " } ?: "") + "delete failed: ${it.message}" } }
+            // NonCancellable: a probe cancelled mid-way must still delete its scratch playlist, and a
+            // cancelled delete would otherwise be swallowed as "delete failed" (audit 2026-11-26 2b #8).
+            probeId?.let { id -> kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { runCatching { client.deletePlaylist(id) } }.onFailure { error = (error?.let { "$it; " } ?: "") + "delete failed: ${it.message}" } }
         }
         return buildJsonObject {
             put("largestIntactBytes", largest)

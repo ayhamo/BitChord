@@ -49,4 +49,23 @@ class ForkNextRowPhoneTest {
         ForkNextRowPhone.forgetSong("mid-1") { error("the kept look names the song") }
         assertFalse(ForkNextRowPhone.exhausted(target))
     }
+
+    /** protocol.md 8.6: the badge is up while the next row is searched (upstream's forget put it out). */
+    @Test
+    fun theNextRowsSearchShowsTheUpgradingBadge() = kotlinx.coroutines.runBlocking {
+        val target = TrackMatcher.Target("Badge", "Z", null) // no length: upgradeFor answers null at once
+        val song = ForkAddonRefusals.songKey(target.title, target.artist)
+        ForkNextRowPhone.book.forget(song)
+        ForkNextRowPhone.keep("mid-badge", target, null, null, null)
+        val refused = com.music.bitchord.data.sources.SourceStream("https://a.example/refused")
+        com.music.bitchord.data.NerdStats.onLosslessRaceEnd("mid-badge")
+        // Not refused by the window check: no retry, the badge stays down.
+        assertEquals(null, ForkNextRowPhone.next("mid-badge", "bitchord://watch?v=x", refused))
+        assertFalse("mid-badge" in com.music.bitchord.data.NerdStats.racingLossless.value)
+        ForkNextRowPhone.book.refuse(song, refused.url)
+        ForkNextRowPhone.next("mid-badge", "bitchord://watch?v=x", refused)
+        assertTrue("mid-badge" in com.music.bitchord.data.NerdStats.racingLossless.value)
+        com.music.bitchord.data.NerdStats.onLosslessRaceEnd("mid-badge")
+        ForkNextRowPhone.book.forget(song)
+    }
 }

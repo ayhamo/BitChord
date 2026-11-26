@@ -1580,7 +1580,7 @@ class PlaybackService : MediaLibraryService() {
                         if (directYouTube) {
                             SourceResolver.youtubeFallback(SourceResolver.targetIn(dataSpec.uri))
                         } else {
-                            SourceResolver.resolve(dataSpec.uri)
+                            com.music.bitchord.fork.ForkAddonCopyPhone.asking(mediaIdIn(dataSpec.uri)) { SourceResolver.resolve(dataSpec.uri) } // fork: the progress row's "Asking your addons…" (editor.md §11 rule 6)
                         }
                     }
                 } ?: throw java.io.IOException(
@@ -1835,10 +1835,12 @@ class PlaybackService : MediaLibraryService() {
             }
             runBlocking(about) { com.music.bitchord.fork.ForkReadAhead.awaitOpen(videoId) } // fork: no addon /stream for the next song before its 25 s window (rulebook 8.1.3)
             val won = runBlocking(about) {
+                com.music.bitchord.fork.ForkAddonCopyPhone.asking(videoId) { // fork: the progress row's "Asking your addons…" (editor.md §11 rule 6)
                 resolveWithModulePriority(
                     videoId = videoId,
                     target = SourceResolver.targetIn(dataSpec.uri),
                 )
+                } // fork
             }
             when (won) {
                 is Resolved.Module -> {
@@ -1883,7 +1885,7 @@ class PlaybackService : MediaLibraryService() {
             // Innermost, so it chunks the real googlevideo URL the resolver
             // above has already substituted in — see [ChunkedDataSource] for
             // why an open-ended read of one is worth avoiding.
-            ChunkedDataSource.Factory(OkHttpDataSource.Factory(Http.client), STREAM_CHUNK_BYTES),
+            com.music.bitchord.fork.ForkManifestSniff.below(ChunkedDataSource.Factory(OkHttpDataSource.Factory(Http.client), STREAM_CHUNK_BYTES)), // fork: was ChunkedDataSource.Factory(…) alone; a manifest where audio was announced is never cached (rulebook 8.1.5/8.1.6)
         ) { dataSpec ->
             // Wrapped rather than folded into the resolver above so the record
             // is made in one place for every branch of it, and made from what
@@ -1894,11 +1896,12 @@ class PlaybackService : MediaLibraryService() {
             // hand. See [StreamContainer].
             streamResolver.resolveDataSpec(dataSpec).also { resolved ->
                 mediaIdIn(dataSpec.uri)?.let { StreamContainer.served(it, resolved.uri.toString()) }
+                com.music.bitchord.fork.ForkManifestSniff.refuseAnnouncedAsFile(dataSpec.uri.toString(), resolved.uri.toString()) // fork: an HLS/DASH stream opened as a file fails before a byte is cached; replayAsManifest reopens it declared
                 // The same seam tells the cache whose file it is writing, which
                 // decides whether the entry outlives the track — see
                 // [AudioCache.Origin].
                 AudioCache.recordServed(dataSpec, resolved.uri.toString())
-            }
+            }.let { com.music.bitchord.fork.ForkManifestSniff.marked(dataSpec, it) } // fork: a progressive item's stream is marked for the content guard below the cache
         }
         // Read-ahead resolves streams through the same chain the player does.
         // smb:// tracks read straight off the share below the cache (so they
@@ -1911,7 +1914,7 @@ class PlaybackService : MediaLibraryService() {
         // DsdExtractorsFactory: the stock extractors plus DSF/DFF, which Media3
         // cannot open at all. A DSD file leaves the extractor as float PCM.
         mediaSourceFactory = DefaultMediaSourceFactory(
-            MusicOnlyPlayback.holdingFactory(AudioCache.playbackFactory(defaultDataSourceFactory)),
+            MusicOnlyPlayback.holdingFactory(com.music.bitchord.fork.ForkManifestSniff.above(AudioCache.playbackFactory(defaultDataSourceFactory))), // fork: was …holdingFactory(AudioCache.playbackFactory(…)); a manifest kept in the cache is dropped, not played (rulebook 8.1.6)
             DsdExtractorsFactory(),
         )
             .setLoadErrorHandlingPolicy(PermanentAwareLoadErrorPolicy())
@@ -2130,7 +2133,7 @@ class PlaybackService : MediaLibraryService() {
                     (AppSettings.meteredConnection.value != true || AppSettings.canvasOverCellular.value)
                 ) {
                     // The repository handles provider settings and caches both hits and settled misses.
-                    CanvasRepository.canvasFor(song)
+                    CanvasRepository.canvasFor(com.music.bitchord.fork.ForkCanvas.searchable(song)) // fork: the player's own query (a server title without "Artist - "); same cache key, so the raw title's miss poisoned the real lookup
                 }
             }
 
@@ -5368,7 +5371,7 @@ class PlaybackService : MediaLibraryService() {
                 return@launch
             }
             val better = withContext(Dispatchers.IO) {
-                QualityUpgrade.lookAgain(mediaId, playingSeconds)
+                com.music.bitchord.fork.ForkAddonCopyPhone.asking(mediaId) { QualityUpgrade.lookAgain(mediaId, playingSeconds) } // fork: was QualityUpgrade.lookAgain(…) alone; the progress row's "Asking your addons…" (editor.md §11 rule 6)
             } ?: return@launch
             try {
                 swapIn(mediaId, better)
@@ -5382,6 +5385,7 @@ class PlaybackService : MediaLibraryService() {
                 NerdStats.onLosslessRaceEnd(mediaId)
             }
         }
+        upgradeJob?.invokeOnCompletion { com.music.bitchord.fork.ForkAddonCopyPhone.passEnded(mediaId) } // fork: the pass over, its progress-row line goes unless a take-over still runs (editor.md §11 rule 6)
     }
 
     /**
@@ -5876,6 +5880,7 @@ class PlaybackService : MediaLibraryService() {
         renditionAlreadyFilled: Boolean,
     ): Long? {
         QualityUpgrade.beginAudition(mediaId)
+        com.music.bitchord.fork.ForkAddonCopyPhone.fetching(mediaId, stream.format) // fork: the progress row's "Getting the lossless copy…" (editor.md §11 rule 6)
         val startedAt = SystemClock.elapsedRealtime()
         // Bytes actually read, since bufferedPosition can run far ahead of them on DASH.
         val meter = CountingBandwidthMeter(DefaultBandwidthMeter.getSingletonInstance(this))

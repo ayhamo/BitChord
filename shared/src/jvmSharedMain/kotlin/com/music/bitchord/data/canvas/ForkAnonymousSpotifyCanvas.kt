@@ -192,12 +192,19 @@ object ForkAnonymousSpotifyCanvas {
                 }
                 checkStatus(operation, response.code)
                 val data = json.parseToJsonElement(read(response)) as? JsonObject ?: throw IOException("$operation: not JSON")
-                if (data.containsKey("errors")) throw IOException("$operation: GraphQL errors")
+                if (hasErrors(data)) throw IOException("$operation: GraphQL errors")
                 return data
             }
         }
         throw IOException("$operation: session expired")
     }
+
+    /**
+     * Canvas.md §4 rule 5: an answer failed only when its `errors` is a non-empty list. Audit
+     * 2026-11-26: `containsKey("errors")` also failed `"errors": []` and `"errors": null`, which
+     * some answers carry beside good data, so their canvas was thrown away as a failure.
+     */
+    internal fun hasErrors(data: JsonObject): Boolean = (data["errors"] as? JsonArray)?.isNotEmpty() == true
 
     private val tokenLock = Any()
 

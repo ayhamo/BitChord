@@ -70,6 +70,34 @@ class ForkV2SungTest {
     }
 
     @Test
+    fun aCopyOfTheAnalysisIsNotCarvedAgain() {
+        // the planner copies the analysis on every plan (asOutgoing, musicEnd): the carve is kept on
+        // the spans, the mask and the beat, never the copy (the extension's c42bb5f: 77 % of the PC's
+        // main thread re-walking the mask)
+        val a = ForkV2Analysis()
+        a.fileKey = "a"
+        a.beatIntervalSec = 0.5
+        val w = ForkV2Analysis.VocalWindow()
+        w.startSec = 0.0
+        w.fps = 50.0
+        w.curve = FloatArray(1000) { i -> if (i / 50.0 >= 9.7 && i / 50.0 < 10.3) 0.1f else 0.9f }
+        a.vocals = mutableListOf(w)
+        val spans = arrayOf(doubleArrayOf(5.0, 10.0), doubleArrayOf(10.0, 15.0))
+        val first = ForkV2Sung.carveSung(spans, a)!!
+        val before = ForkV2Sung.carves
+        val again = ForkV2Sung.carveSung(spans, a.copy())!!
+        assertEquals(before, ForkV2Sung.carves, "a copy of the same analysis hits the kept carve")
+        assertEquals(first.map { it.toList() }, again.map { it.toList() })
+        // the answer handed out is the caller's to change
+        again[0][0] = -1.0
+        assertEquals(first[0][0], ForkV2Sung.carveSung(spans, a)!![0][0])
+        // another beat is another carve
+        val other = a.copy().also { it.beatIntervalSec = 0.25 }
+        ForkV2Sung.carveSung(spans, other)
+        assertEquals(before + 1, ForkV2Sung.carves)
+    }
+
+    @Test
     fun theLiveSpansPreferTheSongsOwnLines() {
         val upstream = arrayOf(doubleArrayOf(1.0, 2.0))
         assertTrue(ForkV2Sung.liveSung("a", "b", upstream, null).out === upstream, "not asked yet: upstream's stand in")

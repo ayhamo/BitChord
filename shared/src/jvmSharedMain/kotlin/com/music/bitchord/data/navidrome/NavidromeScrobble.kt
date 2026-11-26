@@ -30,7 +30,7 @@ object NavidromeScrobble {
         scope.launch {
             runCatching { NavidromeRepository.client().scrobble(id, submission, timeMs) }
                 .onSuccess { Log.d(TAG, "scrobble $id (submission=$submission): ok") }
-                .onFailure { Log.d(TAG, "scrobble $id (submission=$submission): ${it.message}") }
+                .onFailure { if (it is kotlin.coroutines.cancellation.CancellationException) throw it; Log.d(TAG, "scrobble $id (submission=$submission): ${it.message}") } // cancellation stops the job, it isn't a failed scrobble
         }
     }
 }

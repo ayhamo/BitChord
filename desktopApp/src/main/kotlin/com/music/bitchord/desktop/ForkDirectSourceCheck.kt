@@ -9,8 +9,12 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import java.net.HttpURLConnection
-import java.net.URI
+import com.music.bitchord.data.sources.ForkThisMachine
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -171,25 +175,69 @@ internal object ForkDirectSourceCheck {
     /** One ranged GET for one byte; the total from `Content-Range`, or `Content-Length` from a server ignoring the range. */
     private suspend fun bytesOf(stream: DesktopStream): Long? = withContext(Dispatchers.IO) {
         if (!stream.url.startsWith("http://") && !stream.url.startsWith("https://")) return@withContext null
-        var connection: HttpURLConnection? = null
         try {
-            connection = (URI(stream.url).toURL().openConnection() as HttpURLConnection).apply {
-                connectTimeout = PROBE_TIMEOUT_MS
-                readTimeout = PROBE_TIMEOUT_MS
-                instanceFollowRedirects = true
-                stream.headers.forEach { (name, value) -> setRequestProperty(name, value) }
-                setRequestProperty("Range", "bytes=0-0")
-            }
-            when (connection.responseCode) {
-                206 -> connection.getHeaderField("Content-Range")?.substringAfterLast('/')?.trim()?.toLongOrNull()
-                200 -> connection.contentLengthLong.takeIf { it > 0 }
-                else -> null
-            }?.takeIf { it > 0 }
+            bytesAt(stream.url, stream.headers)
         } catch (e: Exception) {
             null // unmeasured is not short
-        } finally {
-            connection?.disconnect() // the body is never read
         }
+    }
+
+    /**
+     * The probe's client: [DesktopDownloadHttp.client] (no cookie jar), redirects not followed.
+     *
+     * Audit 2026-11-26: the probe was an `HttpURLConnection` with `instanceFollowRedirects`, which
+     * takes its cookies from the JVM's default `CookieHandler`, [DesktopWebCookies] (the Google and
+     * YouTube session, and `sp_dc` while a Spotify token is minted), so an addon's link or wherever
+     * it redirected was sent the account's cookies. OkHttp without a jar sends none, and each
+     * redirect is judged by [hopAllowed] before it is asked, at most [MAX_HOPS] of them.
+     */
+    private val probeClient: OkHttpClient by lazy {
+        DesktopDownloadHttp.client.newBuilder()
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .connectTimeout(PROBE_TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
+            .readTimeout(PROBE_TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
+            .build()
+    }
+
+    private const val MAX_HOPS = 5
+
+    /** [bytesOf]'s request and redirects, on [client] (a test passes its own). Null when unmeasured. */
+    internal fun bytesAt(url: String, headers: Map<String, String>, client: OkHttpClient = probeClient): Long? {
+        val origin = url.toHttpUrlOrNull() ?: return null
+        var current = origin
+        repeat(MAX_HOPS + 1) {
+            val request = Request.Builder().url(current)
+                .header("Accept-Encoding", "identity") // the length is the file's own, not a gzip of it
+                .apply { headers.forEach { (name, value) -> header(name, value) } }
+                .header("Range", "bytes=0-0")
+                .build()
+            client.newCall(request).execute().use { response ->
+                if (response.isRedirect) {
+                    val next = response.header("Location")?.let { current.resolve(it) } ?: return null
+                    if (!hopAllowed(origin, next)) return null
+                    current = next
+                    return@repeat
+                }
+                return when (response.code) {
+                    206 -> response.header("Content-Range")?.substringAfterLast('/')?.trim()?.toLongOrNull()
+                    200 -> response.header("Content-Length")?.trim()?.toLongOrNull()
+                    else -> null
+                }?.takeIf { it > 0 }
+            }
+        }
+        return null
+    }
+
+    /**
+     * Whether the probe follows a redirect to [next]: https and not this machine
+     * ([ForkThisMachine.isThisMachine]); a local addon's own link ([origin] on this machine, the one
+     * cleartext link the addon rules let through) may also move on its own scheme, host and port.
+     */
+    internal fun hopAllowed(origin: HttpUrl, next: HttpUrl): Boolean {
+        if (next.isHttps && !ForkThisMachine.isThisMachine(next.host)) return true
+        return ForkThisMachine.isThisMachine(origin.host) &&
+            next.scheme == origin.scheme && next.host == origin.host && next.port == origin.port
     }
 
     /**

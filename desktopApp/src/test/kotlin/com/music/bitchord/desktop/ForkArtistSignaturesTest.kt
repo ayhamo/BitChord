@@ -102,4 +102,28 @@ class ForkArtistSignaturesTest {
         assertTrue(ForkArtistSignatures.inHeader(art(null)))
         assertFalse(ForkArtistSignatures.inHeader(art("https://x/logo.png")))
     }
+
+    @Test
+    fun anAnswerOverTheCapIsRefusedAndNotCached() = kotlinx.coroutines.runBlocking {
+        val big = ("{\"signatures\":[" + " ".repeat(ForkArtistSignatures.JSON_MAX) + "]}").toByteArray()
+        val small = """{"signatures":[{"asset":{"url":"https://upload.wikimedia.org/b/X.svg","format":"svg","width":1000,"height":250}}]}""".toByteArray()
+        var answer = big
+        val server = com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress(java.net.InetAddress.getLoopbackAddress(), 0), 0)
+        server.createContext("/") { exchange ->
+            exchange.sendResponseHeaders(200, 0) // chunked: no length to refuse up front, the read cap does it
+            exchange.responseBody.use { it.write(answer) }
+        }
+        server.start()
+        try {
+            val base = "http://127.0.0.1:${server.address.port}"
+            ForkArtistSignatures.clear()
+            assertNull(ForkArtistSignatures.signatureFor("Cap Test Artist", base))
+            assertNull(ForkArtistSignatures.cached("Cap Test Artist", base), "an oversized answer is not cached")
+            answer = small
+            assertEquals("https://upload.wikimedia.org/b/X.svg", ForkArtistSignatures.signatureFor("Cap Test Artist", base)?.imageUrl)
+        } finally {
+            server.stop(0)
+            ForkArtistSignatures.clear()
+        }
+    }
 }

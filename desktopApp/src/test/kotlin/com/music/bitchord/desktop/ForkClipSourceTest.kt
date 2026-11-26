@@ -160,4 +160,53 @@ class ForkClipSourceTest {
         assertEquals(1, retry.size, "only the fresh failure is left")
         assertFalse(retry.allows("new"))
     }
+
+    @Test
+    fun `a 206 from another offset than the piece's is refused`() {
+        val piece = ForkClipHls.Piece("https://c.example/v.mp4", offset = 100, length = 10)
+        val body = ByteArray(10) { it.toByte() }
+        assertFailsWith<IllegalStateException> {
+            ForkClipSource.copyPiece(206, "bytes 0-9/1000", body.inputStream(), piece, java.io.ByteArrayOutputStream())
+        }
+        assertFailsWith<IllegalStateException> {
+            ForkClipSource.copyPiece(206, null, body.inputStream(), piece, java.io.ByteArrayOutputStream())
+        }
+        val out = java.io.ByteArrayOutputStream()
+        ForkClipSource.copyPiece(206, "bytes 100-109/1000", body.inputStream(), piece, out)
+        assertEquals(body.toList(), out.toByteArray().toList())
+        // a 200 is the whole file, cut down; one shorter than the piece's offset fails
+        val whole = ByteArray(200) { it.toByte() }
+        val cut = java.io.ByteArrayOutputStream()
+        ForkClipSource.copyPiece(200, null, whole.inputStream(), piece, cut)
+        assertEquals(whole.copyOfRange(100, 110).toList(), cut.toByteArray().toList())
+        assertFailsWith<IllegalStateException> {
+            ForkClipSource.copyPiece(200, null, ByteArray(50).inputStream(), piece, java.io.ByteArrayOutputStream())
+        }
+    }
+
+    @Test
+    fun `a clip over its byte budget fails, whole files included`() {
+        val out = ForkClipSource.BudgetOut(java.io.ByteArrayOutputStream(), max = 1000)
+        ForkClipSource.copyPiece(200, null, ByteArray(1000).inputStream(), ForkClipHls.Piece("https://c.example/a.ts"), out)
+        assertFailsWith<IllegalStateException> {
+            ForkClipSource.copyPiece(200, null, ByteArray(1).inputStream(), ForkClipHls.Piece("https://c.example/b.ts"), out)
+        }
+        assertEquals(30L * 1024 * 1024, ForkClipSource.MAX_CLIP_BYTES)
+    }
+
+    @Test
+    fun `a playlist with more than 10,000 segments fails`() {
+        val many = "#EXTM3U\n" + (1..ForkClipHls.MAX_SEGMENTS + 1).joinToString("") { "#EXTINF:1,\n$it.ts\n" } + "#EXT-X-ENDLIST\n"
+        assertFailsWith<IllegalStateException> { ForkClipHls.media(many, "https://c.example/p.m3u8") }
+        val enough = "#EXTM3U\n" + (1..ForkClipHls.MAX_SEGMENTS).joinToString("") { "#EXTINF:1,\n$it.ts\n" } + "#EXT-X-ENDLIST\n"
+        assertEquals(ForkClipHls.MAX_SEGMENTS, ForkClipHls.media(enough, "https://c.example/p.m3u8").segments.size)
+    }
+
+    @Test
+    fun `addresses on this machine are not fetched, by any spelling`() {
+        for (url in listOf("https://localhost/a.ts", "https://127.1/a.ts", "https://2130706433/a.ts", "https://[::ffff:127.0.0.1]/a.ts", "https://[::1]/a.ts", "https://0.0.0.0/a.ts")) {
+            assertFalse(ForkClipHls.secure(url), url)
+        }
+        assertTrue(ForkClipHls.secure("https://c.example/a.ts"))
+    }
 }

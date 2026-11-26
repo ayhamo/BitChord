@@ -116,6 +116,7 @@ internal object SpotifyToken {
                 return@withLock forkSignedToken(cookie, forkGen) // fork: the signed route when the page gives none; was null
             }
 
+            if (!forkGeneration.current(forkGen)) return@withLock forkDropMinted() // fork: checked before the store too, so the lock-free read above never sees an ended sign-in's token (audit 2026-11-26 2a #5)
             cachedAccessToken = harvested.token
             accessTokenExpiresAtMs = harvested.expiresAt
             harvested.clientId?.let { cachedClientId = it }
@@ -138,6 +139,7 @@ internal object SpotifyToken {
                 "Spotify: no token (page harvest and signed request both failed)",
                 forkHarvest.retryAt(cookie),
             )
+        if (!forkGeneration.current(gen)) return forkDropMinted() // before the store as well as after it (audit 2026-11-26 2a #5)
         cachedAccessToken = signed.accessToken
         accessTokenExpiresAtMs = signed.expiresAtMs
         signed.clientId?.let { cachedClientId = it }

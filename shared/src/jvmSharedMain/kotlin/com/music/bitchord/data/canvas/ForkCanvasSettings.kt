@@ -3,6 +3,7 @@ package com.music.bitchord.data.canvas
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import java.net.URI
 
 private typealias Source = ForkCanvasRules.Source
@@ -172,13 +173,12 @@ object ForkCanvasSettings {
 
     private fun resolve(base: String, ref: String): String? = runCatching { URI(base).resolve(ref.trim()).toString() }.getOrNull()
 
-    /** An https `.m3u8` on Apple's own hosts (apple.com, mzstatic.com). */
-    fun trusted(url: String): Boolean = runCatching {
-        val u = URI(url)
-        val host = u.host?.lowercase() ?: return false
-        u.scheme == "https" && u.path.orEmpty().lowercase().endsWith(".m3u8") &&
-            (host == "apple.com" || host.endsWith(".apple.com") || host == "mzstatic.com" || host.endsWith(".mzstatic.com"))
-    }.getOrDefault(false)
+    /**
+     * An https `.m3u8` on Apple's own hosts (apple.com, mzstatic.com): [ForkAppleCanvasRules.trustedMotion]
+     * (which also refuses user info and a port other than 443, audit 2026-11-26) plus the extension.
+     */
+    fun trusted(url: String): Boolean = ForkAppleCanvasRules.trustedMotion(url) &&
+        runCatching { URI(url).path.orEmpty().lowercase().endsWith(".m3u8") }.getOrDefault(false)
 
     /**
      * Rule 5: [masterUrl]'s rendition for [cap], read with [fetch] (the master list's text, or null);
@@ -273,7 +273,7 @@ object ForkCanvasSettings {
         _artistImages.value = from.get(KEY_ARTIST_IMAGES) != "off"
         _artistVideos.value = when (from.get(KEY_ARTIST_VIDEOS)) { "on" -> true; "off" -> false; else -> null }
         _artistVideoQuality.value = CoverQuality.of(from.get(KEY_ARTIST_VIDEO_QUALITY))
-        _generation.value++
+        _generation.update { it + 1 } // (atomic: a choice from the UI and a settings load can bump it at once; value++ lost one)
     }
 
     /** Whether the music video is on in the list (the apps' "Music video canvas" switch follows it). */
@@ -320,7 +320,7 @@ object ForkCanvasSettings {
      */
     fun changed() {
         ForkCanvasLookup.clearNotes()
-        _generation.value++
+        _generation.update { it + 1 } // (atomic: a choice from the UI and a settings load can bump it at once; value++ lost one)
     }
 
     /** For the apps' in-memory lookup keys: a changed setting is a new question. */
@@ -335,6 +335,16 @@ object ForkCanvasSettings {
         val custom = if (spotifyFirst) listOf(Source.SPOTIFY) + _order.value else _order.value
         return ForkCanvasRules.order(custom = custom, enabled = _enabled.value, canvasOn = canvasOn, coversOn = coversOn)
     }
+
+    /**
+     * The order a song's canvas menu lists its sources in (phone and PC): [effectiveOrder] with the
+     * player's own [spotifyFirst] ("Prioritise Spotify Canvas"), the music video left out while
+     * "Music video canvas" ([videosOn]) is off. Audit 2026-11-26: the menus asked [effectiveOrder]
+     * without [spotifyFirst], so with the setting on they listed and picked in another order than
+     * the player played.
+     */
+    fun menuOrder(canvasOn: Boolean, coversOn: Boolean, videosOn: Boolean, spotifyFirst: Boolean): List<Source> =
+        effectiveOrder(canvasOn, coversOn, spotifyFirst).filter { it != Source.YOUTUBE_MUSIC_VIDEO || videosOn }
 
     /**
      * The backdrop sources (the video, Spotify) worth asking beside a cover clip already found: only

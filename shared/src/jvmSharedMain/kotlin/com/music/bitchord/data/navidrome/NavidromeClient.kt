@@ -448,6 +448,9 @@ class NavidromeClient(
     fun withLogin(url: String): String {
         val parsed = url.toHttpUrlOrNull() ?: return url
         if (parsed.host != base.host || parsed.port != base.port) return url
+        // Same scheme too: on a custom port an `http://` copy of an `https://` server's address matches
+        // host and port, and would carry the login in cleartext (audit 2026-11-26 2b #9).
+        if (parsed.scheme != base.scheme) return url
         // Under the server's own path too: another app behind the same host (`/other/rest/…`) must not get this login.
         if (!parsed.encodedPath.startsWith(base.encodedPath.trimEnd('/') + "/rest/")) return url
         if ("/rest/x-clip/" in parsed.encodedPath || parsed.queryParameter("t") != null) return url

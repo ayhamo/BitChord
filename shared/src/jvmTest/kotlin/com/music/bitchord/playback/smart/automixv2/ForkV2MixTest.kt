@@ -91,6 +91,25 @@ class ForkV2MixTest {
         assertTrue(title.endsWith(" · echo out"), title)
     }
 
+    /**
+     * The Looping lane under a crossfade of A at its playlist speed (spotify-mixes.md rule 10, editor.md §13): A plays at
+     * x0.97 in any style, so its looped beats last /0.97 in output seconds. Only a blend's outRate was read before
+     * (audit 2026-11-26 part 1a #3).
+     */
+    @Test
+    fun aLoopOfASongAtItsPlaylistSpeedLastsItsPlayedLengthInAnyStyle() {
+        val p = basePlan(120.0).apply {
+            style = "crossfade"
+            glide = null
+            loopSec = 2.0
+            speedOut = 0.97
+            outRate = 0.97
+        }
+        val t = ForkV2Transition(p, ForkV2Mix.blend(p, "a", "b", 200.0))
+        assertEquals(2.0, t.loopSongSec, 0.0)
+        assertEquals(2.0 / 0.97, t.loopOutputSec, 1e-9)
+    }
+
     /** A 0 s hand-over or fallback put the incoming deck's two knots on one time: 0/0 made its cue and seconds NaN. */
     @Test
     fun aZeroLengthBlendHasNoNan() {

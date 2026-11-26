@@ -406,7 +406,7 @@ class AddonSource(
         if (ModuleSource.malformed(url)) {
             TrackLog.w(
                 TAG,
-                "${config.displayName}: malformed URL for $trackId; skipping it — ${url.take(120)}",
+                "${config.displayName}: malformed URL for $trackId; skipping it — ${com.music.bitchord.data.sources.ForkAddonStream.shownHost(url)}", // fork: was ${url.take(120)}; the host only, never the addon's key or token
             )
             return null
         }

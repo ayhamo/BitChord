@@ -1,6 +1,7 @@
 package com.music.bitchord.data
 
-import kotlin.concurrent.Volatile
+import kotlin.concurrent.atomics.AtomicReference
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -162,6 +163,18 @@ object ForkAddonLimits {
         return host.lowercase() + rest.removePrefix(host)
     }
 
+    /**
+     * A [keyOf] key as it may appear in a log line: the host alone (no user info, no path).
+     *
+     * Why: the key keeps the base URL's path so two accounts on one server keep their own limits, and
+     * addons put the owner's private token in that path (`https://host/{token}`). The rulebook
+     * (`protocol.md` §1) allows only the host wherever a link could show, logs included. The
+     * [Limiter]'s lines printed the whole key until 2026-11-26, so every wait, skip and 429 wrote the
+     * token to TrackLog and to exported debug logs.
+     */
+    fun shownKey(key: String): String =
+        key.substringBefore('/').substringBefore('?').substringBefore('#').substringAfterLast('@').ifBlank { "addon" }
+
     /** What the Sources row shows for one addon. */
     data class Usage(val rules: Rules, val sentThisMinute: Int, val uncachedThisHour: Int) {
         val text: String
@@ -186,16 +199,29 @@ object ForkAddonLimits {
         private val sent = HashMap<String, ArrayDeque<Long>>()
         private val uncached = HashMap<String, ArrayDeque<Long>>()
 
-        /** Manifest declarations by host, replaced whole on each change (read from any thread). */
-        @Volatile
-        private var declared: Map<String, Declared> = emptyMap()
+        /**
+         * Manifest declarations by host, replaced whole on each change (read from any thread).
+         *
+         * An atomic swap, not a `@Volatile var`: the resolver fetches several addons' manifests at
+         * once on `Dispatchers.IO`, and a plain read-modify-write let two of them race so one
+         * addon's `limits` was silently dropped (audit 2026-11-26 2b #7). `Mutex` can't serve here
+         * since [declare] is not suspending.
+         */
+        @OptIn(ExperimentalAtomicApi::class)
+        private val declared = AtomicReference<Map<String, Declared>>(emptyMap())
 
         /** The manifest's `limits` for [host], as last read; null clears it. */
+        @OptIn(ExperimentalAtomicApi::class)
         fun declare(host: String, value: Declared?) {
-            declared = if (value == null) declared - host else declared + (host to value)
+            while (true) {
+                val old = declared.load()
+                val new = if (value == null) old - host else old + (host to value)
+                if (declared.compareAndSet(old, new)) return
+            }
         }
 
-        fun rules(host: String): Rules = rules(store.preset(host), declared[host], decodeLearned(store.learned(host), now()))
+        @OptIn(ExperimentalAtomicApi::class)
+        fun rules(host: String): Rules = rules(store.preset(host), declared.load()[host], decodeLearned(store.learned(host), now()))
 
         /**
          * Before a stream request is sent to [host]: SKIP when the row is known uncached
@@ -223,7 +249,7 @@ object ForkAddonLimits {
                     val t = now()
                     val hour = uncachedLocked(host, t)
                     if (cached == false && countUncached && hour.size >= r.uncachedPerHour!!) {
-                        if (record) log("addon $host: uncached allowance (${r.uncachedPerHour}/h) used, skipping an uncached row")
+                        if (record) log("addon ${shownKey(host)}: uncached allowance (${r.uncachedPerHour}/h) used, skipping an uncached row")
                         return Gate.SKIP
                     }
                     val minute = sentLocked(host, t)
@@ -243,7 +269,7 @@ object ForkAddonLimits {
                     }
                 }
                 if (wait == 0L) return Gate.GO
-                if (record) log("addon $host: ${r.streamsPerMinute} stream requests this minute, waiting ${wait / 1000}s")
+                if (record) log("addon ${shownKey(host)}: ${r.streamsPerMinute} stream requests this minute, waiting ${wait / 1000}s")
                 sleep(wait)
             }
         }
@@ -259,7 +285,7 @@ object ForkAddonLimits {
             val old = decodeLearned(store.learned(host), now())
             if (old == null || learnt < old) {
                 store.saveLearned(host, encodeLearned(learnt, now()))
-                log("addon $host: rate limited after $perMinute stream requests in a minute; keeping to $learnt")
+                log("addon ${shownKey(host)}: rate limited after $perMinute stream requests in a minute; keeping to $learnt")
             }
         }
 

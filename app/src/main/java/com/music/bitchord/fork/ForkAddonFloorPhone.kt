@@ -100,8 +100,14 @@ object ForkAddonFloorPhone {
         return Look.Pass(pass, above = if (pass.aboveOnly) cached?.ifEmpty { null } ?: servedBy else servedBy)
     }
 
-    /** The sources `upgradeFor` asks: [ranked] (in rank order) cut to the pass's. */
+    /**
+     * The sources `upgradeFor` asks: [ranked] (in rank order) cut to the pass's. [Look.None] asks
+     * nobody: [worth] refuses every answer then, and until 2026-11-26 every addon was still searched
+     * and up to three `/stream` requests each were sent for nothing, out of TorBox-backed addons'
+     * 5-a-minute and 60-an-hour budgets (protocol.md 8.2.1: a fresh lossless copy gets no pass).
+     */
     fun <T : MusicSource> sources(look: Look?, ranked: List<T>, servedBy: String?): List<T> = when (look) {
+        Look.None -> emptyList()
         is Look.Pass -> if (look.pass.aboveOnly) {
             val at = ranked.indexOfFirst { it.configId == look.above }
             if (at < 0) ranked.filterNot { it.configId == servedBy } else ranked.take(at)

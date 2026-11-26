@@ -92,8 +92,12 @@ internal object ForkV2SpotifyMix {
                 return@mapIndexed ForkV2MixFile.Item(n, null, null, null, "no YouTube id for ${(t?.get("title") as? String)?.takeIf { it.isNotEmpty() } ?: "a song"}")
             }
             m!!
-            // a mix of a millisecond with no start: Spotify's straight cut, its No transition (rule 3, editor.md §2)
-            if (!(num(m["durationMs"]) >= 100) && !num(m["fromStartMs"]).isFinite()) {
+            // a mix of a millisecond with no start: Spotify's straight cut, its No transition (rule 3, editor.md §2). Only a
+            // durationMs that is there and under 100 is one: `!(d >= 100)` was also true for a missing (NaN) durationMs, so a
+            // mix with no timing at all imported as a straight cut, where rule 7 skips it ("its timing is not valid"; the
+            // extension's readSpotifyMixes checks Number.isFinite first, audit 2026-11-26)
+            val dur = num(m["durationMs"])
+            if (dur.isFinite() && dur >= 0 && dur < 100 && !num(m["fromStartMs"]).isFinite()) {
                 return@mapIndexed ForkV2MixFile.Item(n, from, to, linkedMapOf<String, Any?>("v" to 1, "preset" to "none"), null)
             }
             val ov = override(m, lost) ?: return@mapIndexed ForkV2MixFile.Item(n, null, null, null, "its timing is not valid")
@@ -155,6 +159,9 @@ internal object ForkV2SpotifyMix {
         val N = if (bars > 0) bars * 4.0 else r3(D)
         val st = m["style"] as? Map<String, Any?> ?: emptyMap()
         val c = m["curves"] as? Map<String, Any?> ?: emptyMap()
+        // (rules 6 and 9: no lane here plays a jogwheel, so the summary names it; the extension's spotifyOverride does the
+        // same, and the phone's B3-08. It was left out, so a file with one imported with no word that it was dropped.)
+        if (truthy(st["jogwheel"]) || truthy(c["jogwheel"])) lost.notCarried += "jogwheel"
         // an unset lane plays the mix's base preset's (rule 4); a number with no name here plays as unset, counted only on
         // a lane with no drawing (a drawing carries it)
         val base = baseLanes(st["basePresetId"])
@@ -179,9 +186,15 @@ internal object ForkV2SpotifyMix {
             for (s in (segs as? List<Any?>).orEmpty()) {
                 val seg = s as? Map<String, Any?>
                 val P = (seg?.get("points") as? List<Any?>).orEmpty().map { p -> (p as? List<Any?>).orEmpty().map { num(it) } }
-                if (P.size < 2) continue
+                // a point is [x, y]: one short of that (a hand-edited or damaged file) skips its segment, as one of under two
+                // points does. It was indexed as it stood, and the IndexOutOfBoundsException failed the whole import
+                // (audit 2026-11-26 part 1a #5). Dropping just that point would turn a Bézier's four into a line's three.
+                // A coordinate or a segment start/end that isn't a number (null, a string) reads as NaN, which r3's jround
+                // turned into 0: the bad point was drawn at 0 instead of its segment being passed over. As the extension's
+                // spotifyOverride, a segment with any of them not finite is skipped whole (audit 2026-11-26).
                 val start = num(seg!!["start"])
                 val end = num(seg["end"])
+                if (P.size < 2 || P.any { it.size < 2 || !it[0].isFinite() || !it[1].isFinite() } || !start.isFinite() || !end.isFinite()) continue
                 fun at(px: Double) = (start + px * (end - start)) * N
                 if (P.size == 4) {
                     for (k in 0..8) {

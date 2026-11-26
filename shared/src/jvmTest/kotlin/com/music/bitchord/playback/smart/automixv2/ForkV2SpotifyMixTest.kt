@@ -112,6 +112,57 @@ class ForkV2SpotifyMixTest {
         assertEquals("""{"volume":"overlap","eq":"centerBassSwap","effect":"none"}""", l[4])
     }
 
+    /** A curve point short of [x, y] skips its segment; the file still imports (it threw IndexOutOfBounds before). */
+    @Test
+    fun aMalformedCurvePointSkipsItsSegmentNotTheImport() {
+        val bad = """{"index":1,"from":$s1,"to":$s2,"fromStartMs":218142,"durationMs":9919,"bars":4,"fromBpm":98,"style":{"volume":7,"eq":4,"filter":0},""" +
+            """"curves":{"eq":{"from":{"low":[{"start":0,"end":0.5,"points":[[0,0.5],[0.5],[0.7,0.2],[1,0.5]]},{"start":0.5,"end":1,"points":[[0,0.5],[]]},""" +
+            """{"start":0.5,"end":1,"points":[[0,0.5],[1,0]]}]}}}}"""
+        val r = ForkV2MixFile.read(export(3, bad))
+        assertNull(r.refused)
+        assertEquals(1, r.mixes.size)
+        // only the good segment is drawn: 0.5 → 0, i.e. 0 dB at beat 8 down to -18 dB at beat 16
+        val eq = r.mixes[0].override.drawing("eq")!!
+        assertEquals("[[8,0],[16,-18]]", ForkV2Json.write(eq.points("bassDb", true).map { listOf(it[0], it[1]) }))
+    }
+
+    /** A point or segment bound that isn't a number skips its segment; it was drawn at 0 (NaN through r3). */
+    @Test
+    fun aNonNumberCurveCoordinateSkipsItsSegment() {
+        val bad = """{"index":1,"from":$s1,"to":$s2,"fromStartMs":218142,"durationMs":9919,"bars":4,"fromBpm":98,"style":{"volume":7,"eq":4,"filter":0},""" +
+            """"curves":{"eq":{"from":{"low":[{"start":0,"end":0.5,"points":[[null,0.5],[1,0.2]]},{"start":"x","end":1,"points":[[0,0.1],[1,0.1]]},""" +
+            """{"start":0,"end":0.5,"points":[[0,0.5],[1,"y"]]},{"start":0.5,"end":1,"points":[[0,0.5],[1,0]]}]}}}}"""
+        val r = ForkV2MixFile.read(export(3, bad))
+        assertNull(r.refused)
+        val eq = r.mixes[0].override.drawing("eq")!!
+        assertEquals("[[8,0],[16,-18]]", ForkV2Json.write(eq.points("bassDb", true).map { listOf(it[0], it[1]) }))
+    }
+
+    /** No durationMs at all is no straight cut: skipped, "its timing is not valid" (rule 7). */
+    @Test
+    fun aMixWithNoDurationIsSkippedNotACut() {
+        val none = """{"index":2,"from":$s2,"to":$s3,"style":{}}"""
+        val r = ForkV2MixFile.read(export(3, mix1(), none))
+        assertEquals(1, r.mixes.size)
+        assertEquals(listOf(2), r.skipped.map { it.n })
+        assertEquals("its timing is not valid", r.skipped[0].why)
+        // a 1 ms one with no start still is (rule 3)
+        assertEquals("""{"v":1,"preset":"none"}""", ForkV2Json.write(ForkV2MixFile.read(export(3, mix1(), mix2)).mixes[1].override.toJson()))
+    }
+
+    /** A jogwheel (style or curve) is named in "not carried" (rules 6, 9). */
+    @Test
+    fun aJogwheelIsNamedNotCarried() {
+        fun jog(style: String, curves: String) =
+            """{"index":1,"from":$s1,"to":$s2,"fromStartMs":218142,"durationMs":9919,"bars":4,"style":{"volume":7$style},"curves":{$curves}}"""
+        val r = ForkV2MixFile.read(export(3, jog(",\"jogwheel\":2", "")))
+        assertTrue("not carried: jogwheel" in r.notes, r.notes.joinToString(" | "))
+        val rc = ForkV2MixFile.read(export(3, jog("", "\"jogwheel\":{\"from\":[]}")))
+        assertTrue("not carried: jogwheel" in rc.notes, rc.notes.joinToString(" | "))
+        val r2 = ForkV2MixFile.read(export(3, mix1()))
+        assertFalse(r2.notes.any { "jogwheel" in it }, r2.notes.joinToString(" | "))
+    }
+
     @Test
     fun aSecondsOnlyPositionReadsAsItsTimeInTheConfirm() {
         val was = ForkV2MixOverride.fromJson(ForkV2Json.parse("""{"v":1,"bars":8,"window":{"out":{"bar":40,"beat":2,"sec":200.5}}}"""))

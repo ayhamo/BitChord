@@ -118,8 +118,12 @@ object ForkCanvasStore {
         val art = decode(value) ?: return false
         val url = art.url
         if (isLocal(url)) return File(localPath(url)).length() > 0
-        val trust: (String) -> Boolean =
-            if (art.source == CanvasSource.SPOTIFY) ForkSpotifyCanvasRules::trusted else ::https
+        // An Apple clip is held to Apple's https hosts (audit 2026-11-26, ForkAppleCanvasRules.trustedMotion).
+        val trust: (String) -> Boolean = when (art.source) {
+            CanvasSource.SPOTIFY -> ForkSpotifyCanvasRules::trusted
+            CanvasSource.APPLE -> ForkAppleCanvasRules::trustedMotion
+            else -> ::https
+        }
         return listOfNotNull(url, art.fallbackUrl, art.portraitUrl).all(trust)
     }
 

@@ -147,6 +147,26 @@ class ForkV2EditorGeometryTest {
         assertNull(G.nudged(ForkV2MixOverride.Position(10, 0, 2000, 22.5), 1))
     }
 
+    /** editor.md §6: a nudge stops at the window's limits as a drag does; back towards them from outside is allowed. */
+    @Test
+    fun aNudgeIsHeldAtTheWindowsLimits() {
+        // B's mix-in at its start: -10 ms is refused, +10 ms is fine
+        val b0 = ForkV2MixOverride.Position(0, 0, 0, 0.0)
+        val lo = G.nudge(b0, -1, 0.0, 100.0, out = false)
+        assertNull(lo.pos)
+        assertEquals("Held: that is B's start", lo.refused)
+        assertEquals(0.01, G.nudge(b0, 1, 0.0, 100.0, out = false).pos!!.sec, 1e-9)
+        // A's mix-out at its high limit: +10 ms is refused with the high side's reason
+        val aHi = ForkV2MixOverride.Position(40, 0, 0, 150.0)
+        assertEquals("Held: the window has to end before A's music does", G.nudge(aHi, 1, 60.0, 150.0, out = true).refused)
+        // already past the limit (the plan moved): a step back towards it is allowed, a step further out is not
+        val past = ForkV2MixOverride.Position(40, 0, 0, 150.5)
+        assertEquals(150.49, G.nudge(past, -1, 60.0, 150.0, out = true).pos!!.sec, 1e-9)
+        assertNull(G.nudge(past, 1, 60.0, 150.0, out = true).pos)
+        // the 2 s reach is still its own refusal
+        assertEquals(G.NUDGE_REFUSED, G.nudge(ForkV2MixOverride.Position(10, 0, 2000, 22.5), 1, 0.0, 100.0, out = true).refused)
+    }
+
     @Test
     fun anEditMergesAsTheOverviewsPick() {
         // a migrated Blend pick: picking a preset drops its family, the length stays
@@ -308,5 +328,33 @@ class ForkV2EditorGeometryTest {
         val pf = ForkV2Planner.plan(s, "a", "b", a, song("b", 120.0, 180.0, 0.9), 200.0, 60.0, 64.0, null, f)
         assertEquals("filter", pf.style)
         assertEquals("a Filter mix places itself: the saved window isn't used (pick a preset to use it)", pf.warnings!!.first())
+    }
+
+    /** The overview's song time: plan rates in the window for any style, each song's playlist speed outside it (rule 10). */
+    @Test
+    fun theOverviewMapsSongTimeAtThePlaylistSpeedsForAnyStyle() {
+        val D = 8.0
+        val p = ForkV2Planner.Plan()
+        p.style = "crossfade"
+        p.durationSec = D
+        p.speedOut = 0.97
+        p.speedIn = 1.25
+        p.outRate = 0.97
+        p.rate = 1.25
+        // B after the window: mixIn + D × 1.25 + 2 × 1.25
+        assertEquals(30.0 + D * 1.25 + 2 * 1.25, G.songAt(false, D + 2, D, 30.0, 0.0, p), 1e-9)
+        // B inside it at the plan's rate (a crossfade too), A inside and before it at its speed
+        assertEquals(30.0 + 4 * 1.25, G.songAt(false, 4.0, D, 30.0, 0.0, p), 1e-9)
+        assertEquals(200.0 + 4 * 0.97, G.songAt(true, 4.0, D, 200.0, 0.0, p), 1e-9)
+        assertEquals(200.0 - 3 * 0.97, G.songAt(true, -3.0, D, 200.0, 0.0, p), 1e-9)
+        // B before a late entry: not drawn
+        assertTrue(G.songAt(false, 1.0, D, 30.0, 2.0, p).isNaN())
+        // no speeds: x1 outside the window, a blend's rates inside it
+        val b = blend(4, 0.5)
+        b.rate = 1.04
+        b.outRate = 1.02
+        assertEquals(30.0 + 8 * 1.04 + 1.0, G.songAt(false, 9.0, 8.0, 30.0, 0.0, b), 1e-9)
+        assertEquals(200.0 + 8 * 1.02 + 1.0, G.songAt(true, 9.0, 8.0, 200.0, 0.0, b), 1e-9)
+        assertEquals(199.0, G.songAt(true, -1.0, 8.0, 200.0, 0.0, b), 1e-9)
     }
 }

@@ -19,10 +19,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
@@ -189,7 +191,7 @@ internal fun forkLyricsForView(lines: List<LyricLine>?): List<LyricLine>? =
 
 /** §2: the rows lit in the panel, with the early highlight, or on their own timing with "real timing" on. */
 internal fun forkPanelActiveRows(lines: List<LyricLine>, positionMs: Long): List<Int> =
-    if (ForkLyricsPrefs.realTiming.value) activeLyricRows(lines, positionMs) else ForkLyricsRules.activeRows(lines, positionMs)
+    if (forkRealTimingSeen.value) activeLyricRows(lines, positionMs) else ForkLyricsRules.activeRows(lines, positionMs)
 
 /**
  * §4.3: following comes back on the button, a tap on a line, or the lyrics shown again, "not on a
@@ -199,7 +201,18 @@ internal fun forkPanelActiveRows(lines: List<LyricLine>, positionMs: Long): List
 internal const val FORK_FOLLOW_TIMERS = false
 
 /** §2.6: the scroll's own lead, none with "real timing" on. */
-internal fun forkScrollLead(leadMs: Long): Long = if (ForkLyricsPrefs.realTiming.value) 0L else leadMs
+internal fun forkScrollLead(leadMs: Long): Long = if (forkRealTimingSeen.value) 0L else leadMs
+
+/**
+ * [ForkLyricsPrefs.realTiming] as Compose state, what [forkPanelActiveRows] and [forkScrollLead] read.
+ *
+ * Why: both run inside `LyricsPanel`'s `derivedStateOf` blocks, which re-run only when a Compose
+ * state they read changes. Read straight from the `MutableStateFlow` (the PC's and the phone's
+ * settings write it), a toggle while paused left the highlight and the scroll on the old timing until
+ * the clock ticked again (audit 2026-11-26 2a #6). Kept in step by [rememberForkLyricsView], which
+ * the panel calls first; the flow stays the setting's home.
+ */
+internal val forkRealTimingSeen = mutableStateOf(false)
 
 /** §2.5: the scroll animates for at most 450 ms. */
 internal fun forkScrollSpan(leadMs: Long): Long = minOf(leadMs, ForkLyricsRules.SCROLL_ANIMATION_MAX_MS)
@@ -288,6 +301,8 @@ internal fun rememberForkLyricsView(): ForkLyricsView {
     val autoScroll by ForkLyricsPrefs.autoScroll.collectAsStateWithLifecycle()
     val size by ForkLyricsPrefs.textSize.collectAsStateWithLifecycle()
     val spacing by ForkLyricsPrefs.lineSpacing.collectAsStateWithLifecycle()
+    val realTiming by ForkLyricsPrefs.realTiming.collectAsStateWithLifecycle()
+    SideEffect { forkRealTimingSeen.value = realTiming }
     return remember(sides, autoScroll, size, spacing) {
         ForkLyricsView(sides, autoScroll, ForkLyricsPrefs.clampTextSize(size), ForkLyricsPrefs.clampLineSpacing(spacing))
     }

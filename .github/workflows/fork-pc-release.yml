@@ -34,6 +34,8 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0   # the changelog reads main's history back to the previous release
+          # no git token left in .git/config: later steps only read history; gh gets GH_TOKEN (audit 2026-11-26)
+          persist-credentials: false
 
       # Every PC unit test, before anything is built: a failing test stops the release. docker/pc-test.sh
       # builds for Windows as the zip is, with Linux FFmpeg on the test classpath so the decoder tests load.
@@ -50,6 +52,8 @@ jobs:
         run: |
           set -euo pipefail
           version=$(sed -n 's/.*bitchordVersionName"\] = "\(.*\)"/\1/p' build.gradle.kts)
+          # as android.yml: an empty version would publish `fork-pc-v` (audit 2026-11-26)
+          [ -n "$version" ] || { echo "::error::no bitchordVersionName in build.gradle.kts"; exit 1; }
           echo "version=$version" >> "$GITHUB_OUTPUT"
           mkdir out
           # The build number (ForkUpdater): the app offers a rebuild of the same version by it. Also

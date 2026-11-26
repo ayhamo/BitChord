@@ -77,9 +77,9 @@ internal fun ForkBestPartFollow(song: Song, lyrics: List<LyricLine>?) {
  * at the top of the scrubber's label row, in the times' white.
  */
 @Composable
-internal fun BoxScope.ForkBestPartMark(durationMs: Long) {
+internal fun BoxScope.ForkBestPartMark(durationMs: Long, songId: String?) {
     val current by ForkBestParts.current.collectAsStateWithLifecycle()
-    val at = ForkBestParts.markAt(current?.startMs, durationMs) ?: return
+    val at = ForkBestParts.markFor(current, songId, durationMs) ?: return // only the playing song's part
     BoxWithConstraints(Modifier.fillMaxWidth().align(Alignment.TopStart)) {
         val dot = 4.dp
         Box(

@@ -173,6 +173,40 @@ class ForkAddonLimitsTest {
         assertNull(ForkAddonLimits.cachedFrom(listOf(p("12"), p("{\"a\":1}"))))
     }
 
+    /** protocol.md §1: a link holds its owner's token in the path, so only the host may reach a log. */
+    @Test
+    fun logLinesNameTheHostNeverTheTokenPath() = runBlocking {
+        val secretKey = ForkAddonLimits.keyOf("https://user:pw@NullBeat.example/SECRET-TOKEN/")
+        val store = MapStore().apply { presets[secretKey] = ForkAddonLimits.TORBOX }
+        val clock = Clock()
+        val lines = mutableListOf<String>()
+        val limiter = ForkAddonLimits.Limiter(store, now = { clock.t }, sleep = { clock.t += it }, log = { lines += it })
+        repeat(6) { limiter.beforeStream(secretKey, cached = true) } // the sixth waits: a log line
+        repeat(60) { clock.t += ForkAddonLimits.MINUTE_MS; limiter.beforeStream(secretKey, cached = false) }
+        assertEquals(Gate.SKIP, limiter.beforeStream(secretKey, cached = false)) // hour spent: a log line
+        limiter.choose(secretKey, ForkAddonLimits.AUTOMATIC)
+        repeat(4) { limiter.beforeStream(secretKey, cached = true) }
+        limiter.rateLimited(secretKey, "https://nullbeat.example/SECRET-TOKEN/stream/1") // a log line
+        assertTrue(lines.size >= 3, "$lines")
+        assertTrue(lines.none { "SECRET" in it.uppercase() || "user" in it || "pw" in it }, "$lines")
+        assertTrue(lines.all { "nullbeat.example" in it })
+        assertEquals("nullbeat.example", ForkAddonLimits.shownKey(secretKey))
+        assertEquals("addon", ForkAddonLimits.shownKey(""))
+    }
+
+    /** Two manifests declared at once must both stick (the old read-modify-write dropped one). */
+    @Test
+    fun concurrentDeclarationsAreAllKept() {
+        val limiter = limiter(MapStore(), Clock())
+        val hosts = (0 until 64).map { "host$it.example/a" }
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(8)
+        val start = java.util.concurrent.CountDownLatch(1)
+        hosts.map { h -> pool.submit { start.await(); limiter.declare(h, ForkAddonLimits.Declared(streamsPerMinute = 5)) } }
+            .also { start.countDown() }.forEach { it.get() }
+        pool.shutdown()
+        assertTrue(hosts.all { limiter.rules(it).streamsPerMinute == 5 })
+    }
+
     @Test
     fun storedFormatsRoundTrip() {
         assertEquals(listOf(1L, 22L), ForkAddonLimits.decodeTimes(ForkAddonLimits.encodeTimes(listOf(1L, 22L))))

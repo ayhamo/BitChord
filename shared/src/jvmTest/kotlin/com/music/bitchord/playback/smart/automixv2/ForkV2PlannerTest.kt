@@ -292,4 +292,66 @@ class ForkV2PlannerTest {
         loops.forEach { assertEquals(8.0, it[1] - it[0], 1e-9, "a loop is 4 bars long, not ended on the first downbeat") }
         assertTrue(ForkV2Planner.loopsBetween(null, 0.0, 0.0, 0.0, 10.0, 4).isEmpty())
     }
+
+    @Test
+    fun aWholeSongIsNotWalkedAgainForTheSameCurve() {
+        val a = song("usual", 120.0, 200.0, 0.9)
+        val c = ForkV2Analysis.Curve()
+        c.step = 0.1
+        c.values = DoubleArray(2000) { i -> if (i % 50 < 40) -12.0 else -30.0 }
+        a.loudnessCurve = c
+        val first = ForkV2Planner.usualLevel(a)
+        val walks = ForkV2Planner.wholeWalks
+        assertEquals(first, ForkV2Planner.usualLevel(a), "the same answer, from the cache")
+        assertEquals(first, ForkV2Planner.usualLevel(a.copy()), "a copy of the analysis shares the curve")
+        // the trim's whole-song loudness and the outro search's seconds come from the same walk
+        val whole = ForkV2Planner.regionLoudness(a, 0.0, a.durationSec)
+        assertEquals(whole, ForkV2Planner.wholeOf(a)!!.loudness, 1e-12)
+        assertNotNull(ForkV2Planner.loudnessTrim(a, 150.0, 10.0, a.copy(), 20.0, 10.0))
+        assertEquals(walks, ForkV2Planner.wholeWalks, "no new walk over the song")
+        val secs = ForkV2Planner.wholeOf(a)!!.secs
+        assertEquals(200, secs.size)
+        assertEquals(ForkV2Planner.ampMean(a, 37.0, 38.0), secs[37], 1e-12)
+        val quieter = ForkV2Analysis.Curve()
+        quieter.step = 0.1
+        quieter.values = DoubleArray(2000) { -40.0 }
+        a.loudnessCurve = quieter
+        assertTrue(ForkV2Planner.usualLevel(a) < first, "another curve is walked")
+        assertEquals(walks + 1, ForkV2Planner.wholeWalks)
+    }
+
+    @Test
+    fun theChromaProfileReadsOnlyTheWindowAndGivesTheSameAnswer() {
+        val a = song("chroma", 120.0, 200.0, 0.9)
+        val c = ForkV2Analysis.ChromaCurve()
+        c.start = 0.25
+        c.step = 0.5
+        c.values = Array(400) { i -> if (i % 7 == 3) null else DoubleArray(12) { k -> ((i * 31 + k * 7) % 13) / 13.0 } }
+        c.weights = DoubleArray(400) { i -> 0.5 + (i % 5) / 10.0 }
+        a.chromaCurve = c
+        // the old way: every frame, kept by its time
+        fun whole(from: Double, to: Double): Array<DoubleArray>? {
+            val profile = DoubleArray(12)
+            var weight = 0.0
+            var frames = 0
+            for (i in c.values.indices) {
+                val t = c.start + i * c.step
+                val f = c.values[i]
+                if (t < from || t > to || f == null) continue
+                for (k in 0 until 12) profile[k] += f[k] * c.weights[i]
+                weight += c.weights[i]
+                frames++
+            }
+            return if (frames > 0) arrayOf(profile, doubleArrayOf(weight / frames)) else null
+        }
+        val windows = listOf(0.0 to 10.0, 0.25 to 0.25, 0.75 to 1.75, 37.3 to 61.9, 150.0 to 199.75, 190.0 to 260.0, -20.0 to 3.0, 250.0 to 300.0, -5.0 to -1.0)
+        for ((from, to) in windows) {
+            val want = whole(from, to)
+            val got = ForkV2Planner.chromaProfile(a, from, to)
+            if (want == null) { assertNull(got, "[$from, $to]"); continue }
+            assertNotNull(got, "[$from, $to]")
+            for (k in 0 until 12) assertEquals(want[0][k], got[0][k], 1e-12, "[$from, $to] pitch $k")
+            assertEquals(want[1][0], got[1][0], 1e-12, "[$from, $to] weight")
+        }
+    }
 }

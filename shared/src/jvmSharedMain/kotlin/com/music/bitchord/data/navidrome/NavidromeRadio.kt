@@ -112,7 +112,7 @@ object NavidromeRadio {
                 ?: stream.takeIf(::isPublicStream)?.let { directory("byurl", "url" to it.publicPart()) }
                 ?: station.streamUrl.takeIf(::isPublicStream)?.let { directory("byurl", "url" to it.publicPart()) }
                 ?: directory("byname/" + station.name.substringBefore(" (").trim(), "order" to "votes", "reverse" to "true", "limit" to "10")
-        }.onFailure { Log.d(TAG, "radio logo ${station.name}: ${it.message}") }
+        }.onFailure { if (it is kotlin.coroutines.cancellation.CancellationException) throw it; Log.d(TAG, "radio logo ${station.name}: ${it.message}") } // a cancelled look-up stops, it isn't a failed one
         // A failed lookup (no network) is not remembered; only a real answer is.
         val url = found.getOrElse { return@withContext null }
         // The server's own logo address has the login in it; that stays out of this plain store.
@@ -145,7 +145,8 @@ object NavidromeRadio {
             .build()
         Http.client.newCall(Request.Builder().url(url).header("User-Agent", "BitChord").get().build()).execute().use { response ->
             if (!response.isSuccessful) throw java.io.IOException("HTTP ${response.code}")
-            return json.parseToJsonElement(response.body.string()).jsonArray
+            // capped (combined audit 2026-11-26): a page of stations is tens of KB of JSON
+            return json.parseToJsonElement(com.music.bitchord.data.ForkCappedBody.text(response, 512 * com.music.bitchord.data.ForkCappedBody.KB)).jsonArray
                 .mapNotNull { (it as? JsonObject)?.get("favicon")?.let { f -> (f as? JsonPrimitive)?.contentOrNull } }
                 .firstOrNull { it.startsWith("http") && !it.substringBefore('?').endsWith(".svg", ignoreCase = true) }
         }

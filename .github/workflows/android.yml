@@ -45,6 +45,8 @@ jobs:
       uses: actions/checkout@v4
       with:
         fetch-depth: 0   # the changelog reads main's history back to the previous release
+        # no git token left in .git/config: later steps only read history; gh gets GH_TOKEN (audit 2026-11-26)
+        persist-credentials: false
 
     - name: Set up JDK 17
       uses: actions/setup-java@v4
@@ -56,18 +58,34 @@ jobs:
     - name: Android SDK packages
       run: |
         yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
-        "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "platforms;android-37.0" \
+        # android-36 for :shared and :sharedUi (compileSdk 36), as docker/Dockerfile installs; AGP downloaded it on every run
+        "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "platforms;android-37.0" "platforms;android-36" \
           "build-tools;35.0.0" "ndk;27.0.12077973" "cmake;3.22.1" > /dev/null
 
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
 
-    # Every phone and shared unit test: a failing test, upstream's or the fork's, stops the release
-    # before anything is built or signed.
+    # Every phone, shared and player-UI unit test: a failing test, upstream's or the fork's, stops the
+    # release before anything is built or signed. (:sharedUi:jvmTest added after the audit 2026-11-26:
+    # the player's own tests, the lyrics and backdrop rulebook cases among them, never ran here.)
     - name: Tests
       run: |
         ./gradlew --no-daemon --continue -Pbitchord.bundleWear=false \
-          :app:testDevDebugUnitTest :shared:jvmTest
+          :app:testDevDebugUnitTest :shared:jvmTest :sharedUi:jvmTest
+
+    # The rulebook case suites read the spec, which lives in a separate private repository that CI
+    # has no access to; on CI (CI=true) they skip themselves when it is missing, so a green run has
+    # checked none of their cases. Say so on the run instead of passing silently (audit 2026-11-26).
+    # Locally (CI unset) a missing spec still fails those suites. RULEBOOK_SPEC, as the tests read it.
+    - name: Rulebook cases not checked on CI
+      if: always()
+      run: |
+        spec="${RULEBOOK_SPEC:-/spec}"
+        if [ ! -d "$spec" ]; then
+          suites=$(grep -rl --include='*.kt' 'the rulebook spec is not mounted on CI' app/src/test shared/src/jvmTest sharedUi/src/jvmTest \
+            | xargs -n1 basename | sed 's/\.kt$//' | sort | paste -sd, -)
+          echo "::warning title=Rulebook cases not checked::No rulebook spec at $spec on CI, so these suites skipped their cases: $suites. Run them locally with the spec mounted."
+        fi
 
     - name: Build Signed Prod Release APK
       env:
