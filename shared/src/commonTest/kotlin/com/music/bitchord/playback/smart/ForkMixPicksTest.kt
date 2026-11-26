@@ -64,11 +64,11 @@ class ForkMixPicksTest {
     }
 
     @Test
-    fun loopAndFadeDropTheLengthFilterIsCappedAndAutoClearsThePick() {
+    fun loopAndFadeDropTheLengthFilterKeepsItsAndAutoClearsThePick() {
         ForkMixPicks.set("p->q", ForkMixPicks.Pick(style = ForkMixPicks.Style.LOOP, bars = 16))
         assertNull(ForkMixPicks.picks.value["p->q"]!!.bars)
         ForkMixPicks.set("p->q", ForkMixPicks.Pick(style = ForkMixPicks.Style.FILTER, bars = 32))
-        assertEquals(ForkMixPicks.FILTER_MAX_BARS, ForkMixPicks.picks.value["p->q"]!!.bars)
+        assertEquals(32, ForkMixPicks.picks.value["p->q"]!!.bars) // no 8-bar cap on a picked length (editor.md §6, 2026-11-26)
         ForkMixPicks.set("p->q", ForkMixPicks.Pick())
         assertTrue("p->q" !in ForkMixPicks.picks.value)
     }
@@ -145,7 +145,7 @@ class ForkMixPicksTest {
         ForkV2OverrideStore.migrateLegacyPicks("a->b\tblend\t16\nc->d\tloop\t16\ne->f\tfilter\t32")
         assertEquals(ForkMixPicks.Pick(ForkMixPicks.Style.BLEND, 16), ForkMixPicks.picks.value["a->b"])
         assertEquals(ForkMixPicks.Pick(ForkMixPicks.Style.LOOP), ForkMixPicks.picks.value["c->d"])
-        assertEquals(ForkMixPicks.Pick(ForkMixPicks.Style.FILTER, ForkMixPicks.FILTER_MAX_BARS), ForkMixPicks.picks.value["e->f"])
+        assertEquals(ForkMixPicks.Pick(ForkMixPicks.Style.FILTER, 32), ForkMixPicks.picks.value["e->f"])
     }
 
     // ---- the hook in upstream's planTransition ----

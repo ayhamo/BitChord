@@ -36,8 +36,8 @@ object ForkV2EditorGeometry {
      * Shown after "held:" when a drag runs into a limit, low side first (automix-overview.js LIMIT_WHY,
      * word for word).
      */
-    val LIMIT_WHY_OUT = arrayOf("A has already played up to there", "the window has to end before A's music does")
-    val LIMIT_WHY_IN = arrayOf("that is B's start", "the window has to end 10 s before B's end")
+    val LIMIT_WHY_OUT = arrayOf("A has already played up to there", "the window has to end before A does")
+    val LIMIT_WHY_IN = arrayOf("that is B's start", "the window has to end before B does")
 
     /** The presets in the order the chip row shows them, with their names (editor.md §2; Echo out is reserved, §5). */
     val PRESET_NAMES = linkedMapOf(
@@ -77,8 +77,8 @@ object ForkV2EditorGeometry {
 
     /**
      * The window's limits as the planner clamps them (editor.md §6), in song seconds: A's mix-out from
-     * the earliest it can still start (with the tempo ramp before a blend) to where the window ends
-     * with A's music; B's mix-in from 0 to where the window ends 10 s before B's end. [from]: A's
+     * the earliest it can still start (with the tempo ramp before a blend) to where the window ends 0.3 s
+     * before A does; B's mix-in from 0 to where the window ends 0.3 s before B does. [from]: A's
      * analysis with the playing length as its duration; [earliest]: the playhead plus the hand-over
      * lead (what ForkV2Automix passes the planner).
      */
@@ -92,11 +92,12 @@ object ForkV2EditorGeometry {
             outSpan
         }
         val dur = from?.durationSec?.takeIf { it > 0 } ?: 0.0
-        val end = if (from != null) ForkV2Planner.musicEnd(from).durationSec.takeIf { it > 0 } ?: 0.0 else 0.0
         val lo = max(0.0, if (earliest > 0) earliest else 0.0) + (if (blend && m!!.rampSongSec > 0) m.rampSongSec else 0.0)
-        val hi = if (blend) min(end, dur - 0.3) - outSpan else end - 0.3 - outSpan
+        // A's end is its length − 0.3, not its music end: a placed window may run through A's fading outro (editor.md §6,
+        // ruled 2026-11-26 [all], on Spotify's Lush Life → Lean On)
+        val hi = dur - 0.3 - outSpan
         val toDur = to?.durationSec?.takeIf { it > 0 } ?: 0.0
-        return Limits(lo, max(lo, hi), 0.0, max(0.0, toDur - 10 - inSpan))
+        return Limits(lo, max(lo, hi), 0.0, max(0.0, toDur - 0.3 - inSpan)) // B's window ends 0.3 s before B does (§6, 2026-11-26; was 10 s)
     }
 
     /** A song's grid as the editor snaps to it. */

@@ -138,7 +138,7 @@ class ForkV2OverrideStoreTest {
         val m = ForkV2OverrideStore.overrides.value
         assertEquals("melt", m["a>b"]!!.preset, "the store's own edit stays")
         assertEquals("filter", m["c-1>d"]!!.family)
-        assertEquals(8, m["c-1>d"]!!.bars, "a filter mix is at most 8 bars")
+        assertEquals(32, m["c-1>d"]!!.bars, "a picked filter length is kept (editor.md §6, 2026-11-26)")
         assertEquals("off", m["e>f"]!!.beatMatch)
         assertEquals(0, m["e>f"]!!.bars, "a fade had no length")
         assertNull(m["g>h"], "7 bars was never a length: nothing but Auto")

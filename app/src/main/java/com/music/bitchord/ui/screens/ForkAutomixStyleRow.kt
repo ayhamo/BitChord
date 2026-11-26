@@ -31,7 +31,7 @@ internal fun SettingsGroupScope.forkAutomixStyleRow(enabled: Boolean) = forkDisa
     row(phraseTitle, "fork", "automix", "phrase", "length", "bars", "blend", "mix") { ForkAutomixPhraseRow() }
     val title = stringResource(R.string.fork_automix_style)
     row(title, "fork", "automix", "autodj", "dj", "mix", "style", "extension", "v2") { ForkAutomixStyleRow() }
-    row("Mix files", "fork", "automix", "mix", "file", "import", "export", "vivimix", "ready-made") { ForkMixFilesRow() }
+    row("Mix files", "fork", "automix", "mix", "file", "import", "export", "json", "ready-made") { ForkMixFilesRow() }
 }
 
 /**
@@ -45,7 +45,7 @@ internal fun ForkMixFilesRow() {
     SettingsRow(
         icon = SfIcons.FileDownload,
         title = "Import mixes…",
-        subtitle = ForkMixFiles.status ?: "Ready-made mixes from a .vivimix.json file: play the two songs one after the other and the mix plays",
+        subtitle = ForkMixFiles.status ?: "Ready-made mixes from a .json file: play the two songs one after the other and the mix plays",
         badge = ForkSettingsBadge.TEXT,
         enabled = ForkMixFiles.available,
         onClick = { ForkMixFiles.importMixes() },
@@ -53,7 +53,7 @@ internal fun ForkMixFilesRow() {
     SettingsRow(
         icon = SfIcons.FileUpload,
         title = "Export all mixes…",
-        subtitle = if (saved.isEmpty()) "No edited pairs yet" else "${saved.size} edited pair${if (saved.size == 1) "" else "s"}, as one .vivimix.json file",
+        subtitle = if (saved.isEmpty()) "No edited pairs yet" else "${saved.size} edited pair${if (saved.size == 1) "" else "s"}, as one .json file",
         badge = ForkSettingsBadge.TEXT,
         enabled = ForkMixFiles.available,
         onClick = { ForkMixFiles.exportMixes() },

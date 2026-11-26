@@ -397,12 +397,23 @@ object ForkCanvasChoices {
 
     // ---- display text, the same on both apps -------------------------------------------------
 
-    /** The song's switch for [source]. */
+    /**
+     * The song's switch for [source] (canvas.md §15 rule 11 [all], extension 45841b0, the user's ruling 2026-11-26: a lone switch read
+     * like a copy of the menu's switch for all songs): "<source> on this song".
+     */
     fun switchTitle(source: Source): String = when (source) {
-        Source.YOUTUBE_MUSIC_VIDEO -> "Music video canvas"
-        Source.SPOTIFY -> "Spotify canvas"
-        Source.APPLE_MUSIC -> "Animated cover"
+        Source.YOUTUBE_MUSIC_VIDEO -> "Music video on this song"
+        Source.SPOTIFY -> "Spotify canvas on this song"
+        Source.APPLE_MUSIC -> "Animated cover on this song"
     }
+
+    /**
+     * The line under [switchTitle] (§15 rule 11): "Off hides it for this song only. <the switch for all songs> in the
+     * menu is for all songs." Both apps' player menus have the same two: "Backdrop videos" (the music video and
+     * Spotify's canvas) and "Animated covers".
+     */
+    fun switchNote(source: Source): String =
+        "Off hides it for this song only. " + (if (source == Source.APPLE_MUSIC) "Animated covers" else "Backdrop videos") + " in the menu is for all songs."
 
     /** A source's name under Use. */
     fun useName(source: Source?): String = when (source) {

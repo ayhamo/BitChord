@@ -22,12 +22,12 @@ import kotlinx.coroutines.flow.update
  * editor, {style, bars}, and migrated as it is read
  * ([com.music.bitchord.playback.smart.automixv2.ForkV2MixOverride.fromJson], editor.md §1):
  * - Fade: beat match off, the two songs overlapped at their own speeds. Filter: the planner's filter
- *   mix (at most [FILTER_MAX_BARS]). Blend: the planner's blend (its own fallbacks still apply).
+ *   mix, at the length picked (Automix's own filter mix is at most 8 bars; editor.md §6, 2026-11-26). Blend: the planner's blend (its own fallbacks still apply).
  * - Blend, Filter, Fade, or a length with no style: no loop mix for the pair ([loopRefusal]).
  * - Loop: the loop mix whenever one is found (the extension's loopPicked), which keeps its own
  *   length; else the planner's mix.
- * - A picked length is the override's pinned bars: it beats the key-clash short blend, and still
- *   gives way to a weak grid's cap.
+ * - A picked length is the override's pinned bars: whichever move Automix picks plays at it, past the
+ *   key-clash short blend and a weak grid's cap (editor.md §6, ruled 2026-11-26).
  *
  * Pairs are "outgoing id->incoming id", the loop mix's own pair key on both apps.
  *
@@ -103,9 +103,6 @@ object ForkMixPicks {
     const val PREVIEW_MIN_LEFT_SEC = 25.0
 
     const val PICKED_REASON = "picked in the overview"
-
-    /** The longest filter mix (the ported planner's FILTER_MAX_BARS). */
-    const val FILTER_MAX_BARS = 8
 
     /** The Automix style in force, mirrored by each app's setting (`ForkSettings`, `ForkDesktopAutomixStyle`). */
     @Volatile
@@ -187,7 +184,8 @@ object ForkMixPicks {
 
     /**
      * Sets [pair]'s pick, the extension's `pick()`: a loop or a fade has no length of its own to pick,
-     * a filter mix is at most [FILTER_MAX_BARS] bars, and an all-Auto pick is removed. Saved as the
+     * and an all-Auto pick is removed. A filter mix keeps the length picked (it was cut to 8 bars before
+     * 2026-11-26: editor.md §6 [all], only Automix's own choices have rules). Saved as the
      * pair's override (editor.md §1's table), keeping a lock the pair has; the store's cap applies.
      */
     fun set(pair: String, pick: Pick) {
@@ -217,10 +215,9 @@ object ForkMixPicks {
         }
     }
 
-    /** A loop or a fade has no length to pick, and a filter mix is at most [FILTER_MAX_BARS] bars. */
+    /** A loop or a fade has no length to pick. */
     private fun normalised(pick: Pick): Pick = when {
         pick.style == Style.LOOP || pick.style == Style.FADE -> pick.copy(bars = null)
-        pick.style == Style.FILTER && (pick.bars ?: 0) > FILTER_MAX_BARS -> pick.copy(bars = FILTER_MAX_BARS)
         else -> pick
     }
 

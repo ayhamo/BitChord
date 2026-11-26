@@ -183,7 +183,7 @@ object ForkAnalysisProgress {
             st.failedWhy[id]?.let { return Row("Analysis of $which failed: $it", null) }
             st.notes[id]?.let { return Row("Analysis of $which: $it", null) }
         }
-        ForkAddonCopyProgress.lineFor(curId)?.let { return Row(it, Float.NaN) }
+        ForkAddonCopyProgress.rowLine(curId)?.let { return Row(it.text, if (it.busy) Float.NaN else null) }
         return if (loopSearching) Row("Looking for a loop mix…", Float.NaN) else null
     }
 

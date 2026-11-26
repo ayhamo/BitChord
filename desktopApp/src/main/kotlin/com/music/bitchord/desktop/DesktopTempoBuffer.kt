@@ -17,8 +17,9 @@ internal class DesktopTempoBuffer(channels: Int, sampleRate: Int) {
     var speed: Float
         get() = processor.speed
         set(value) {
-            // fork (PC-Continued be257dad): slowed as well as sped up, the shared planner's window
-            processor.speed = value.coerceIn(com.music.bitchord.playback.smart.MIN_INCOMING_RATE.toFloat(), com.music.bitchord.playback.smart.MAX_INCOMING_RATE.toFloat())
+            // fork (PC-Continued be257dad): slowed as well as sped up; the widest window a plan can ask for, a picked Sync or
+            // Glide's (ForkPickedRate): each rate is clamped where it is set, Automix's own to the shared planner's 0.9..1.25
+            processor.speed = value.coerceIn(ForkPickedRate.MIN.toFloat(), ForkPickedRate.MAX.toFloat())
         }
 
     val available: Int get() = queuedCount

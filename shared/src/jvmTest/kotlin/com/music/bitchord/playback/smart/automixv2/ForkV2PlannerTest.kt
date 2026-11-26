@@ -279,7 +279,7 @@ class ForkV2PlannerTest {
         val next = song("b", 120.0, Double.NaN, 0.9)
         assertEquals(0.0, ForkV2Planner.inRoom(next, 8.0))
         assertEquals(0.0, ForkV2Planner.clampWindow(30.0, 0.0, ForkV2Planner.inRoom(next, 8.0), "the mix-in", null, null))
-        assertEquals(182.0, ForkV2Planner.inRoom(song("c", 120.0, 200.0, 0.9), 8.0))
+        assertEquals(200.0 - 0.3 - 8.0, ForkV2Planner.inRoom(song("c", 120.0, 200.0, 0.9), 8.0), 1e-9) // ends 0.3 s before B does (editor.md §6, 2026-11-26)
     }
 
     @Test

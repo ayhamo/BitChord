@@ -43,7 +43,9 @@ import kotlinx.coroutines.withContext
  * (`ForkCanvasMenuRows`), in the menu's own
  * rows with the lists opening under their row:
  *
- * - a switch per source for this song ("Music video canvas", "Spotify canvas", "Animated cover");
+ * - a switch per source for this song ("Music video on this song", "Spotify canvas on this song",
+ *   "Animated cover on this song"), each with its line saying the menu's switch is for all songs (§15
+ *   rule 11; there is no per-song dialog here, so no "This song only" title);
  * - "Pick another part" (the part playing and up to 4 others), "Pick another video" (the search as
  *   found, with pictures; a pick that can't make a loop leaves the song as it was), "Use",
  *   "Not this video", "Reset this song's canvas" (§15 rule 10, while the song keeps any choice);
@@ -74,6 +76,13 @@ internal fun ForkCanvasMenuRowsDesktop(song: Song, onDismiss: () -> Unit) {
             ForkCanvasChoices.switchTitle(source),
             value = if (checked) "On" else "Off",
         ) { ForkCanvasChoices.toggle(song.videoId, source, rows) }
+        // §15 rule 11: the line under it (DesktopMenuRow has no second line)
+        androidx.compose.material3.Text(
+            ForkCanvasChoices.switchNote(source),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            modifier = Modifier.padding(start = 48.dp, end = 12.dp, bottom = 4.dp),
+        )
     }
     switchRow(ForkCanvasRules.Source.YOUTUBE_MUSIC_VIDEO, rows.loopSwitch, rows.loopChecked)
     switchRow(ForkCanvasRules.Source.SPOTIFY, rows.spotifySwitch, rows.spotifyChecked)

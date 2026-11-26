@@ -68,7 +68,7 @@ fun ForkMixFilesPhone() {
     DisposableEffect(opener, saver) {
         ForkMixFiles.open = { onText, onFail ->
             pending[0] = onText to onFail
-            // *.vivimix.json may come as JSON, text or plain bytes depending on the file manager
+            // a mix file (.json) may come as JSON, text or plain bytes depending on the file manager
             runCatching { opener.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }
                 .onFailure { pending[0] = null; onFail("the file could not be read") }
         }

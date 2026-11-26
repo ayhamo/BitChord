@@ -61,7 +61,7 @@ internal fun ForkAutomixStyleSetting() {
 @Composable
 private fun ForkMixFilesSetting() {
     val title = "Mix files"
-    val subtitle = "Ready-made mixes from a .vivimix.json file: play the two songs one after the other and the mix plays"
+    val subtitle = "Ready-made mixes from a .json file: play the two songs one after the other and the mix plays"
     val saved by ForkV2OverrideStore.overrides.collectAsState()
     if (settingsRowVisible(title, subtitle)) Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
         ForkSettingsTitle(title, fontWeight = FontWeight.Medium, fork = true)

@@ -17,12 +17,12 @@ import kotlin.test.fail
  */
 class ForkV2MixFileTest {
 
-    private val readyMade = listOf("cinderella-drowning.vivimix.json", "yquefue-iliketomoveit.vivimix.json")
+    private val readyMade = listOf("cinderella-drowning", "yquefue-iliketomoveit")
 
     @Test
     fun theReadyMadeFilesRoundTrip() {
         for (name in readyMade) {
-            val text = File(specDir(), "automix/mixes/$name").readText()
+            val text = mixFixture(specDir(), name).readText()
             val r = ForkV2MixFile.read(text)
             assertNull(r.refused, name)
             assertEquals(0, r.skipped.size, "$name: ${r.skipped.map { it.why }}")
@@ -101,7 +101,7 @@ class ForkV2MixFileTest {
 
     @Test
     fun aReplacementListsWhatChanges() {
-        val cinderella = ForkV2MixFile.read(File(specDir(), "automix/mixes/cinderella-drowning.vivimix.json").readText()).mixes[0].override
+        val cinderella = ForkV2MixFile.read(mixFixture(specDir(), "cinderella-drowning").readText()).mixes[0].override
         val crossfade = ForkV2MixOverride.fromJson(ov("""{"preset":"custom","lanes":{"volume":"crossfade","eq":"none","effect":"none"}}"""))!!
         assertEquals(
             listOf("volume: crossfade → drawn", "eq: none → drawn", "length: auto → 16 bars", "beat match: auto → glide"),
@@ -134,7 +134,7 @@ class ForkV2MixFileTest {
 
     @Test
     fun beatsFoldOntoHalfOrDoubleTime() {
-        val o = ForkV2MixFile.read(File(specDir(), "automix/mixes/cinderella-drowning.vivimix.json").readText()).mixes[0].override.copy()
+        val o = ForkV2MixFile.read(mixFixture(specDir(), "cinderella-drowning").readText()).mixes[0].override.copy()
         assertEquals("no gridBpm: its beats are taken as they are", ForkV2MixFile.foldNote(o.copy().also { it.gridBpm = 0.0 }, 65.0))
         o.gridBpm = 130.0
         val half = ForkV2MixFile.fold(o, 65.5)
@@ -169,7 +169,7 @@ class ForkV2MixFileTest {
 
     @Test
     fun replacingADrawingAsksAndUndoBringsItBack() {
-        val cinderella = ForkV2MixFile.read(File(specDir(), "automix/mixes/cinderella-drowning.vivimix.json").readText()).mixes[0].override
+        val cinderella = ForkV2MixFile.read(mixFixture(specDir(), "cinderella-drowning").readText()).mixes[0].override
         // volume and eq are drawn: a preset replaces both, a shape in volume's dropdown only volume's
         assertEquals(listOf("volume", "eq"), ForkV2DrawEditor.replacedDrawings(cinderella, null))
         assertEquals("Replace the drawings?", ForkV2DrawEditor.replaceQuestion(2))
@@ -223,7 +223,7 @@ class ForkV2MixFileTest {
     /** The extension's spec/: RULEBOOK_SPEC, else /spec. Missing fails locally and is skipped on CI. */
     private fun specDir(): File {
         val dir = File(System.getenv("RULEBOOK_SPEC")?.takeIf { it.isNotBlank() } ?: "/spec")
-        if (!File(dir, "automix/mixes/cinderella-drowning.vivimix.json").isFile) {
+        if (runCatching { mixFixture(dir, "cinderella-drowning") }.isFailure) {
             org.junit.Assume.assumeTrue("the rulebook spec is not mounted on CI; skipped there", System.getenv("CI") != "true")
             fail("the extension's spec is not at $dir (set RULEBOOK_SPEC, or mount it at /spec): no automix/mixes/ there")
         }

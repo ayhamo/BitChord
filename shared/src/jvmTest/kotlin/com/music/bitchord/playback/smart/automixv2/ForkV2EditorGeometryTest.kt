@@ -33,15 +33,16 @@ class ForkV2EditorGeometryTest {
         assertEquals(62.0, l.outLo, 1e-9) // the earliest plus the tempo ramp
         assertEquals(200.0 - 0.3 - 16.0, l.outHi, 1e-9)
         assertEquals(0.0, l.inLo, 0.0)
-        assertEquals(180.0 - 10 - 16.0, l.inHi, 1e-9)
+        assertEquals(180.0 - 0.3 - 16.0, l.inHi, 1e-9)
     }
 
     @Test
-    fun aSongWhoseMusicEndsEarlyHoldsTheMixOutThere() {
+    fun aSongWhoseMusicEndsEarlyStillLetsTheWindowRunToItsEnd() {
+        // editor.md §6 (extension 45841b0): a placed window may run through the fading outro, up to length − 0.3
         val a = song("a", 120.0, 200.0, 0.9)
         a.contentEndSec = 190.0
         val l = G.windowLimits(blend(4, 0.5), a, song("b", 120.0, 180.0, 0.9), 10.0)
-        assertEquals(190.0 - 8.0, l.outHi, 1e-9)
+        assertEquals(200.0 - 0.3 - 8.0, l.outHi, 1e-9)
     }
 
     @Test
@@ -52,12 +53,12 @@ class ForkV2EditorGeometryTest {
         val l = G.windowLimits(f, song("a", 120.0, 200.0, 0.9), song("b", 120.0, 100.0, 0.9), 20.0)
         assertEquals(20.0, l.outLo, 0.0)
         assertEquals(200.0 - 0.3 - 12.0, l.outHi, 1e-9)
-        assertEquals(100.0 - 10 - 12.0, l.inHi, 1e-9)
+        assertEquals(100.0 - 0.3 - 12.0, l.inHi, 1e-9)
         val g = blend(4, 0.5)
         val gl = ForkV2Planner.Glide(0.95, 16, 0.5)
         g.glide = gl
         val lg = G.windowLimits(g, song("a", 120.0, 200.0, 0.9), song("b", 120.0, 100.0, 0.9), 20.0)
-        assertEquals(100.0 - 10 - 8.0 / 0.95, lg.inHi, 1e-9)
+        assertEquals(100.0 - 0.3 - 8.0 / 0.95, lg.inHi, 1e-9)
     }
 
     @Test
@@ -98,7 +99,7 @@ class ForkV2EditorGeometryTest {
         assertTrue(held.pos.sec >= 60.2 - 1e-6)
         assertEquals(60.5, held.pos.sec, 1e-9)
         val end = G.dragTo(400.0, 0.0, 170.1, grid, snap = true, beats = false, out = false)
-        assertEquals("the window has to end 10 s before B's end", end.limit)
+        assertEquals("the window has to end before B does", end.limit)
         assertTrue(end.pos.sec <= 170.1 + 1e-6)
         assertEquals("that is B's start", G.dragTo(-3.0, 0.0, 100.0, grid, true, false, out = false).limit)
     }
@@ -158,7 +159,7 @@ class ForkV2EditorGeometryTest {
         assertEquals(0.01, G.nudge(b0, 1, 0.0, 100.0, out = false).pos!!.sec, 1e-9)
         // A's mix-out at its high limit: +10 ms is refused with the high side's reason
         val aHi = ForkV2MixOverride.Position(40, 0, 0, 150.0)
-        assertEquals("Held: the window has to end before A's music does", G.nudge(aHi, 1, 60.0, 150.0, out = true).refused)
+        assertEquals("Held: the window has to end before A does", G.nudge(aHi, 1, 60.0, 150.0, out = true).refused)
         // already past the limit (the plan moved): a step back towards it is allowed, a step further out is not
         val past = ForkV2MixOverride.Position(40, 0, 0, 150.5)
         assertEquals(150.49, G.nudge(past, -1, 60.0, 150.0, out = true).pos!!.sec, 1e-9)
@@ -312,7 +313,7 @@ class ForkV2EditorGeometryTest {
     }
 
     @Test
-    fun theUnusedLengthAndTheUnusedWindowAreSaid() {
+    fun aLengthPickedRunsTheHandOverAndTheUnusedWindowIsSaid() {
         // a length asked for where the planner hands over (no beat grid at the next song)
         val a = song("a", 120.0, 200.0, 0.9)
         val b = song("b", 120.0, 180.0, 0.1)
@@ -321,7 +322,9 @@ class ForkV2EditorGeometryTest {
         ov.bars = 16
         val p = ForkV2Planner.plan(s, "a", "b", a, b, 200.0, 60.0, 60.0 + ForkV2Automix.LATCH_LEAD_SEC, null, ov)
         assertTrue(p.handoff)
-        assertEquals("16 bars not used: ${p.reason}", p.warnings!!.single())
+        // the hand-over runs the length picked (editor.md §6, ruled 2026-11-26 [all]): 16 bars at 120 BPM, no "not used"
+        assertEquals(32.0, p.durationSec, 1e-6)
+        assertTrue(p.warnings.isNullOrEmpty(), "${p.warnings}")
         // a pick that forced the filter mix keeps its own window
         val f = ForkV2MixOverride.fromJson(mapOf("style" to "filter"))!!
         f.out = ForkV2MixOverride.Position(100, 0, 0, 150.5)

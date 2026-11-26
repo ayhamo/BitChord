@@ -59,6 +59,12 @@ object ForkAddonCopyPhone {
     /** The copy is what's heard, or the take-over is over without it. */
     fun switched(mediaId: String) = ForkAddonCopyProgress.end(mediaId, only = SWITCHING)
 
+    /**
+     * The session player's play-when-ready (the listener's play or pause, not a buffering stall): a take-over waits
+     * for play, and the row says so while paused ([ForkAddonCopyProgress.setPaused]).
+     */
+    fun playWhenReady(playWhenReady: Boolean) = ForkAddonCopyProgress.setPaused(!playWhenReady)
+
     /** The upgrade pass is over: anything it left but a take-over still running is ended. */
     fun passEnded(mediaId: String) = ForkAddonCopyProgress.end(mediaId, only = PASS)
 

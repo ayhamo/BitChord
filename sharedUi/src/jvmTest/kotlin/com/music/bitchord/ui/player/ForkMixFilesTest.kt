@@ -36,7 +36,7 @@ class ForkMixFilesTest {
     fun aReadyMadeMixImportsAndExports() {
         var stored: String? = null
         ForkV2OverrideStore.install(load = { null }, save = { stored = it })
-        val text = File(specDir(), "automix/mixes/cinderella-drowning.vivimix.json").readText()
+        val text = mixFixture(specDir(), "cinderella-drowning").readText()
 
         ForkMixFiles.imported(text)
         assertEquals("Imported 1 mix. Play these mixes queues them.", ForkMixFiles.status)
@@ -68,8 +68,8 @@ class ForkMixFilesTest {
         var out: String? = null
         ForkMixFiles.saveAs = { n, t, done -> name = n; out = t; done(true) }
         runBlocking { ForkMixFiles.exportNow("rCwSRV7P6hY", "0X3Y2m9wj5c") }
-        assertEquals("cinderella-drowningfeatkodakblack.vivimix.json", name)
-        assertEquals("Exported 1 mix as cinderella-drowningfeatkodakblack.vivimix.json.", ForkMixFiles.status)
+        assertEquals("cinderella-drowningfeatkodakblack.json", name)
+        assertEquals("Exported 1 mix as cinderella-drowningfeatkodakblack.json.", ForkMixFiles.status)
         assertEquals(text.replace("\r\n", "\n").trimEnd(), out!!.trimEnd(), "the export is the ready-made file (the round trip)")
 
         runBlocking { ForkMixFiles.exportNow("aaaaaaaaaaa", "bbbbbbbbbbb") }
@@ -98,7 +98,7 @@ class ForkMixFilesTest {
     fun playTheseMixesQueuesTheFileInItsOrder() {
         ForkV2OverrideStore.install(load = { null }, save = {})
         ForkMixFiles.lookup = { null }
-        val text = File(specDir(), "automix/mixes/cinderella-drowning.vivimix.json").readText()
+        val text = mixFixture(specDir(), "cinderella-drowning").readText()
         ForkMixFiles.imported(text)
         assertEquals(listOf("rCwSRV7P6hY", "0X3Y2m9wj5c"), ForkMixFiles.lastImport!!.ids)
 
@@ -156,7 +156,7 @@ class ForkMixFilesTest {
         ForkMixFiles.saveAs = { n, t, done -> name = n; out = t; done(true) }
         runBlocking { ForkMixFiles.exportNow("ppppppppppp", "qqqqqqqqqqq") }
         assertTrue(out!!.contains("\"title\": \"Song ppppppppppp\""), out)
-        assertEquals("songppppppppppp-songqqqqqqqqqqq.vivimix.json", name)
+        assertEquals("songppppppppppp-songqqqqqqqqqqq.json", name)
     }
 
     /** Audit 2026-11-26 3a #7: a cancelled lookup cancels Play these mixes; it had queued the fallbacks anyway. */
@@ -186,10 +186,16 @@ class ForkMixFilesTest {
     /** The extension's spec/: RULEBOOK_SPEC, else /spec. Missing fails locally and is skipped on CI. */
     private fun specDir(): File {
         val dir = File(System.getenv("RULEBOOK_SPEC")?.takeIf { it.isNotBlank() } ?: "/spec")
-        if (!File(dir, "automix/mixes/cinderella-drowning.vivimix.json").isFile) {
+        if (runCatching { mixFixture(dir, "cinderella-drowning") }.isFailure) {
             org.junit.Assume.assumeTrue("the rulebook spec is not mounted on CI; skipped there", System.getenv("CI") != "true")
             fail("the extension's spec is not at $dir (set RULEBOOK_SPEC, or mount it at /spec): no automix/mixes/ there")
         }
         return dir
     }
+
+    /** The spec's mix file named [stem], whatever its `.json` name ends in (mix files are plain `.json`, the user 2026-11-26). */
+    private fun mixFixture(spec: File, stem: String): File =
+        File(spec, "automix/mixes").listFiles().orEmpty()
+            .filter { it.isFile && it.name.startsWith("$stem.") && it.name.endsWith(".json", ignoreCase = true) }
+            .minByOrNull { it.name.length } ?: error("no $stem mix file in $spec/automix/mixes")
 }

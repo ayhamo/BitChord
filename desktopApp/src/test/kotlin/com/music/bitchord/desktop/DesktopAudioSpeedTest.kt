@@ -133,6 +133,85 @@ class DesktopAudioSpeedTest {
         assertTrue(worst < 1e-3f, "1x output wanders off the input by up to $worst")
     }
 
+    /**
+     * A picked Sync or Glide's extremes (ForkPickedRate, editor.md §4, 2026-11-26): 0.71 and 1.41 come out as clean as
+     * the old window's ends, 0.9 and 1.25. Fed as the engine feeds it, in decoder-sized blocks: the right length, no step
+     * a join made (crackle), no dropout, a tone held at its level and pitch, and far faster than real time (no underrun).
+     */
+    @Test
+    fun `a picked Sync or Glide's widest rates stretch as cleanly as the old window's ends`() {
+        val music = music(seconds = 8f)
+        val sourceStep = maxStep(music, music.size)
+        val worst = HashMap<Float, Float>()
+        for (speed in floatArrayOf(0.9f, 1.25f, 0.71f, 1.41f)) {
+            val (out, count) = blocks(music, speed, 1_152)
+            val frames = count / channels
+            val want = music.size / channels / speed
+            assertTrue(abs(frames - want) < want * 0.02, "x$speed: $frames frames, wanted ${want.toInt()}")
+            val step = maxStep(out, count)
+            worst[speed] = step / sourceStep
+            assertTrue(step <= sourceStep * 1.5f, "x$speed: a ${step} step against the music's ${sourceStep} (a click at a join)")
+            var quiet = 0
+            var longest = 0
+            for (frame in 0 until frames) {
+                quiet = if (abs(out[frame * channels]) < 1e-4f) quiet + 1 else 0
+                longest = maxOf(longest, quiet)
+            }
+            assertTrue(longest < rate / 500, "x$speed: $longest silent frames in a row (a dropout)")
+
+            val (toneOut, toneCount) = blocks(tone(seconds = 3f, hz = 440.0), speed, 1_152)
+            assertPitch(toneOut, toneCount, 440.0)
+            var low = Float.MAX_VALUE
+            val window = rate / 100
+            var at = 4_000
+            while (at + window < toneCount / channels - 4_000) {
+                var peak = 0f
+                for (f in at until at + window) peak = maxOf(peak, abs(toneOut[f * channels]))
+                low = minOf(low, peak)
+                at += window
+            }
+            assertTrue(low > 0.8f * 0.9f, "x$speed: the tone dips to $low of 0.8 (windows cancelling at a join)")
+        }
+        // the new ends no worse than the old ones: within 10% of the old window's worst step
+        val old = maxOf(worst[0.9f]!!, worst[1.25f]!!)
+        assertTrue(worst[0.71f]!! <= old * 1.1f && worst[1.41f]!! <= old * 1.1f, "steps: $worst")
+
+        // real time: a minute of stereo at 1.41 takes well under a second here
+        val minute = music(seconds = 60f)
+        val started = System.nanoTime()
+        blocks(minute, 1.41f, 1_152)
+        val ms = (System.nanoTime() - started) / 1_000_000
+        assertTrue(ms < 6_000, "a minute at x1.41 took $ms ms to stretch")
+    }
+
+    /** [input] through the stretcher in blocks of [block] frames, the output joined. */
+    private fun blocks(input: FloatArray, speed: Float, block: Int): Pair<FloatArray, Int> {
+        val stretch = DesktopAudioSpeed(channels, rate).apply { this.speed = speed }
+        var out = FloatArray(input.size * 2)
+        var count = 0
+        var at = 0
+        while (at < input.size) {
+            val length = minOf(block * channels, input.size - at)
+            val piece = stretch.process(input.copyOfRange(at, at + length), length)
+            if (count + stretch.outputCount > out.size) out = out.copyOf((count + stretch.outputCount) * 2)
+            System.arraycopy(piece, 0, out, count, stretch.outputCount)
+            count += stretch.outputCount
+            at += length
+        }
+        return out to count
+    }
+
+    /** The largest jump between neighbouring frames of either channel, past the half-faded first window. */
+    private fun maxStep(samples: FloatArray, count: Int): Float {
+        var worst = 0f
+        for (frame in 2_000 until count / channels) {
+            for (channel in 0 until channels) {
+                worst = maxOf(worst, abs(samples[frame * channels + channel] - samples[(frame - 1) * channels + channel]))
+            }
+        }
+        return worst
+    }
+
     /** Several unrelated partials and a beat: enough for a wrong join to show. */
     private fun music(seconds: Float): FloatArray {
         val frames = (rate * seconds).toInt()

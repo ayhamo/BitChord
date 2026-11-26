@@ -48,6 +48,27 @@ class ForkAddonCopyProgressTest {
         assertNull(row(), "heard: nothing")
     }
 
+    /** Paused at the take-over: the copy is ready and takes over on play, with no moving bar; on play the clock starts again. */
+    @Test
+    fun pausedAtTheTakeOverTheCopyIsReadyWithNoMovingBar() {
+        ForkAddonCopyProgress.set("cur", Stage.SWITCHING, lossless = true)
+        ForkAddonCopyProgress.setPaused(true)
+        assertEquals("The lossless copy is ready: it takes over when the song plays", row()!!.text)
+        assertNull(row()!!.fill, "no bar while paused")
+        now += 60_000 // a long pause: still said
+        assertEquals("The lossless copy is ready: it takes over when the song plays", row()!!.text)
+        ForkAddonCopyProgress.setPaused(false)
+        assertEquals("Switching to the lossless copy…", row()!!.text, "the pause was not the take-over's time")
+        assertTrue(row()!!.fill!!.isNaN())
+        // an earlier stage keeps its moving bar while paused
+        ForkAddonCopyProgress.setPaused(true)
+        ForkAddonCopyProgress.set("cur", Stage.FETCHING, lossless = false)
+        assertEquals("Getting the addon's copy…", row()!!.text)
+        assertTrue(row()!!.fill!!.isNaN())
+        ForkAddonCopyProgress.set("cur", Stage.SWITCHING)
+        assertEquals("The addon's copy is ready: it takes over when the song plays", row()!!.text)
+    }
+
     @Test
     fun aLossyCopyIsTheAddonsCopy() {
         ForkAddonCopyProgress.set("cur", Stage.FETCHING, lossless = false)

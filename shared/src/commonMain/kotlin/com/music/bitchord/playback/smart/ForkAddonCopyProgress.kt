@@ -50,6 +50,33 @@ object ForkAddonCopyProgress {
 
     private val origin = TimeSource.Monotonic.markNow()
 
+    /**
+     * The listener paused (each app's play state, set through [setPaused]). A take-over waits for play: the PC's swap
+     * is held until its engine runs again, the phone's cut or cover until its player plays. So while paused the row
+     * says the copy is ready and takes over when the song plays, with no moving bar, rather than "Switching…" over a
+     * busy bar that never moved on (the extension's PC, 2026-11-26; editor.md §11 rule 6 [all], extension 66c05db:
+     * "While the song is paused the copy can't line up with a source that stands still (or, taken over before, the
+     * source has the sound again): 'The lossless copy is ready: it takes over when the song plays', with no bar
+     * moving").
+     */
+    @kotlin.concurrent.Volatile
+    var paused = false
+        private set
+
+    /**
+     * The play state moved. On play, a take-over still waiting starts its [SWITCH_MAX_MS] again: the pause was not
+     * the take-over's time (a long pause otherwise ran the clock out and hid the line as the swap began).
+     */
+    fun setPaused(isPaused: Boolean) {
+        if (paused == isPaused) return
+        paused = isPaused
+        if (!isPaused) {
+            val now = clockMs()
+            entries.update { map -> map.mapValues { (_, e) -> if (e.stage == Stage.SWITCHING) Entry(e.stage, e.lossless, now) else e } }
+        }
+        ForkAnalysisProgress.changed()
+    }
+
     /** Milliseconds on a monotonic clock; tests move it. */
     internal var clockMs: () -> Long = { origin.elapsedNow().inWholeMilliseconds }
 
@@ -116,20 +143,31 @@ object ForkAddonCopyProgress {
     }
 
     /** The row's line for the playing song [id], or null when its copy has nothing to say. */
-    fun lineFor(id: String?): String? {
+    fun lineFor(id: String?): String? = rowLine(id)?.text
+
+    /** A line of the row: its [text], and whether its bar moves ([busy]; a copy waiting for play has none). */
+    class Line(val text: String, val busy: Boolean)
+
+    /** [lineFor] with its bar: none while paused at the take-over, else a moving one. */
+    fun rowLine(id: String?): Line? {
         val e = id?.let { entries.value[it] } ?: return null
         val copy = if (e.lossless) "the lossless copy" else "the addon's copy"
         return when (e.stage) {
-            Stage.ASKING -> "Asking your addons…"
-            Stage.FETCHING -> "Getting $copy…"
-            Stage.LINING_UP -> "Lining up $copy with YouTube's…"
-            Stage.SWITCHING -> if (clockMs() - e.sinceMs > SWITCH_MAX_MS) null else "Switching to $copy…"
+            Stage.ASKING -> Line("Asking your addons…", true)
+            Stage.FETCHING -> Line("Getting $copy…", true)
+            Stage.LINING_UP -> Line("Lining up $copy with YouTube's…", true)
+            Stage.SWITCHING -> when {
+                paused -> Line("${copy.replaceFirstChar { it.uppercase() }} is ready: it takes over when the song plays", false)
+                clockMs() - e.sinceMs > SWITCH_MAX_MS -> null
+                else -> Line("Switching to $copy…", true)
+            }
         }
     }
 
     /** Tests: start empty. */
     internal fun clear() {
         entries.value = emptyMap()
+        paused = false
     }
 
     private val LOSSLESS_PREFIXES = listOf("flac", "alac", "wav", "aiff", "pcm")

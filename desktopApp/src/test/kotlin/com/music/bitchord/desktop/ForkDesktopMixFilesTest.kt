@@ -15,7 +15,7 @@ class ForkDesktopMixFilesTest {
     fun aMixFileIsReadAndAnOversizedOneNeverIs() {
         val dir = Files.createTempDirectory("mixfiles")
         try {
-            val ok = dir.resolve("a.vivimix.json")
+            val ok = dir.resolve("a.json")
             assertTrue(ForkDesktopMixFiles.write(ok, "{\"mixes\":[]}"))
             assertEquals("{\"mixes\":[]}", assertIs<ForkDesktopMixFiles.Read.Text>(ForkDesktopMixFiles.read(ok)).text)
 

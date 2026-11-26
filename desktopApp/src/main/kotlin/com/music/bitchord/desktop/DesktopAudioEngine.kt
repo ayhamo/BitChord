@@ -1004,6 +1004,7 @@ class DesktopPlaybackEngine(
             forkSilence.reset() // fork: ForkSilentTail
             forkPulse.silence() // fork: the backdrop settles while nothing plays (ForkBackdropPulseMeter)
             if (paused && fadeRemaining > 0) publishBlend(playing = false)
+            ForkAddonCopyPc.paused(paused) // fork: a take-over waiting for play says so on the progress row (editor.md §11 rule 6)
             Thread.sleep(20)
             return
         }
@@ -1077,7 +1078,7 @@ class DesktopPlaybackEngine(
     /** The beatmatch stretch [track] is actually rendered at — [DesktopTempoBuffer]'s clamp included. */
     private fun deckRate(track: Track): Double =
         // fork (PC-Continued be257dad): the planner's window both ways, as the shared planner plans it
-        if (track.tempo != null && !track.tempoDrained) track.tempoRate.coerceIn(MIN_INCOMING_RATE, MAX_INCOMING_RATE) else 1.0
+        if (track.tempo != null && !track.tempoDrained) track.tempoRate.coerceIn(ForkPickedRate.MIN, ForkPickedRate.MAX) else 1.0 // fork: as the tempo buffer clamps (ForkPickedRate)
 
     /** Source time each output frame of [track] covers: the listener's speed times the deck's. */
     private fun usPerFrame(track: Track): Double =
@@ -2248,7 +2249,7 @@ class DesktopPlaybackEngine(
         forkMarkSeam(plan, incoming.song, positionMs, duration) // fork
         forkPlanned(track, incoming.song, (incoming.decoder.durationUs ?: 0L) / 1_000, plan, duration) // fork: the mix popup's preview (ForkMixPreview)
         if (forkLoopConsider(track, incoming, positionMs, duration)) return // fork: a loop mix holds the blend (ForkDesktopLoopMix)
-        forkRampOutgoing(track, com.music.bitchord.playback.smart.automixv2.ForkV2Automix.outgoingRampRate(plan, positionMs / 1_000.0)) // fork: an Automix v2 blend speeds the outgoing song up beat by beat
+        forkRampOutgoing(track, com.music.bitchord.playback.smart.automixv2.ForkV2Automix.outgoingRampRate(plan, positionMs / 1_000.0), plan) // fork: an Automix v2 blend speeds the outgoing song up beat by beat
 
         if (plan.blocked) return
         // fork (PC-Continued 18b6b3ae): a tail already gone silent starts the mix now (ForkSilentTail)
@@ -2322,7 +2323,7 @@ class DesktopPlaybackEngine(
         } else null
         // fork: was coerceAtLeast(1.0); a rate within FORK_TEMPO_UNITY of 1 is 1, or a deck that got no
         // stretcher would never read as eased out and stay on its buffer for the whole song
-        incoming.tempoRate = plan.incomingPlaybackRate.coerceIn(MIN_INCOMING_RATE, MAX_INCOMING_RATE)
+        incoming.tempoRate = ForkPickedRate.clamp(plan.incomingPlaybackRate, plan) // fork: a picked Sync or Glide past 0.9..1.25 (ForkPickedRate)
             .let { if (kotlin.math.abs(it - 1.0) <= FORK_TEMPO_UNITY) 1.0 else it }
         incoming.tempoDrained = false // fork
         incomingSourceFrames = 0.0
@@ -2334,7 +2335,7 @@ class DesktopPlaybackEngine(
         outgoingFilter.flush()
         incomingFilter.flush()
         ForkDesktopV2.arm(plan) // fork: the Automix v2 shelves start clean
-        current?.let { forkRampOutgoing(it, ForkDesktopV2.outgoingRateAtStart(plan)) } // fork: at its full speed-up (or a glide's first rate) from the mix on
+        current?.let { forkRampOutgoing(it, ForkDesktopV2.outgoingRateAtStart(plan), plan) } // fork: at its full speed-up (or a glide's first rate) from the mix on
         blendActive = true
     }
 
@@ -2502,7 +2503,7 @@ class DesktopPlaybackEngine(
      * step, which may be under 1), or, with null, eases a deck sped up here back to its own tempo the
      * way a promoted deck is (an abandoned mix).
      */
-    private fun forkRampOutgoing(track: Track, rate: Double?) {
+    private fun forkRampOutgoing(track: Track, rate: Double?, plan: TransitionPlan? = null) {
         if (rate == null) {
             if (forkRampedDeck !== track) return
             forkRampedDeck = null
@@ -2521,7 +2522,7 @@ class DesktopPlaybackEngine(
             track.tempoDrained = false
         }
         track.tempoEaseStep = 0.0
-        track.tempoRate = rate.coerceIn(MIN_INCOMING_RATE, MAX_INCOMING_RATE)
+        track.tempoRate = ForkPickedRate.clamp(rate, plan) // fork: a picked Sync or Glide past 0.9..1.25 (ForkPickedRate)
         forkRampedDeck = track
     }
 
@@ -2531,10 +2532,10 @@ class DesktopPlaybackEngine(
      * buffer [readIncoming] already reads it through. Each buffer takes the rate at its next push.
      */
     private fun forkGlideDecks(outgoing: Track, incoming: Track?, rates: DoubleArray) {
-        if (kotlin.math.abs(outgoing.tempoRate - rates[0]) > FORK_TEMPO_UNITY || outgoing.tempo == null) forkRampOutgoing(outgoing, rates[0])
+        if (kotlin.math.abs(outgoing.tempoRate - rates[0]) > FORK_TEMPO_UNITY || outgoing.tempo == null) forkRampOutgoing(outgoing, rates[0], activePlan)
         if (incoming != null) {
             incoming.tempoEaseStep = 0.0
-            incoming.tempoRate = rates[1].coerceIn(MIN_INCOMING_RATE, MAX_INCOMING_RATE).let { if (kotlin.math.abs(it - 1.0) <= FORK_TEMPO_UNITY) 1.0 else it }
+            incoming.tempoRate = ForkPickedRate.clamp(rates[1], activePlan).let { if (kotlin.math.abs(it - 1.0) <= FORK_TEMPO_UNITY) 1.0 else it }
         }
     }
 

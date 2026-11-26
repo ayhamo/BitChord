@@ -91,6 +91,7 @@ internal object ForkAddonCopyPc {
      * mix, or closed by a transition).
      */
     fun engineStep(crossing: String?, armed: String?, waiting: String?, nowNs: Long = System.nanoTime()) {
+        ForkAddonCopyProgress.setPaused(false)
         val w = watch ?: return
         val queuedAt = w.queuedAtNs ?: return
         val pending = w.songId == crossing || w.songId == armed || w.songId == waiting
@@ -102,6 +103,12 @@ internal object ForkAddonCopyPc {
             }
         }
     }
+
+    /**
+     * Audio thread, while nothing plays ([paused]: the listener's pause; false: no track); [engineStep] while it plays.
+     * The take-over waits for play, and the row says so ([ForkAddonCopyProgress.setPaused]).
+     */
+    fun paused(paused: Boolean) = ForkAddonCopyProgress.setPaused(paused)
 
     /** The audio thread drains its commands every block (20 ms while paused): a queued copy not pending by then was not crossed in. */
     internal const val UNSEEN_MS = 1_500L

@@ -1098,6 +1098,7 @@ class PlaybackService : MediaLibraryService() {
             // pause the listener asked for from one another app imposed, and
             // [Player] does not keep the answer around to be asked later.
             partySync?.onPlayWhenReadyChanged(playWhenReady, reason)
+            com.music.bitchord.fork.ForkAddonCopyPhone.playWhenReady(playWhenReady) // fork: a take-over waiting for play says so on the progress row (editor.md §11 rule 6)
         }
 
         /**

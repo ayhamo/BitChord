@@ -274,7 +274,7 @@ object ForkMixFiles {
             return
         }
         val one = if (n == 1) entries.first { ForkV2MixFile.writable(listOf(it)) == 1 } else null
-        val fname = (if (one != null) "${slug(one.from.label)}-${slug(one.to.label)}" else "vivimusic-mixes-${LocalDate.now(ZoneOffset.UTC)}") + ".vivimix.json"
+        val fname = (if (one != null) "${slug(one.from.label)}-${slug(one.to.label)}" else "mixes-${LocalDate.now(ZoneOffset.UTC)}") + ".json" // plain .json, read by its content (mix-file.md rules 1 and 8, extension 45841b0)
         write(fname, ForkV2MixFile.write(entries)) { ok ->
             when (ok) {
                 true -> status = "Exported $n mix${if (n == 1) "" else "es"} as $fname."

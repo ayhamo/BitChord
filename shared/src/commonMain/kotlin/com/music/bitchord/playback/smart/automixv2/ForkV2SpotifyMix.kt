@@ -7,8 +7,7 @@ import kotlin.math.pow
  * Fork: a Spotify mix export imported as it is (the extension's spec/automix/spotify-mixes.md): `"spotify-mix-export"`
  * version 3, read from Spotify's mixed playlists with each song's YouTube id in `youtubeVideoId`. Each Spotify mix
  * becomes a `custom` override, its window in seconds only (editor.md §6), and Play these mixes queues the playlist's
- * tracks in order. The owner asked for the standard export rather than a converted mix file ("i told u i want stanrded
- * one, not vivimix", 2026-11-25).
+ * tracks in order. The owner asked for Spotify's standard export as it is rather than a converted mix file (2026-11-25).
  *
  * A port of automix.js readSpotifyMixes and spotifyOverride; the messages are the spec's, word for word.
  */

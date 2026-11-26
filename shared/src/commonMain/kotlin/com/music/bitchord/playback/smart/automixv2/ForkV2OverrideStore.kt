@@ -234,7 +234,8 @@ object ForkV2OverrideStore {
 
     /**
      * The old lines as overrides, keyed "a>b", read as ForkMixPicks.load read them: a bad line is
-     * skipped, a loop or fade pick had no length, a filter mix at most 8 bars, lengths 4 to 32.
+     * skipped, a loop or fade pick had no length, lengths 4 to 32. A filter pick keeps its length: it was cut to 8 bars
+     * before 2026-11-26, when a picked filter mix's length became the user's (editor.md §6 [all], ForkV2Planner.filterMix).
      */
     internal fun legacyPicks(saved: String?): List<Pair<String, ForkV2MixOverride>> {
         val out = LinkedHashMap<String, ForkV2MixOverride>()
@@ -245,7 +246,6 @@ object ForkV2OverrideStore {
             val style = parts[1].takeIf { it in LEGACY_STYLES }
             var bars = parts[2].toIntOrNull()?.takeIf { it in LEGACY_BARS }
             if (style == "loop" || style == "crossfade") bars = null
-            if (style == "filter" && bars != null && bars > LEGACY_FILTER_MAX_BARS) bars = LEGACY_FILTER_MAX_BARS
             val pick = LinkedHashMap<String, Any?>()
             pick["style"] = style
             if (bars != null) pick["bars"] = bars
@@ -259,7 +259,6 @@ object ForkV2OverrideStore {
 
     private val LEGACY_STYLES = setOf("loop", "blend", "filter", "crossfade")
     private val LEGACY_BARS = listOf(4, 8, 16, 32)
-    private const val LEGACY_FILTER_MAX_BARS = 8
 
     @OptIn(kotlin.time.ExperimentalTime::class)
     private fun nowMs(): Long = kotlin.time.Clock.System.now().toEpochMilliseconds()

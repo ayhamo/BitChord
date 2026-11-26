@@ -56,8 +56,9 @@ import kotlinx.coroutines.withContext
  * Fork: one song's canvas in the phone player's song menu (canvas.md §15, Prism's `PlayerOptions`
  * and `CanvasSongSheets`; drawn by `ForkPlayerMenuRows`), in the menu's own rows:
  *
- * - a switch per source for this song: "Music video canvas", "Spotify canvas", "Animated cover",
- *   each while its source is on and the song has it (or it was switched off for it); with both
+ * - a switch per source for this song: "Music video on this song", "Spotify canvas on this song",
+ *   "Animated cover on this song", each with its line saying the menu's switch is for all songs (§15
+ *   rule 11; there is no per-song dialog here, so no "This song only" title), each while its source is on and the song has it (or it was switched off for it); with both
  *   loops there only the one showing reads On, and turning the other on makes it the song's;
  * - "Pick another part": the part playing and up to 4 others, by their time in the video;
  * - "Pick another video": YouTube's search for the song as found (at most 10, none turned away),
@@ -96,6 +97,7 @@ internal fun ForkCanvasMenuRows(song: Song, accent: Color, onDone: () -> Unit) {
             label = ForkCanvasChoices.switchTitle(source),
             value = if (checked) "On" else "Off",
             accent = accent,
+            description = ForkCanvasChoices.switchNote(source), // §15 rule 11: the menu's switch is for all songs
         ) { ForkCanvasChoices.toggle(song.videoId, source, rows) }
     }
     switchRow(ForkCanvasRules.Source.YOUTUBE_MUSIC_VIDEO, rows.loopSwitch, rows.loopChecked)

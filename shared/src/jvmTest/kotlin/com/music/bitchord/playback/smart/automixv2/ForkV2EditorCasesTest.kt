@@ -315,7 +315,7 @@ class ForkV2EditorCasesTest {
         fun key(k: String) = ForkV2Json.write(ForkV2OverrideStore.overrides.value[k]!!.toJson().filterKeys { it != "savedAt" })
         assertEquals("""{"v":1,"preset":"loop","engine":3}""", key("a>b"))
         assertEquals("""{"v":1,"bars":8,"family":"blend","engine":3}""", key("c>d"))
-        assertEquals("""{"v":1,"bars":8,"family":"filter","engine":3}""", key("e>f"))
+        assertEquals("""{"v":1,"bars":32,"family":"filter","engine":3}""", key("e>f")) // a picked filter length is kept (editor.md §6, 2026-11-26)
         assertEquals("""{"v":1,"beatMatch":"off","engine":3}""", key("g>h"))
         assertEquals("""{"v":1,"bars":4,"engine":3}""", key("i>j"))
     }
@@ -464,14 +464,51 @@ class ForkV2EditorCasesTest {
         assertNotNull(glide.glide, "Glide asks for the glide even under 4%")
     }
 
+    /** Sync or Glide picked beat-matches however far apart the tempos (editor.md §4, ruled 2026-11-26 [all]); Auto keeps Automix's limits. */
     @Test
-    fun syncOutOfRangePlaysWithoutBeatMatchAndSaysWhy() {
-        val p = plan(v3(), ForkV2PlannerTest.song("a", 120.0, 200.0, 0.9), ForkV2PlannerTest.song("b", 133.2, 180.0, 0.9), ov("""{"beatMatch":"sync","bars":8}"""))
-        assertEquals("crossfade", p.style)
-        assertFalse(p.fallback)
-        assertEquals(16.0, p.durationSec, 1e-9) // 8 bars of the playing song
-        val w = p.warnings!!
-        assertTrue(w[0].startsWith("tempos 11% apart: Sync stretches at most 8%"), w[0])
+    fun syncOrGlidePickedBeatMatchesHoweverFarApartTheTempos() {
+        for (v in 1..3) for (pair in listOf(100.0 to 111.0, 100.0 to 125.0, 128.0 to 95.0)) {
+            for (bm in listOf("sync", "glide")) {
+                val a = pair.first
+                val p = plan(ForkV2Planner.Settings().also { it.version = v }, ForkV2PlannerTest.song("a", a, 200.0, 0.9), ForkV2PlannerTest.song("b", pair.second, 200.0, 0.9),
+                    ov("""{"preset":"smooth","beatMatch":"$bm","bars":8}"""))
+                assertEquals("blend", p.style, "v$v $pair $bm: ${p.reason}")
+                assertFalse((p.warnings ?: emptyList()).joinToString(" ").contains("without beat match"), "$pair $bm")
+                assertTrue(p.durationSec.isFinite() && p.durationSec > 0 && p.rate.isFinite() && p.rate > 0, "$pair $bm")
+                assertTrue(p.mixOutTrackTime + 8 * 4 * 60 / a <= 200 - 0.3 + 1e-6, "$pair $bm")
+                if (bm == "glide") assertTrue((p.glide?.q ?: 0.0) > 0, "$pair glide")
+            }
+        }
+        val auto = plan(v3(), ForkV2PlannerTest.song("a", 100.0, 200.0, 0.9), ForkV2PlannerTest.song("b", 111.0, 200.0, 0.9), ov("""{"preset":"smooth","bars":8}"""))
+        assertTrue((auto.warnings ?: emptyList()).joinToString(" ").contains("without beat match"), "${auto.warnings}")
+    }
+
+    /** A length picked on a weak grid is kept and plays without beat match; Auto alone still shortens (editor.md §6, ruled 2026-11-26 [all]). */
+    @Test
+    fun aLengthPickedOnAWeakGridIsKeptWithoutBeatMatch() {
+        val b = ForkV2PlannerTest.song("b", 120.0, 200.0, 0.9)
+        for (conf in listOf(0.3, 0.5)) {
+            val p = plan(v3(), ForkV2PlannerTest.song("a", 120.0, 200.0, conf), b, ov("""{"style":"blend","bars":16}"""))
+            assertEquals("crossfade", p.style, "conf $conf")
+            assertEquals(32.0, p.durationSec, 1e-6)
+            assertTrue((p.warnings ?: emptyList()).joinToString(" ").contains("the beat grid is too weak to beat-match 16 bars: plays without beat match"), "${p.warnings}")
+        }
+        // a length the grid can hold still beat-matches
+        assertEquals("blend", plan(v3(), ForkV2PlannerTest.song("a", 120.0, 200.0, 0.5), b, ov("""{"style":"blend","bars":8}""")).style)
+        // with no length picked, Automix's own rule: shortened
+        val auto = v3().also { it.bars = 16 }
+        assertEquals(4, plan(auto, ForkV2PlannerTest.song("a", 120.0, 200.0, 0.3), b, null).bars)
+    }
+
+    /** A filter mix picked with a length plays it; Automix's own keeps its 8-bar cap (editor.md §6, ruled 2026-11-26 [all]). */
+    @Test
+    fun aFilterMixPickedWithALengthPlaysIt() {
+        val a = ForkV2PlannerTest.song("a", 120.0, 200.0, 0.9)
+        val b = ForkV2PlannerTest.song("b", 120.0, 200.0, 0.9)
+        val p = plan(v3(), a, b, ov("""{"style":"filter","bars":16}"""))
+        assertEquals("filter", p.style)
+        assertEquals(16, p.bars)
+        assertEquals(4, plan(v3(), a, b, ov("""{"style":"filter","bars":4}""")).bars)
     }
 
     @Test
