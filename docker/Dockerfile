@@ -1,5 +1,5 @@
 # Build image for the BitChord fork: JDK 17 + Android SDK, NDK and CMake.
-# Versions follow the project: compileSdk 37, AGP 8.10.1 (build-tools 35, NDK 27), CMake 3.22.1.
+# Versions follow the project: compileSdk 37 (shared, sharedUi: 36), AGP 8.10.1 (build-tools 35, NDK 27), CMake 3.22.1.
 FROM eclipse-temurin:17-jdk
 
 RUN apt-get update && apt-get install -y --no-install-recommends unzip curl git \
@@ -19,5 +19,9 @@ RUN yes | sdkmanager --licenses > /dev/null \
     # AGP only resolves compileSdk 37 ("android-37.0" on disk) when platform-tools is installed too.
     && sdkmanager --install "platform-tools" "platforms;android-37.0" "build-tools;35.0.0" \
        "ndk;27.0.12077973" "cmake;3.22.1" > /dev/null
+
+# shared and sharedUi compile against 36: without it in the image every build downloads it again.
+# Its own layer, so the large one above is not fetched again.
+RUN yes | sdkmanager --install "platforms;android-36" > /dev/null
 
 WORKDIR /work

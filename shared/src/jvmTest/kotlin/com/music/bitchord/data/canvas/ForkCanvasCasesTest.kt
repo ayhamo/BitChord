@@ -213,7 +213,6 @@ class ForkCanvasCasesTest {
             "appleScore", "appleRank" -> skip(g, "run in app ForkAppleCanvasCasesTest against AppleMusicCanvas.score")
             // The spec's anonymous pathfinder `canvas` answer (4.5, extension 3ad093a): not ported, the rule is
             // turning login first (2026-11-24: Spotify no longer gives a canvas without one).
-            "spotifyCanvas" -> skip(g, "anonymous pathfinder canvas not ported; the rule is becoming login first")
             "appleToken" -> {
                 val jwts = c.arr("tokens").map { jwt((it as JsonObject)["header"], it["payload"]) }
                 val rejected = (c["rejected"] as? JsonArray).orEmpty().map { jwts[Math.round(num(it)).toInt()] }.toSet()
@@ -241,6 +240,10 @@ class ForkCanvasCasesTest {
             "spotifyMedia" -> {
                 val got = ForkSpotifyCanvasRules.trusted(c.str("url"))
                 check(g, c, got == (want as JsonPrimitive).booleanOrNull, got)
+            }
+            "spotifyCanvas" -> {
+                val got = ForkAnonymousSpotifyCanvas.canvasOf(c["answer"] as? JsonObject)
+                check(g, c, got == (want as? JsonPrimitive)?.contentOrNull, got)
             }
             "spotifyTotp" -> {
                 val got = ForkSpotifyCanvasRules.totp(c.lng("nowMs"))
@@ -431,12 +434,9 @@ class ForkCanvasCasesTest {
                 val got = ForkBestParts.snap(i.lng("targetMs"), i.arr("lineStarts").map { Math.round(num(it)) }, tempo)
                 check(g, c, got == Math.round(num(want)), got)
             }
-            // §14 rule 3: when the Best part button shows (Prism's BestPartButton.shows).
-            "bestPartButton" -> {
-                val i = c.obj("input")
-                val got = ForkBestParts.shows(i.lng("atMs"), i.lng("startMs"), i.lng("knownAtMs"))
-                check(g, c, got == (want as JsonPrimitive).booleanOrNull, got)
-            }
+            // §14 rule 3: when the Best part button shows. Upstream's own, not ours: v1.10's Best Part
+            // pill (`BestPartPill`) is the button, with its own window (while the part is ahead and unheard).
+            "bestPartButton" -> skip(g, "upstream's own, not ours: v1.10's BestPartPill decides when it shows")
             // §15 rules 1, 3, 5, 8: which of the song menu's canvas rows show.
             "songMenu" -> {
                 val i = c.obj("input")

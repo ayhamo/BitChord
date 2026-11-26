@@ -166,6 +166,9 @@ object ForkV2BeatGrid {
 
     /** normalizeTempo: the beat interval folded into 70-180 BPM. */
     internal fun normalizeInterval(beatIntervalSec0: Double): Double {
+        // 0, a negative, an infinite or a subnormal interval never folds into 70-180 (the bpm stays 0, infinite or
+        // negative) and looped forever: no tempo, as NaN is
+        if (!(beatIntervalSec0 > 0) || !beatIntervalSec0.isFinite() || !(60 / beatIntervalSec0).isFinite()) return Double.NaN
         var beatIntervalSec = beatIntervalSec0
         var bpm = 60 / beatIntervalSec
         while (bpm < 70) {

@@ -202,5 +202,5 @@ internal fun DesktopCanvasArtwork.toShared(): CanvasArtwork = CanvasArtwork(
     title = title,
     artist = artist,
     album = album,
-    source = when (source) { DesktopCanvasSource.SPOTIFY -> CanvasSource.SPOTIFY; DesktopCanvasSource.VIDEO -> CanvasSource.VIDEO; else -> CanvasSource.OTHER }, // fork: + VIDEO (a music-video loop)
+    source = when (source) { DesktopCanvasSource.SPOTIFY -> CanvasSource.SPOTIFY; DesktopCanvasSource.VIDEO -> CanvasSource.VIDEO; else -> com.music.bitchord.data.canvas.appleOrigin(CanvasSource.OTHER, url) }, // fork: + VIDEO (a music-video loop); an Apple-hosted clip is v1.10's APPLE
 )

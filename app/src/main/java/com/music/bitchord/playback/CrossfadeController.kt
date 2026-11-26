@@ -392,6 +392,7 @@ class CrossfadeController(
 
     /** The Automix plan the transition in flight was armed from, for the mix popup; null for a standard fade. */
     private var planInFlight: TransitionPlan? = null
+    private val forkLate = ForkLateEntry() // fork: B's late entry (mix-file.md rule 2)
 
     /** The last reason logged for the seek bar's Automix marker showing or not, so it logs on change. */
     private var lastMarkerVerdict = ""
@@ -631,6 +632,7 @@ class CrossfadeController(
     /** The player still coming off a beatmatch stretch after its blend finished, or null. */
     private var easing: ExoPlayer? = null
     private var easeRate = 1.0
+    private var forkEaseBase = 1f // fork: what an ease ends on, the listener's speed times the song's playlist speed (ForkSongSpeedRide)
     private var easeStep = 0.0
     private var easeStepMs = 0L
     private var easeNextAtMs = 0L
@@ -916,6 +918,40 @@ class CrossfadeController(
         if (phase != Phase.IDLE) bail()
     }
 
+    /** fork: the leaving side of a mix the listener paused ramps away instead of following the pause; see [forkListenerPause]. */
+    private var forkPauseBail = false
+
+    /**
+     * Fork: the listener's play/pause during a mix (playback.md "The queue during a mix" rule 5, the extension's
+     * e9697cc7). From the hand-over to the take-over a press means "pause" whatever the session player shows: the
+     * mix is called off at once and not marked, the leaving player ramps away over [BAIL_MS] rather than freezing
+     * with the pause (a paused blend used to hold both players and carry on at play), and the session player is
+     * left paused at the song and spot the mix had reached, the outgoing song's before the handoff, the incoming
+     * one's after it ([ForkMixPause.keep]); a loop mix settles there as for any of its bails. Called by the
+     * session's own pause and play before they act, [play] for a play with the session [playerPlaying] or not; true
+     * when the press paused a running mix ([ForkMixPause.pressPauses]: a play then is a pause, never released into
+     * play). An armed mix not yet heard bails as a pause always did; a sleep fade is the timer's, not a mix.
+     */
+    fun forkListenerPause(play: Boolean = false, playerPlaying: Boolean = true): Boolean {
+        val running = phase != Phase.IDLE && phase != Phase.SLEEP_FADE
+        if (!com.music.bitchord.playback.smart.automixv2.ForkMixPause.pressPauses(running, play, playerPlaying)) return false
+        val heard = phase == Phase.FADING || phase == Phase.BAILING || phase == Phase.LOOP_RUNNING
+        val keep = com.music.bitchord.playback.smart.automixv2.ForkMixPause.keep(heard, handedOff)
+        val session = if (handedOff) incoming else outgoing
+        Log.d(TAG, "paused by the listener during $phase: keeps $keep")
+        when {
+            phase == Phase.LOOP_ARMING || phase == Phase.LOOP_RUNNING -> loopBail("paused by the listener", settle = true)
+            phase == Phase.BAILING -> forkPauseBail = true
+            else -> {
+                forkPauseBail = keep != com.music.bitchord.playback.smart.automixv2.ForkMixPause.Keep.AS_IS
+                bail()
+            }
+        }
+        // (a hold at the end of the outgoing track is the spot the mix reached; [finish] has released it)
+        session?.playWhenReady = false
+        return true
+    }
+
     // ---- Ticker -------------------------------------------------------------
 
     private fun tick() {
@@ -926,11 +962,11 @@ class CrossfadeController(
         // pause button all get the same treatment for free. Which player follows
         // which flips at the handoff, halfway through the blend: before it the
         // incoming track shadows the session, after it the outgoing tail does.
-        if (phase == Phase.FADING || phase == Phase.BAILING) {
+        if ((phase == Phase.FADING || phase == Phase.BAILING) && !forkPauseBail) { // fork: !forkPauseBail, see forkListenerPause
             if (handedOff) {
                 outgoing?.playWhenReady = incoming?.playWhenReady ?: true
             } else {
-                outgoing?.playWhenReady?.let { incoming?.playWhenReady = it }
+                outgoing?.playWhenReady?.let { incoming?.playWhenReady = it && !forkLate.holding } // fork: && !holding (ForkLateEntry)
             }
         }
 
@@ -946,6 +982,7 @@ class CrossfadeController(
         expireMixPreview()
 
         if (easing != null && phase == Phase.IDLE) driveEase()
+        if (easing == null && phase == Phase.IDLE) ForkSongSpeedRide.hold(active()) // fork: a song's playlist speed between mixes (ForkSongSpeedRide)
 
         when (phase) {
             Phase.IDLE -> considerAutoTransition()
@@ -1331,6 +1368,7 @@ class CrossfadeController(
         // starts that much earlier, from arming.
         val beatMs = (plan.beatSeconds * 1000).roundToLong()
         val rampMs = if (beatMs > 0L) rampStepsFor(plan.outgoingPlaybackRate) * beatMs else 0L
+        plan.forkV2?.let { ForkV2Ride.primeAhead(it, (player.currentPosition + filters.incomingLeadMs()) / 1000.0, filters) } // fork: an echo out starts keeping its beat before arming, for a sink seconds ahead
         if (remaining > ARM_LEAD_MS + rampMs) return
 
         begin(
@@ -1523,7 +1561,7 @@ class CrossfadeController(
         incomingCueTimeMs = cueTimeMs.coerceAtLeast(0L)
         incomingPlaybackRate = playbackRate
         outgoingPlaybackRate = outgoingRate
-        rampSteps = if (beatMs > 0L) rampStepsFor(outgoingRate) else 0
+        rampSteps = if (beatMs > 0L) rampStepsFor(outgoingRate / ForkSongSpeedRide.rampFrom(out)) else 0 // fork: / rampFrom (a song at its playlist speed is there already)
         rampStepMs = beatMs
         rampStartMs = endMs - fade - rampSteps * beatMs
         rampStep = 0
@@ -1735,6 +1773,7 @@ class CrossfadeController(
         } else {
             0f
         }
+        planInFlight?.forkV2?.let { ForkV2Ride.prime(it, (out.currentPosition + tracks.outgoingLeadMs()) / 1000.0, tracks) } // fork: an echo out keeps the beat before its catch (before the ride, which may catch)
         rideFilters(0f, outgoingAt.takeIf { it > 0f }?.coerceAtMost(1f))
         if (rampSteps > 0) rampOutgoing(out)
 
@@ -1761,7 +1800,8 @@ class CrossfadeController(
         val into = incoming ?: return bail()
 
         into.volume = 0f
-        into.playWhenReady = true
+        into.playWhenReady = forkLate.begin(planInFlight, out.currentPosition.toDouble()) // fork: was true; B's late entry holds it (ForkLateEntry)
+        forkLateHold() // fork: and keeps its sink silent until then
         fadeStartedAt = SystemClock.elapsedRealtime()
         nudgeUntil = 0L
         lockCount = 0
@@ -1809,6 +1849,7 @@ class CrossfadeController(
         visualEndSeconds: Double? = null,
     ) {
         if (handedOff) return
+        if (forkLate.release()) forkLateStarted(into) // fork: a hand-over before B's late entry (A ran out, a skip) starts B now
         // AutoPlay may have appended to the queue since the standby was loaded
         // with a copy of it — during arming or the first half of the blend,
         // both of which the outgoing player owned — and those tracks would
@@ -1894,6 +1935,40 @@ class CrossfadeController(
         Log.d(TAG, "reconciled ${appended.size} appended item(s) onto the incoming player")
     }
 
+    /**
+     * Fork: B's player starts after its late entry's hold ([ForkLateEntry]); the phase lock waits for its clock to
+     * settle off the start, as it does at [startFade], and drops what it sampled while B was still.
+     */
+    private fun forkLateStarted(into: ExoPlayer) {
+        into.playWhenReady = true
+        forkLateShelf?.lateOpen() // its sink rises to the curve over 10 ms (ForkMixShelf.lateOpen)
+        lockQuietUntil = SystemClock.elapsedRealtime() + LOCK_START_MS
+        lockCount = 0
+    }
+
+    /**
+     * Fork: the incoming sink's shelf while B's late entry holds it (mix-file.md rule 2: B's gain is 0 until the delay
+     * ends, a player started early included), shut by [forkLateHold] and opened by [forkLateStarted]; the shelf stays
+     * with B's player through the handoff.
+     */
+    private var forkLateShelf: ForkMixShelf? = null
+
+    /**
+     * Fork: where a skip during B's late entry's wait puts B (mix-file.md rule 2): its mix-in, in ms; null with no wait
+     * under way or a mix-in at 0:00 (the plain skip's start). Read before [onSkipRequested] calls the mix off.
+     */
+    fun forkLateSkipMs(): Long? = if (forkLate.holding && !handedOff) incomingCueTimeMs.takeIf { it > 0L } else null
+
+    private fun forkLateHold() {
+        forkLateShelf?.lateOff()
+        forkLateShelf = null
+        if (!forkLate.holding) return
+        filters.forkEcho(handedOff) { s ->
+            s.lateHold()
+            forkLateShelf = s
+        }
+    }
+
     private fun effectiveFadeSpan(player: ExoPlayer): Long {
         val remainingIncoming = player.duration
             .takeIf { it != C.TIME_UNSET && it > 0L }
@@ -1929,7 +2004,8 @@ class CrossfadeController(
         // landing as an abrupt cut, which is precisely the failure a cued
         // transition is supposed to avoid.
         val span = effectiveFadeSpan(player)
-        val elapsed = (inClock.read(player) - incomingCueTimeMs).coerceAtLeast(0.0).toFloat()
+        val elapsed = forkLate.elapsed((inClock.read(player) - incomingCueTimeMs).coerceAtLeast(0.0), outClock.read(out), mediaRatio).toFloat() // fork: while B's late entry holds it, the blend runs on A's clock (ForkLateEntry)
+        if (forkLate.takeStart()) forkLateStarted(player) // fork: B's late entry starts
         // Advanced: [fadeMs] is outgoing time, and a stretched incoming track
         // covers `rate` times as much of its own timeline in it — unscaled, a
         // 4% stretch finished the blend 4% early and left the incoming drop
@@ -1967,6 +2043,7 @@ class CrossfadeController(
         val fall = mixFall(progress)
         player.volume = rise
         out.volume = if (ranOn(out)) 0f else fall
+        ForkV2Ride.volumes(planInFlight?.forkV2, player, out, ranOn(out)) // fork: an editor mix's effects fade in the sinks (ForkV2Ride)
         onBlendHeadroom(
             headroomFor(mixRise(outgoingAt), outgoingLevel(elapsed / wallSpan + tracks.outgoingLeadMs() / span.toFloat(), wallSpan)),
         )
@@ -1978,7 +2055,7 @@ class CrossfadeController(
         // song fading in — a second time on the player that is leaving.
         val visualEnd = wallSpan / 1000.0
         val visualTime = progress * wallSpan / 1000.0
-        if (!handedOff && (forkSkip.isSkipBlend() /* fork: see ForkCrossfadeSkip.isSkipBlend */ || progress >= render.handoffAt || (outRemaining != null && outRemaining <= HANDOFF_GUARD_MS))) {
+        if (!handedOff && (forkSkip.isSkipBlend() /* fork: see ForkCrossfadeSkip.isSkipBlend */ || (progress >= render.handoffAt && !forkLate.holding) /* fork: && !holding */ || (outRemaining != null && outRemaining <= HANDOFF_GUARD_MS))) {
             handOff(out, player, visualTime, visualEnd)
         }
         AutoMixVisualFeed.advance(visualGeneration, visualTime, visualEnd)
@@ -2003,8 +2080,9 @@ class CrossfadeController(
         // player's own silenced audio, so that player is kept until its tail
         // has been heard out.
         val tailDone = !render.echo || elapsed / wallSpan >= render.echoAt + render.echoTailMs / wallSpan
-        val done = (progress >= 1f && tailDone) || settingSwitchedOff
+        val done = (progress >= 1f && tailDone && ForkV2Ride.tailDone(planInFlight?.forkV2, tracks, elapsed - wallSpan)) || settingSwitchedOff // fork: && an editor mix's effect tails (ForkV2Ride)
         if (done) {
+            planInFlight?.forkV2?.let { ForkV2Ride.ended(it, progress) } // fork: its move counts at the blend's real end (ForkV2Moves)
             // A blend cut short before its midpoint still ends on the incoming
             // track — it is the one playing on, and what [finish] keeps.
             handOff(out, player)
@@ -2538,6 +2616,7 @@ class CrossfadeController(
     private var loopPlanKey: String? = null
     private var loopPlanned: LoopMix.Plan? = null
     private var forkLoopPlannedWhy: String? = null // fork: the cached plan's verdict, noted again on reuse (ForkMixPicks)
+    private val forkLoopReplay = ForkLoopReplay() // fork: the song playing again plans its loop mix again
 
     /** Why the pair gets no loop mix, for the log and the stats line; null when it does. */
     private var loopRefusal: String? = null
@@ -2562,15 +2641,8 @@ class CrossfadeController(
         forkLyrics.asked(id) // fork
         scope.launch(Dispatchers.IO) {
             val lines = runCatching { syncedLines(item, durationMs) }.getOrNull()
-            // Only line-synced lyrics say where a voice is; plain text says nothing about time.
-            val spans = lines?.takeIf { found -> found.count { it.timeMs > 0 } >= 4 }?.let { found ->
-                LoopMix.sungSpans(
-                    found.map { line ->
-                        val end = line.sungUntilMs ?: line.words.lastOrNull()?.endMs
-                        LoopMix.Line(line.timeMs, end, blank = line.isGap || line.text.isBlank())
-                    },
-                )
-            }
+            com.music.bitchord.playback.smart.automixv2.ForkV2SungLyrics.remember(id, lines) // fork: Automix v2's sung spans (versions.md "Where a song is sung")
+            val spans = com.music.bitchord.playback.smart.ForkLoopLyrics.spans(lines, item.mediaMetadata.title?.toString().orEmpty(), item.mediaMetadata.artist?.toString().orEmpty()) // fork: the baseline's loop spans (ForkLoopLyrics), was upstream's LoopMix.sungSpans
             lyricSpans[id] = LyricSpans(spans)
         }
     }
@@ -2627,7 +2699,7 @@ class CrossfadeController(
         val cached = loopPlanned
         // Kept while its loop is still far enough ahead to set up; a seek past
         // that plans again from the new playhead.
-        if (key == loopPlanKey && (cached == null || cached.out.loopStart * 1000 - player.currentPosition >= LOOP_MIN_LEAD_MS)) {
+        if (key == loopPlanKey && forkLoopReplay.keeps(player.currentPosition) /* fork: ForkLoopReplay */ && (cached == null || cached.out.loopStart * 1000 - player.currentPosition >= LOOP_MIN_LEAD_MS)) {
             noteLoopVerdict(pair, cached, forkLoopPlannedWhy) // fork: a refusal noted meanwhile (a fixed length, a pick) gives way to the plan again
             return cached
         }
@@ -2643,6 +2715,7 @@ class CrossfadeController(
             why = why,
         )
         loopPlanKey = key
+        forkLoopReplay.planned(player.currentPosition) // fork
         loopPlanned = plan
         val lyricsNote = "lyrics ${if (outLyrics.spans != null) "out" else "-"}/${if (inLyrics.spans != null) "in" else "-"}"
         forkLoopPlannedWhy = if (plan == null) "$why; $lyricsNote" else null // fork
@@ -2940,6 +3013,7 @@ class CrossfadeController(
 
     /** The mix played out: the incoming player is the song, the outgoing one is retired. */
     private fun finishLoop() {
+        com.music.bitchord.playback.smart.automixv2.ForkV2Moves.heardLoop() // fork: the loop mix played out (versions.md "No effect three times in a row")
         val session = loopSession
         Log.d(
             TAG,
@@ -3158,7 +3232,7 @@ class CrossfadeController(
         // The echo's dry gain is what silenced the outgoing track, and parking
         // it restores full level: silence the player first so the audio its
         // sink writes before the stop below can never be heard.
-        if (handedOff && render.echo) outgoing?.volume = 0f
+        if (handedOff && (render.echo || ForkV2Ride.echoed(planInFlight?.forkV2))) outgoing?.volume = 0f // fork: was render.echo; Automix v2's echo out too
         filters.open()
         filters.parkEchoes()
         onBlendHeadroom(1f)
@@ -3193,10 +3267,14 @@ class CrossfadeController(
         outgoing = null
         incoming = null
         handedOff = false
+        forkPauseBail = false // fork
         forkSkip.drop(ended = true) // fork
         outgoingItemIndex = C.INDEX_UNSET
         queuedItemCount = 0
         incomingCueTimeMs = 0L
+        forkLate.reset() // fork
+        forkLateShelf?.lateOff() // fork
+        forkLateShelf = null // fork
         incomingPlaybackRate = 1.0
         outgoingPlaybackRate = 1.0
         rampSteps = 0
@@ -3284,6 +3362,7 @@ class CrossfadeController(
         }
 
         override fun forkShelves(incoming: Boolean, lowDb: Float, highDb: Float, lowPassHz: Float, highPassHz: Float) { if (if (incoming) aimIncoming else aimOutgoing) filters.forkShelves(incoming == handedOff, lowDb, highDb, lowPassHz, highPassHz) } // fork: by track, as incoming()/outgoing()
+        override fun forkEcho(incoming: Boolean, aim: (ForkMixShelf) -> Unit) { if (if (incoming) aimIncoming else aimOutgoing) filters.forkEcho(incoming == handedOff, aim) } // fork: by track, as forkShelves
     }
 
     /**
@@ -3397,6 +3476,7 @@ class CrossfadeController(
      * just as a dry signal would.
      */
     private fun outgoingLevel(progress: Float, wallSpan: Float): Float {
+        planInFlight?.forkV2?.let { t -> ForkV2Ride.level(t, progress)?.let { return it } } // fork: Automix v2's echo out (its fader stays up for the repeats)
         if (!render.echo) return mixFall(progress)
         val sinceEcho = (progress - render.echoAt.toFloat()) * wallSpan
         val repeats = if (sinceEcho > 0f) sinceEcho / (render.echoSecondsF * 1000f) else 0f
@@ -3874,10 +3954,12 @@ class CrossfadeController(
      * Plain speed changes, like [rampOutgoing]'s, not [setPlaybackSpeedClickless]:
      * its gain notch on every beat was the audible part, heard as a pump.
      */
-    private fun beginEase(player: ExoPlayer, rate: Double, analysis: TrackAnalysis) {
+    private fun beginEase(player: ExoPlayer, rate0: Double, analysis: TrackAnalysis) { // fork: rate0
+        forkEaseBase = ForkSongSpeedRide.easeBase(player) // fork: the ease ends on the song's playlist speed (ForkSongSpeedRide)
+        val rate = rate0 * AppSettings.playbackSpeed.value / forkEaseBase // fork
         val stretch = rate - 1.0
         if (abs(stretch) < EASE_DONE) {
-            player.setPlaybackSpeed(AppSettings.playbackSpeed.value)
+            player.setPlaybackSpeed(forkEaseBase) // fork: was AppSettings.playbackSpeed.value
             return
         }
         val beat = when {
@@ -3894,7 +3976,7 @@ class CrossfadeController(
         easeNextAtMs = player.currentPosition + easeStepMs
         easing = player
         // Drops any phase-lock nudge still in flight back onto the plain stretch.
-        player.setPlaybackSpeed((AppSettings.playbackSpeed.value * rate).toFloat())
+        player.setPlaybackSpeed((forkEaseBase * rate).toFloat()) // fork: forkEaseBase
     }
 
     /**
@@ -3922,7 +4004,7 @@ class CrossfadeController(
             endEase(clickless = false)
             return
         }
-        player.setPlaybackSpeed((AppSettings.playbackSpeed.value * easeRate).toFloat())
+        player.setPlaybackSpeed((forkEaseBase * easeRate).toFloat()) // fork: forkEaseBase
         easeNextAtMs += easeStepMs
     }
 
@@ -3952,12 +4034,12 @@ class CrossfadeController(
         val player = easing ?: return
         easing = null
         if (clickless) {
-            setPlaybackSpeedClickless(player, AppSettings.playbackSpeed.value)
+            setPlaybackSpeedClickless(player, forkEaseBase) // fork: forkEaseBase
         } else {
             softSpeedJob?.cancel()
             softSpeedJob = null
             player.volume = 1f
-            player.setPlaybackSpeed(AppSettings.playbackSpeed.value)
+            player.setPlaybackSpeed(forkEaseBase) // fork: forkEaseBase
         }
     }
 

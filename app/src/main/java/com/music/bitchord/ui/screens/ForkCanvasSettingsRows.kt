@@ -99,10 +99,6 @@ internal fun SettingsGroupScope.forkArtistAndBestPartRows() {
             }
         }
     }
-    row(ForkBestParts.BUTTON_TITLE, "fork", "best part", "most replayed", "chorus", "skip", "seek") {
-        val on by ForkBestParts.button.collectAsStateWithLifecycle()
-        ForkFlagRow(Icons.Rounded.Star, ForkBestParts.BUTTON_TITLE, ForkBestParts.BUTTON_SUBTITLE, on, ForkBestParts::setButton)
-    }
 }
 
 private fun <T> next(all: List<T>, now: T): T = all[(all.indexOf(now) + 1) % all.size]

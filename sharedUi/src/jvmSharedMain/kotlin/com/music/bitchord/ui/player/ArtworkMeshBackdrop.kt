@@ -478,6 +478,7 @@ internal fun ArtworkMeshBackdrop(
                 ?: mesh.takeIf { currentIsOutgoing }
         }
     }
+    val forkShade = remember(shown, incoming, mesh) { ForkBrightTenth.extra(0.06f, ForkBrightTenth.p90Of((incoming ?: shown ?: mesh)?.image)) } // fork: a near-white sleeve's bright tenth down to mid grey (ForkBrightTenth)
     Canvas(
         modifier = modifier
             .fillMaxSize()
@@ -513,6 +514,7 @@ internal fun ArtworkMeshBackdrop(
                 ),
             ),
         )
+        if (forkShade > 0f) drawRect(Color.Black.copy(alpha = forkShade)) // fork: ForkBrightTenth, over the scrim above
     }
 }
 

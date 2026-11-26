@@ -48,6 +48,9 @@ class ForkV2Analysis {
     var subBassRatio = Double.NaN
     var bassCurve: Curve? = null
     var loudnessCurve: Curve? = null
+
+    /** The song's mean square every [ForkV2Sections.BIN_SEC] (evidence ev3), for its intro and outro the PC's way. */
+    var powerCurve: Curve? = null
     var chroma: DoubleArray? = null
     var chromaCurve: ChromaCurve? = null
 
@@ -116,6 +119,7 @@ class ForkV2Analysis {
         a.subBassRatio = subBassRatio
         a.bassCurve = bassCurve
         a.loudnessCurve = loudnessCurve
+        a.powerCurve = powerCurve
         a.chroma = chroma
         a.chromaCurve = chromaCurve
         a.stub = stub
@@ -175,13 +179,14 @@ class ForkV2Analysis {
             m["chromaCurve"] = c
         }
         loudnessCurve?.let { m["loudnessCurve"] = curve(it) }
+        powerCurve?.let { m["powerCurve"] = curve(it) }
         m["analysisVersion"] = analysisVersion
         return m
     }
 
     companion object {
         /** Bumped whenever the analysis changes: a saved one of another version is redone. */
-        const val VERSION = "ayham.3"
+        const val VERSION = "ayham.4" // ayham.4: the beats over the phone's 59 s spans (ForkBeatSpans), the phone's ayham.4
 
         private fun curve(c: Curve): Map<String, Any?> {
             val m = LinkedHashMap<String, Any?>()
@@ -289,11 +294,12 @@ class ForkV2Analysis {
             a.subBassRatio = ForkV2Json.num(m, "subBassRatio")
             a.bassCurve = curveOf(m["bassCurve"])
             a.loudnessCurve = curveOf(m["loudnessCurve"])
+            a.powerCurve = curveOf(m["powerCurve"])
             val chroma = ForkV2Json.nums(m["chroma"])
             a.chroma = if (chroma != null && chroma.size == 12) chroma else null
             a.chromaCurve = chromaCurveOf(m["chromaCurve"])
             a.analysisVersion = m["analysisVersion"] as String?
-            return a
+            return ForkV2BarPhase.apply(a) // on load, as the extension's withBarPhase (analysis-cases.md "The bar")
         }
 
         /** An analysis from its saved JSON text. */

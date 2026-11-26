@@ -129,10 +129,7 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
 
     override suspend fun canvasFor(song: Song): CanvasArtwork? = com.music.bitchord.fork.ForkCanvas.canvasFor(song) // fork: the cover clip at once; a Spotify backdrop follows (ForkCanvasSwitch.backdropFor)
 
-    override suspend fun bestPartMs(song: Song): Long? =
-        com.music.bitchord.ui.replay.year.BestParts.startFor(app, song)
-            .takeIf { it.source != com.music.bitchord.ui.replay.year.BestPartStart.Source.FALLBACK }
-            ?.startMs
+    override suspend fun bestPartMs(song: Song): Long? = com.music.bitchord.data.canvas.ForkBestParts.awaitStart(song.videoId) // fork: was BestParts.startFor (no "Your best part"); the fork's pick, worked out by ForkBestPartFollow
 
     @Composable
     override fun CanvasVideo(spec: CanvasVideoSpec, modifier: Modifier) = AndroidCanvasVideo(spec, modifier)

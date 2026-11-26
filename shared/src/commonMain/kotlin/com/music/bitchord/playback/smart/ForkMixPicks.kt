@@ -148,6 +148,8 @@ object ForkMixPicks {
      */
     fun loopRefusal(fromId: String, toId: String): String? {
         if (!active) return null
+        // a song at its playlist speed: no loop mix (spotify-mixes.md rule 10)
+        com.music.bitchord.playback.smart.automixv2.ForkSongSpeed.loopRefusal(fromId, toId)?.let { return it }
         val ov = ForkV2OverrideStore.get(fromId, toId) ?: return null
         return if (ov.loop()) null else PICKED_REASON
     }

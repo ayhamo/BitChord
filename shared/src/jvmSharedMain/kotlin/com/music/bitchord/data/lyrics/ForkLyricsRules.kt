@@ -8,7 +8,7 @@ import kotlin.math.max
  * pure functions, for the [view] rules BitChord builds: the early highlight (§2), the two offsets
  * (§3), duet sides (§5), instrumental gaps (§6) and which languages are romanized (§9). The panel
  * (`sharedUi`, `ForkLyricsView.kt`) calls them through one-line hooks; `ForkLyricsCasesTest` runs
- * the rulebook's 17 cases (`lyrics-cases.json`) against them.
+ * the rulebook's cases (`lyrics-cases.json`) against them.
  */
 object ForkLyricsRules {
 
@@ -171,7 +171,8 @@ object ForkLyricsRules {
      * §6.1, Metrolist's `buildLyricsListItems`: the intro is a gap when the first line starts at
      * [GAP_MIN_MS] or later, from 0 to the first start − 800; between lines a gap runs from the
      * latest end so far + 310 to the next start − 800 when the silence is [GAP_MIN_MS] or more.
-     * Each gap is returned with the index of the line it comes before.
+     * Each gap is returned with the index of the line it comes before. [starts] are the lines'
+     * [timelineStart]s (spec 0836435: a countdown ends when the voice comes in).
      */
     fun gapSpans(starts: List<Long>, ends: List<Long>): List<Gap> {
         if (starts.isEmpty()) return emptyList()
@@ -204,7 +205,7 @@ object ForkLyricsRules {
             if (line.isGap) return@forEachIndexed
             sung += line
             val marker = lines.getOrNull(index + 1)?.takeIf { it.isGap && it.timeMs > line.timeMs }?.timeMs
-            val nextStart = (index + 1 until lines.size).firstOrNull { !lines[it].isGap }?.let { lines[it].timeMs }
+            val nextStart = (index + 1 until lines.size).firstOrNull { !lines[it].isGap }?.let { timelineStart(lines[it]) }
             ends += when {
                 line.hasKnownEnd -> line.endMs
                 marker != null -> marker
@@ -212,7 +213,7 @@ object ForkLyricsRules {
             }
         }
         if (sung.isEmpty()) return lines
-        val gaps = gapSpans(sung.map { it.timeMs }, ends)
+        val gaps = gapSpans(sung.map(::timelineStart), ends)
         val out = ArrayList<LyricLine>(sung.size + gaps.size)
         var g = 0
         sung.forEachIndexed { k, line ->
@@ -229,6 +230,40 @@ object ForkLyricsRules {
     private fun unknownEnd(start: Long, nextStart: Long?): Long = when {
         nextStart != null && nextStart > start -> if (nextStart - start >= GAP_MIN_MS) start + UNKNOWN_END_MS else nextStart
         else -> start + UNKNOWN_END_MS
+    }
+
+    /**
+     * §6.1 (spec 0836435, Metrolist 5f58b4081 `LyricsRetiming.timelineStartMs`): where a line starts
+     * on the timeline, the earlier of its stamp and its first timed word (a word whose end is after
+     * its start). The gaps and [activeRows] read it, so a line whose words come in before its stamp
+     * (a TTML or LyricsPlus line whose `begin` is later than its first syllable) lights and ends a
+     * countdown with the voice. Upstream's enhanced LRC parser already starts a line there.
+     *
+     * A word stamped before the song (a negative start, a malformed sheet) is not a timed word: it
+     * pulled the line to before 0. Read once per line per frame by [activeRows], so no list is made.
+     */
+    fun timelineStart(line: LyricLine): Long {
+        var first = Long.MAX_VALUE
+        for (w in line.words) if (w.startMs >= 0L && w.endMs > w.startMs && w.startMs < first) first = w.startMs
+        return if (first == Long.MAX_VALUE) line.timeMs else minOf(line.timeMs, first)
+    }
+
+    // ---- §1.5 Drawn ahead of the sound -------------------------------------------------------
+
+    const val DISPLAY_LEAD_MIN_MS = 8.0
+    const val DISPLAY_LEAD_MAX_MS = 40.0
+
+    /**
+     * §1.5 (Mornye a422ffd1 `lyricsDisplayLead`): a frame reaches the screen about two refresh
+     * intervals after it is drawn, so playing lyrics are drawn for the position plus two refresh
+     * intervals, kept to 8-40 ms (60 Hz: 33 ms), times the playback speed. Not playing (paused,
+     * loading, seeking): 0. Not one of §2's leads, so "Lyrics by real timing" keeps it.
+     */
+    fun displayLeadMs(refreshMs: Double, speed: Double, playing: Boolean): Long {
+        if (!playing) return 0L
+        val interval = if (refreshMs.isFinite() && refreshMs > 0.0) refreshMs else 1000.0 / 60.0
+        val rate = if (speed.isFinite() && speed > 0.0) speed else 1.0
+        return Math.round((2.0 * interval).coerceIn(DISPLAY_LEAD_MIN_MS, DISPLAY_LEAD_MAX_MS) * rate)
     }
 
     // ---- §2 Which rows are active in the view -------------------------------------------------
@@ -263,23 +298,27 @@ object ForkLyricsRules {
                 if (line.timeMs <= at && at < end) out += i
                 continue
             }
-            if (line.timeMs > predictive) break
+            val start = timelineStart(line)
+            // Not a break: the sheet is in stamp order, and a later line whose first word comes in
+            // before this one's stamp (timelineStart) may already be due. Only a stamp past the lead
+            // ends the walk when no line can start earlier than its stamp (no word-timed sheet).
+            if (start > predictive) { if (wordByWord) continue else break }
             val end = lineEnd(lines, i)
-            val startCheck = if (lineActive && line.timeMs < maxActiveEnd) overlapTime else predictive
+            val startCheck = if (lineActive && start < maxActiveEnd) overlapTime else predictive
             val next = lines.getOrNull(i + 1)?.takeUnless { it.isGap }
             val endCheck = when {
-                next != null && next.timeMs < end -> overlapTime
-                next != null && predictive >= next.timeMs -> predictive
+                next != null && timelineStart(next) < end -> overlapTime
+                next != null && predictive >= timelineStart(next) -> predictive
                 else -> positionMs
             }
-            if (startCheck >= line.timeMs && endCheck < end) {
+            if (startCheck >= start && endCheck < end) {
                 out += i
                 lineActive = true
                 maxActiveEnd = max(maxActiveEnd, end)
             }
         }
         if (out.isEmpty()) {
-            val latest = lines.indexOfLast { it.timeMs <= predictive }
+            val latest = lines.indexOfLast { timelineStart(it) <= predictive }
             if (latest >= 0) out += latest
         }
         return out
@@ -289,7 +328,7 @@ object ForkLyricsRules {
     internal fun lineEnd(lines: List<LyricLine>, index: Int): Long {
         val line = lines[index]
         val nextIndex = (index + 1 until lines.size).firstOrNull { !lines[it].isGap }
-        val nextStart = nextIndex?.let { lines[it].timeMs }
+        val nextStart = nextIndex?.let { timelineStart(lines[it]) } // where activeRows starts it, so the trim and the hand-over agree
         var end = if (line.hasKnownEnd) line.endMs else unknownEnd(line.timeMs, nextStart)
         // The gap after it starts 310 ms after the singing stopped; the line stops there.
         lines.getOrNull(index + 1)?.takeIf { it.isGap && it.timeMs > line.timeMs }?.let {

@@ -30,12 +30,16 @@ import com.music.bitchord.ui.player.ForkCanvasSwitch
  * Fork: the canvas rulebook's §13 settings in the PC's settings popup (Appearance, under the
  * "Backdrop videos" / "Music video canvas" / "Animated covers" switches it already had, which are
  * the rulebook's two master switches and the music video's own switch): the source list with its
- * order and on/off, Apple's animated cover quality, the YouTube canvas quality and mode, and the
- * "Best part button". Rows whose master switch is off are greyed, never hidden.
+ * order and on/off, Apple's animated cover quality, the YouTube canvas quality and mode, and v1.10's
+ * "Best Part button" (the pill on the artwork). Rows whose master switch is off are greyed, never hidden.
  *
  * Rule 4 (off on mobile data) is phone only: a PC has no metered network to tell (the rulebook's
  * PC is a browser extension, which can't either).
  */
+/** The phone's words for v1.10's "Best Part button" (`show_best_part`). */
+private const val BEST_PART_TITLE = "Best Part button"
+private const val BEST_PART_SUBTITLE = "A button on the artwork that skips to the part of the song people replay most"
+
 @Composable
 internal fun ForkCanvasSettingsRows() {
     val backdrops by ForkCanvasSwitch.backdrops.collectAsState()
@@ -71,8 +75,8 @@ internal fun ForkCanvasSettingsRows() {
                 ForkCanvasSettings.setVideoMode(ForkCanvasSettings.VideoMode.entries.let { it[(it.indexOf(m) + 1) % it.size] })
             }
         }
-        val button by ForkBestParts.button.collectAsState()
-        SettingsToggle(ForkBestParts.BUTTON_TITLE, ForkBestParts.BUTTON_SUBTITLE, button, ForkBestParts::setButton)
+        val button by ForkPlayerSettings.showBestPart.collectAsState()
+        SettingsToggle(BEST_PART_TITLE, BEST_PART_SUBTITLE, button, ForkPlayerSettings::setShowBestPart) // v1.10's Best Part pill, in the phone's words
     }
 }
 

@@ -170,19 +170,42 @@ object ForkSettings {
     private fun loadCanvasSettings() {
         com.music.bitchord.data.canvas.ForkCanvasSettings.load(canvasStore, _musicVideoCanvas.value)
         _musicVideoCanvas.value = com.music.bitchord.data.canvas.ForkCanvasSettings.videoOn()
-        com.music.bitchord.data.canvas.ForkBestParts.loadSettings(canvasStore)
-        foldUpstreamSpotifySwitch()
+        if (com.music.bitchord.data.canvas.ForkBestParts.takeOldButtonOff(canvasStore)) com.music.bitchord.data.settings.AppSettings.setShowBestPart(false) // the old Best part button, off: v1.10's pill off
+        joinSpotifySwitch()
     }
 
     /**
-     * v1.10's "Disable Spotify Canvas" (`AppSettings.disableSpotifyCanvas`) is the §13 source list's Spotify
-     * switch said twice; the list keeps the one control. A phone that had it on gets Spotify off in the list,
-     * once, and upstream's flag goes back to off, so its own checks never filter anything again.
+     * v1.10's "Disable Spotify Canvas" (`AppSettings.disableSpotifyCanvas`) is the one Spotify switch (owner,
+     * 2026-11-24: upstream's version wins where it does the same). The §13 source list's Spotify on/off is
+     * its other side: turning it off sets upstream's flag, so everything upstream filters by it (the album
+     * header, the lyrics share's clips, Top picks, the TV player, the signed-in lookup) follows the list.
+     * At start upstream's flag wins when it is set (a v1.10 setting or a restored backup); otherwise a
+     * list with Spotify off sets it, which carries a phone over from the fork's own switch once.
      */
-    private fun foldUpstreamSpotifySwitch() {
-        if (!com.music.bitchord.data.settings.AppSettings.disableSpotifyCanvas.value) return
-        com.music.bitchord.data.canvas.ForkCanvasSettings.setOn(com.music.bitchord.data.canvas.ForkCanvasRules.Source.SPOTIFY, false)
-        com.music.bitchord.data.settings.AppSettings.setDisableSpotifyCanvas(false)
+    private fun joinSpotifySwitch() {
+        val spotify = com.music.bitchord.data.canvas.ForkCanvasRules.Source.SPOTIFY
+        com.music.bitchord.data.canvas.ForkCanvasSettings.onSourceSet = { source, on ->
+            if (source == spotify && com.music.bitchord.data.settings.AppSettings.disableSpotifyCanvas.value == on) {
+                com.music.bitchord.data.settings.AppSettings.setDisableSpotifyCanvas(!on)
+            }
+        }
+        val flag = com.music.bitchord.data.settings.AppSettings.disableSpotifyCanvas.value
+        if (!spotifyJoined(flag, spotify in com.music.bitchord.data.canvas.ForkCanvasSettings.enabled.value)) {
+            com.music.bitchord.data.canvas.ForkCanvasSettings.setOn(spotify, false)
+            if (!flag) com.music.bitchord.data.settings.AppSettings.setDisableSpotifyCanvas(true)
+        }
+    }
+
+    /** Whether Spotify Canvas is on once the two switches are joined: only with upstream's flag clear and the list's Spotify on. */
+    internal fun spotifyJoined(disableFlag: Boolean, listHasSpotify: Boolean): Boolean = !disableFlag && listHasSpotify
+
+    /**
+     * After upstream's settings were replaced (an import, a Drive restore) with no fork section to
+     * re-read: upstream's flag may have changed under the list, so the two are joined again. Before
+     * this the list kept its old Spotify state until the next start (audit 2026-11-24).
+     */
+    internal fun rejoinSpotifySwitch() {
+        if (this::prefs.isInitialized) joinSpotifySwitch()
     }
 
     fun setNavidromeScrobble(value: Boolean) {

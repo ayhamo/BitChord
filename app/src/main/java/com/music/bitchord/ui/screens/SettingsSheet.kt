@@ -1840,7 +1840,7 @@ fun SettingsScreen(
                 )
             }
             val bestPartTitle = stringResource(R.string.show_best_part)
-            if (com.music.bitchord.fork.ForkUpstreamRows.SHOWN) row(bestPartTitle, "best part", "chorus", "skip", "replayed", "highlight") { // fork: canvas.md §14 rule 8's "Best part button" is the one control
+            row(bestPartTitle, "best part", "chorus", "skip", "replayed", "highlight") {
                 SettingsRow(
                     icon = SfIcons.MusicNote,
                     title = bestPartTitle,

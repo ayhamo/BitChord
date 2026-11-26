@@ -56,8 +56,14 @@ internal object ForkClipSource {
 
     val failures = ForkClipRetry(RETRY_MS)
 
-    /** One fetch per address at a time: the sleeve and a second surface would both write its `.part`. */
-    private val locks = ConcurrentHashMap<String, Any>()
+    /**
+     * One fetch per address at a time: the sleeve and a second surface would both write its `.part`.
+     * Striped rather than one lock per address: the per-address map was never emptied, so a long
+     * session kept a lock object for every clip address it ever played. An address always maps to
+     * the same stripe, so two fetches of one URL still serialize; two different addresses sharing
+     * a stripe only wait for each other, which costs nothing a cover clip would notice.
+     */
+    private val locks = Array(64) { Any() }
 
     private val client: HttpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(10))
@@ -96,7 +102,7 @@ internal object ForkClipSource {
     }
 
     /** Where [url]'s clip can be read from; fetches it into the cache first. */
-    fun sourceFor(url: String): Source = synchronized(locks.getOrPut(url) { Any() }) { fetchLocked(url) }
+    fun sourceFor(url: String): Source = synchronized(locks[Math.floorMod(url.hashCode(), locks.size)]) { fetchLocked(url) }
 
     private fun fetchLocked(url: String): Source {
         // a music-video loop is cut to a file already (ForkDesktopCanvasSources): played from there
@@ -139,6 +145,7 @@ internal object ForkClipSource {
         if (variants.isEmpty()) return ForkClipHls.media(first, url)
         val chosen = ForkClipHls.choose(variants) ?: throw ForkClipHls.Unsupported("no rendition")
         val mediaUrl = URI(url).resolve(chosen.uri).toString()
+        if (!ForkClipHls.secure(mediaUrl)) throw IllegalStateException("the rendition is not on https")
         // A rendition that can't be saved is streamed on its own, not through the master: handed
         // the master, FFmpeg probes every rendition (HEVC and 4K ones included, a segment of each)
         // and decodes the biggest. Choosing from the master first is PC-Continued 5e9dbcbd's
@@ -150,18 +157,34 @@ internal object ForkClipSource {
         }
     }
 
+    /**
+     * A playlist, over https only and read capped at 256 KB ([com.music.bitchord.data.ForkCappedHttp];
+     * Apple's are a few KB). The address is checked before the request and the final one after it:
+     * the client follows redirects, and `Redirect.NORMAL` would follow an https playlist to any other
+     * https host, so the answer's own URI ([HttpResponse.uri]) is what is checked, not only the one
+     * asked for. A playlist's segments are resolved against it, so an http hop here would put every
+     * segment on http too.
+     */
     private fun text(url: String): String {
-        val response = client.send(request(url, null), HttpResponse.BodyHandlers.ofString())
-        check(response.statusCode() in 200..299) { "playlist HTTP ${response.statusCode()}" }
-        return response.body()
+        check(ForkClipHls.secure(url)) { "the playlist is not on https" }
+        val response = client.send(request(url, null), HttpResponse.BodyHandlers.ofInputStream())
+        if (response.statusCode() !in 200..299 || !ForkClipHls.secure(response.uri().toString())) {
+            response.body().close()
+            check(response.statusCode() in 200..299) { "playlist HTTP ${response.statusCode()}" }
+            error("the playlist was redirected off https")
+        }
+        return com.music.bitchord.data.ForkCappedHttp.text(response, 256 * com.music.bitchord.data.ForkCappedBody.KB)
     }
 
     /** One piece into [out]; a server that ignores the range sends the whole file, which is cut down here. */
     private fun fetch(piece: ForkClipHls.Piece, out: OutputStream) {
+        // https only, before and after redirects (see [text]): a segment's bytes go to the decoder
+        check(ForkClipHls.secure(piece.uri)) { "a segment is not on https" }
         val response = client.send(request(piece.uri, piece), HttpResponse.BodyHandlers.ofInputStream())
         response.body().use { body ->
             val status = response.statusCode()
             check(status in 200..299) { "segment HTTP $status" }
+            check(ForkClipHls.secure(response.uri().toString())) { "a segment was redirected off https" }
             val length = piece.length
             if (length == null) {
                 body.copyTo(out)
@@ -218,6 +241,7 @@ internal object ForkClipSource {
  * more. A success clears it. [now] is a parameter so the tests can move the clock.
  */
 internal class ForkClipRetry(private val windowMs: Long, private val now: () -> Long = System::currentTimeMillis) {
+    /** Pruned of expired entries past [MAX_KEPT] ([failed]): it was never emptied of clips that didn't come back. */
     private val failedAt = ConcurrentHashMap<String, Long>()
 
     fun allows(url: String): Boolean {
@@ -228,7 +252,16 @@ internal class ForkClipRetry(private val windowMs: Long, private val now: () -> 
     }
 
     fun failed(url: String) {
-        failedAt[url] = now()
+        val at = now()
+        failedAt[url] = at
+        if (failedAt.size > MAX_KEPT) failedAt.entries.removeIf { at - it.value >= windowMs }
+    }
+
+    /** How many entries are kept now (for the tests). */
+    val size: Int get() = failedAt.size
+
+    private companion object {
+        const val MAX_KEPT = 512
     }
 
     fun succeeded(url: String) {
@@ -251,6 +284,16 @@ internal object ForkClipHls {
     data class Variant(val uri: String, val width: Int, val height: Int, val codecs: String, val bandwidth: Long) {
         val edge: Int get() = maxOf(width, height)
     }
+
+    /**
+     * Whether a playlist, rendition or segment address may be fetched: https with a host. The cover
+     * clip's pieces come from Apple's CDN over https; a playlist pointing elsewhere over http (or a
+     * redirect taking it there) is refused rather than fed to the decoder.
+     */
+    fun secure(uri: String): Boolean = runCatching {
+        val u = URI(uri)
+        u.scheme.equals("https", ignoreCase = true) && !u.host.isNullOrEmpty()
+    }.getOrDefault(false)
 
     /** A URI, whole ([length] null) or the byte range [offset]..[offset]+[length]. */
     data class Piece(val uri: String, val offset: Long = 0L, val length: Long? = null)

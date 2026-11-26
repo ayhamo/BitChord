@@ -85,4 +85,29 @@ class ForkAutomixTest {
         assertTrue(ForkAutomix.confidence(weak, weak.headBeats) < ForkAutomix.MIN_LOOP_CONFIDENCE)
         assertTrue(ForkAutomix.confidence(song, song.tailBeats) >= ForkAutomix.MIN_LOOP_CONFIDENCE)
     }
+
+    /**
+     * The owner's baseline curves (research/automix-baseline-2026-11-08.md, the extension at d26dc16): A holds 1
+     * through the enter bars, 1 to 0.6 over the ramp, 0.6 to 0 to the release; B 0 to 0.55 over the enter bars,
+     * 0.55 to 1 over the ramp. No -3 dB trim, no equal-power scaling. Times: the Nov 8 recording's schedule.
+     */
+    @Test
+    fun theLoopGainsAreTheBaselinesCurves() {
+        val g = ForkAutomix.loopGains(enterEnd = 10.213, rampEnd = 17.638, releaseAt = 29.638, handoverSec = 0.025)
+        assertEquals(listOf(-0.025, 0.0, 10.213, 17.638, 29.638), g.outTimes.toList())
+        assertEquals(listOf(0f, 1f, 1f, 0.6f, 0f), g.outGains.toList())
+        assertEquals(listOf(0.0, 10.213, 17.638), g.inTimes.toList())
+        assertEquals(listOf(0f, 0.55f, 1f), g.inGains.toList())
+    }
+
+    @Test
+    fun theLoopsBassSwapsOverOneBarAtTheRampsMiddleSoTheKicksNeverDouble() {
+        // a ramp around 13.9 s with a 2.4683 s bar (pair 1 golden loop's bar)
+        val swap = ForkAutomix.loopBassSwap(handoffAt = 13.93015, bar = 2.4683)
+        assertEquals(listOf(13.93015 - 1.23415, 13.93015 + 1.23415), swap.times.toList())
+        assertEquals(listOf(0f, -18f), swap.outDb.toList(), "the outgoing loop ends cut")
+        assertEquals(listOf(-18f, 0f), swap.inDb.toList(), "the incoming loop enters cut")
+        // at every knot exactly one deck carries the full bass
+        for (k in swap.times.indices) assertEquals(-18f, swap.outDb[k] + swap.inDb[k])
+    }
 }

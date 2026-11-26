@@ -129,14 +129,20 @@ internal class ForkAnalysisQueue<T> {
     @Volatile private var focusIds: List<String>? = null
     private val pending = LinkedHashMap<String, T>()
 
+    /**
+     * The pair to keep; returns the ids it dropped, which the analyser ends as stopped: each was
+     * reported "waiting its turn" when queued, and a dropped one never reached the worker's `ended`.
+     */
     @Synchronized
-    fun focus(currentId: String?, nextId: String?) {
+    fun focus(currentId: String?, nextId: String?): List<String> {
         val ids = listOfNotNull(currentId?.takeIf { it.isNotBlank() }, nextId?.takeIf { it.isNotBlank() }).distinct()
         focusIds = ids
-        pending.keys.retainAll(ids.toSet())
+        val dropped = pending.keys.filter { it !in ids }
+        pending.keys.removeAll(dropped.toSet())
+        return dropped
     }
 
-    fun isRelevant(id: String): Boolean = focusIds?.contains(id) ?: true
+    fun isRelevant(id: String): Boolean = focusIds?.contains(ForkCopyAnalysis.songOf(id)) ?: true // a copy's pass is its song's (ForkCopyAnalysis)
 
     @Synchronized
     fun offer(id: String, task: T): Boolean {
@@ -154,9 +160,12 @@ internal class ForkAnalysisQueue<T> {
     @Synchronized
     fun pendingIds(): List<String> = pending.keys.toList()
 
+    /** Drops everything; returns the ids that were queued (see [focus]). */
     @Synchronized
-    fun clear() {
+    fun clear(): List<String> {
+        val dropped = pending.keys.toList()
         pending.clear()
         focusIds = emptyList()
+        return dropped
     }
 }

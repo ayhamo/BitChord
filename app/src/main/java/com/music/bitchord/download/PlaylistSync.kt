@@ -142,7 +142,7 @@ object PlaylistSync {
             var before = LikeState.overrides.value
             LikeState.overrides.collect { now ->
                 val newlyLiked = now.any { (id, status) ->
-                    status == LikeStatus.LIKE && before[id] != LikeStatus.LIKE
+                    status == LikeStatus.LIKE && before[id] != LikeStatus.LIKE && youTubeLike(id) // fork: + youTubeLike; a server star is no YouTube like
                 }
                 before = now
                 if (newlyLiked && AppSettings.downloadLikedSongs.value) checkLikedSoon(app)
@@ -229,6 +229,22 @@ object PlaylistSync {
     internal fun catchUpDue(now: Long, lastComplete: Long, lastAttempt: Long): Boolean =
         now - lastComplete >= CATCH_UP_MILLIS && now - lastAttempt >= CATCH_UP_MILLIS
 
+    /**
+     * Fork: whether a check stamps the last attempt, which holds the catch-up off for
+     * [CATCH_UP_MILLIS]. Not an approval's, nor the quick look after a like (audit 2026-11-24, 3B #3):
+     * that one reads only Liked Music's newest page, and stamped, a like held the playlists' catch-up
+     * off for six hours though none of them was read.
+     */
+    internal fun stampsAttempt(approved: Boolean, likedOnly: Boolean): Boolean = !approved && !likedOnly
+
+    /**
+     * Fork: whether a like of [id] is one YouTube's Liked Music can hold. A Navidrome star (the
+     * server's like, seeded into the same overrides by `NavidromeStars`) or a radio station is not,
+     * and it sent a look at YouTube's Liked Music for nothing.
+     */
+    internal fun youTubeLike(id: String): Boolean =
+        !id.startsWith(com.music.bitchord.data.model.NAVIDROME_ID_PREFIX) && !com.music.bitchord.data.navidrome.NavidromeRadio.isRadio(id)
+
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     // ---- A check ------------------------------------------------------------
@@ -250,7 +266,7 @@ object PlaylistSync {
         if (approved || likedOnly) running.lock() else if (!running.tryLock()) return
         try {
             if (!storageWritable(context)) return
-            if (!approved) prefs(context).edit().putLong(KEY_LAST_ATTEMPT, System.currentTimeMillis()).apply() // fork
+            if (stampsAttempt(approved, likedOnly)) prefs(context).edit().putLong(KEY_LAST_ATTEMPT, System.currentTimeMillis()).apply() // fork
             var whole = true
             if (!likedOnly && AppSettings.syncDownloadedPlaylists.value) {
                 // fork: an approval checks its own playlist only; it used to check them all, approved

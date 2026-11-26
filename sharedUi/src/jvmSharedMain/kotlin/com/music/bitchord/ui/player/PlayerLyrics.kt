@@ -736,11 +736,13 @@ private fun rememberLyricClock(
     playhead: LyricPlayhead,
     isPlaying: Boolean,
     active: Boolean = true,
+    forkDrawAhead: Boolean = false, // fork: the panel draws ahead of the sound (lyrics.md §1.5, ForkLyricsDrawAhead)
 ): MutableLongState {
     val clock = remember(trackKey) {
         mutableLongStateOf(Snapshot.withoutReadObservation { playhead.positionMs })
     }
     val engine = remember(trackKey) { LyricClock(clock.longValue) }
+    val forkAhead = remember(trackKey) { ForkLyricsDrawAhead() } // fork
 
     // Observe transport state with the reading, not the lifetime of a paused composition branch.
     // Includes stopped seeks/offset changes even when the reported position itself is unchanged.
@@ -776,7 +778,7 @@ private fun rememberLyricClock(
                 // two are seconds apart and the real clock is used instead.
                 val system = System.nanoTime()
                 val now = if (abs(system - frameNanos) < SAME_CLOCK_NANOS) frameNanos else system
-                clock.longValue = engine.frame(nanosToMs(now), playhead.reading(isPlaying))
+                clock.longValue = playhead.reading(isPlaying).let { r -> engine.frame(nanosToMs(now), r).let { if (forkDrawAhead) forkAhead.at(nanosToMs(now), it, r.isPlaying) else it } } // fork: + the draw-ahead lead; was engine.frame(nanosToMs(now), playhead.reading(isPlaying))
             }
         }
     }
@@ -1830,7 +1832,7 @@ internal fun LyricsPanel(
     val (lines, subLines) = forkMainAndSub(lines, subLines) // fork: "Romanized as main" (lyrics.md §9.2, ForkLyricsView)
     val forkView = rememberForkLyricsView() // fork: the lyrics settings the panel reads (ForkLyricsView)
     val panelPlaying = isPlaying && active
-    val clock = rememberLyricClock(trackKey, playhead, isPlaying, active)
+    val clock = rememberLyricClock(trackKey, playhead, isPlaying, active, forkDrawAhead = true) // fork: drawn ahead (lyrics.md §1.5)
     val subReveal = rememberSubLyricsReveal(subLines, trackKey)
 
     val isSynced = remember(lines) { lines.any { it.timeMs > 0L } }

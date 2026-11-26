@@ -5,6 +5,7 @@ import com.music.bitchord.data.lyrics.LyricLine
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import java.io.File
 import java.util.Properties
 import kotlin.math.abs
@@ -18,8 +19,8 @@ import kotlin.math.abs
  *  - [snap]: a jump pulled back to where a lyric line begins, so it doesn't land mid-word;
  *  - [mine]: the listener's own best part for a song, which wins over the curve and the chorus
  *    wherever a best part is used (`fork-best-parts.properties`, beside the saved canvas lookups);
- *  - [current]: the playing song's, for the button by the scrubber ([shows]: Prism's
- *    `BestPartButton`), set by the player while it is open;
+ *  - [current]: the playing song's, set by the player while it is open; v1.10's own Best Part
+ *    pill shows it ([awaitStart], through `PlayerHost.bestPartMs`);
  *  - [lines]: the last songs' synced lyrics, as the player had them, for [snap] and [chorusMs] where
  *    the lyrics aren't to hand (the menu's jump, the canvas lookup). Nothing is fetched for them.
  */
@@ -108,26 +109,18 @@ object ForkBestParts {
         return if (starts.isEmpty()) raw else snap(raw, starts)
     }
 
-    /** Prism's `BestPartButton.shows`: in the first 30 s, or 15 s from when it became known (up to 45 s in), while 3 s ahead. */
-    fun shows(atMs: Long, startMs: Long, knownAtMs: Long): Boolean {
-        val until = maxOf(BUTTON_FIRST_MS, knownAtMs + BUTTON_AFTER_KNOWN_MS).coerceAtMost(BUTTON_LATEST_MS)
-        return atMs < until && atMs < startMs - BUTTON_AHEAD_MS
-    }
-
-    private const val BUTTON_FIRST_MS = 30_000L
-    private const val BUTTON_AFTER_KNOWN_MS = 15_000L
-    const val BUTTON_LATEST_MS = 45_000L
-    private const val BUTTON_AHEAD_MS = 3_000L
-
     // ---- the lyrics the player had -----------------------------------------------------------
 
     private val memo = object : LinkedHashMap<String, List<LyricLine>>(8, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<LyricLine>>) = size > 8
     }
 
+    /** Whether [lyrics] are timed, the ones [noteLyrics] keeps and the chorus is found in. */
+    fun isSynced(lyrics: List<LyricLine>?): Boolean = lyrics != null && lyrics.any { it.timeMs > 0 }
+
     /** The player's synced [lyrics] for [songId] (unsynced ones are not kept). */
     fun noteLyrics(songId: String, lyrics: List<LyricLine>?) {
-        if (songId.isBlank() || lyrics == null || lyrics.none { it.timeMs > 0 }) return
+        if (songId.isBlank() || lyrics == null || !isSynced(lyrics)) return
         synchronized(memo) { memo[songId] = lyrics }
     }
 
@@ -203,6 +196,29 @@ object ForkBestParts {
         _current.value = value
     }
 
+    /**
+     * [songId]'s best part once the player has worked it out ([current]), for v1.10's Best Part pill
+     * (`PlayerHost.bestPartMs` on both apps): the fork's pick (your own, else the most replayed part,
+     * else the chorus) instead of upstream's `BestParts.startFor`, which knows no "Your best part" and
+     * can't run on the PC. Null for none, or when nothing comes within [timeoutMs].
+     */
+    suspend fun awaitStart(songId: String, timeoutMs: Long = AWAIT_MS): Long? =
+        kotlinx.coroutines.withTimeoutOrNull(timeoutMs) { current.first { it?.songId == songId } }?.startMs
+
+    private const val AWAIT_MS = 20_000L
+
+    /**
+     * Every later answer for [songId], for v1.10's pill after its one [awaitStart] (`PlayerControls`
+     * hook). [awaitStart] settles on the first [current] for the song, which `ForkBestPartFollow` sets
+     * before the synced lyrics are in (a song with no replay curve has no part yet), and v1.10's
+     * `produceState` asks only once per song: without this the chorus found a moment later, or a
+     * "Your best part" saved while the song plays ([setMine]), never reached the pill. Runs until
+     * the caller's scope ends.
+     */
+    suspend fun follow(songId: String, set: (Long?) -> Unit) {
+        current.collect { if (it?.songId == songId) set(it.startMs) }
+    }
+
     // ---- Your best part (§14 rule 5) ---------------------------------------------------------
 
     /** The song whose "Your best part" editor is open (the player draws it), or null. */
@@ -236,32 +252,24 @@ object ForkBestParts {
      */
     fun editorStart(mineMs: Long?, autoMs: Long?, nowMs: Long?): Long = mineMs ?: autoMs ?: nowMs ?: 0L
 
-    // ---- the button's setting ----------------------------------------------------------------
+    // ---- the old button's setting ------------------------------------------------------------
 
-    private val _button = MutableStateFlow(true)
-
-    /** "Best part button": by the scrubber while a song's best part is ahead (on by default, as Prism). */
-    val button: StateFlow<Boolean> = _button.asStateFlow()
-
-    @Volatile private var settings: ForkCanvasSettings.Store? = null
+    /**
+     * The fork's own "Best part button" (by the scrubber) gave way to v1.10's Best Part pill; its
+     * switch, kept under this key, now lives in v1.10's `show_best_part` (the PC: its own store).
+     * Still read from a backup, so an old one's "off" carries over.
+     */
     const val KEY_BUTTON = "best_part_button"
 
-    fun loadSettings(from: ForkCanvasSettings.Store) {
-        settings = from
-        _button.value = from.get(KEY_BUTTON) != "off"
-    }
-
-    fun setButton(on: Boolean) {
-        _button.value = on
-        runCatching { settings?.put(KEY_BUTTON, if (on) "on" else "off") }
+    /** True once when [from] had the old button switched off; the key is then cleared. */
+    fun takeOldButtonOff(from: ForkCanvasSettings.Store): Boolean {
+        val old = runCatching { from.get(KEY_BUTTON) }.getOrNull() ?: return false
+        runCatching { from.put(KEY_BUTTON, null) }
+        return old == "off"
     }
 
     // ---- display text, the same on both apps -------------------------------------------------
 
-    const val BUTTON_TITLE = "Best part button"
-    const val BUTTON_SUBTITLE = "Under the seek bar in a song's first seconds: skips to its most replayed part, or the chorus in its lyrics"
-    const val CHIP = "Best part"
-    const val CHIP_MINE = "Your best part"
     const val PLAY_FROM = "Play from the best part"
     const val NONE_KNOWN = "No best part known for this song"
 

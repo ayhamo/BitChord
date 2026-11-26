@@ -73,7 +73,7 @@ internal class DesktopRangeStream(
         headers.forEach { (name, value) -> runCatching { request.header(name, value) } }
 
         val response = runCatching {
-            client.send(request.GET().build(), HttpResponse.BodyHandlers.ofByteArray())
+            ForkRangeWindow.send(client, request.GET().build()) // fork: was client.send(…, ofByteArray()); the body too within a deadline (ForkRangeWindow)
         }.getOrNull() ?: return false
         if (response.statusCode() !in 200..299) {
             // A URL cleared before playback has been refused mid-track: tell the resolver, as the
@@ -97,8 +97,8 @@ internal class DesktopRangeStream(
         window = body
         if (length < 0) length = windowStart + body.size
         // fork: an answered range is kept for next time (only a range answer, never a whole file)
-        if (forkKey != null && stated != null && windowStart == start && body.isNotEmpty() && length >= start + body.size) {
-            ForkAudioRangeCache.shared.write(forkKey, start, body, length, System.currentTimeMillis() + ForkAudioRangeCache.KEEP_MS)
+        if (forkKey != null && stated != null && ForkRangeWindow.cacheable(url, start, windowStart, length, body.size)) { // fork: the stated total must be the file's clen (ForkRangeWindow.cacheable)
+            ForkAudioRangeCache.shared.write(forkKey, start, body, length, System.currentTimeMillis() + ForkAudioRangeCache.KEEP_MS, mime = response.headers().firstValue("content-type").orElse(null)) // fork: never a playlist or manifest (rulebook 8.1.6)
             ForkSongCache.noteSpan(url, forkKey) // fork: for the song menu's "Remove from cache"
         }
         return body.isNotEmpty()

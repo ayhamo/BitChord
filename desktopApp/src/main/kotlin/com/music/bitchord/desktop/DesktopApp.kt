@@ -530,6 +530,7 @@ fun BitChordDesktopApp() {
     var personalPositionStash by remember { mutableStateOf(0L) }
     var personalPlayingStash by remember { mutableStateOf(false) }
     val persistence = remember { DesktopPersistence() }
+    remember { ForkDesktopLyricsDefaults.apply(persistence) } // fork: the owner's lyrics provider order, once, before the lyrics settings below read it
     remember { ForkContentPreferences.install() } // fork: Square video thumbnails reaches the shared UI before the first frame
     ForkUpdaterHost() // fork: the check at start and every 12 h, the dialog with the in-app download and install (ForkUpdaterUi); was a check at start and a dialog whose Download opened the browser
     var destination by remember { mutableStateOf(DesktopDestination.LISTEN_NOW) }
@@ -1746,6 +1747,27 @@ fun BitChordDesktopApp() {
         playbackEngine.pause()
         partySync.onLocalIntent()
     }
+    ForkDesktopMixFiles.attachQueue( // fork: a mix file's "Play these mixes" (ForkMixFiles.Queue)
+        playingId = { liveQueue.current?.videoId },
+        fresh = { songs, keep ->
+            val playing = liveQueue.current
+            when {
+                DesktopListenTogether.state.value.inParty -> playSongs(songs, 0) // a party's queue isn't this computer's: the rules for a pick
+                keep && playing != null -> { // the file's first song plays on, everything around it replaced
+                    liveQueue = DesktopQueue(listOf(playing) + songs.drop(1).map(::canonicalSong), 0)
+                    preShuffleOrder = emptyList()
+                    saveQueue()
+                    partySync.onLocalIntent()
+                    playFromUser()
+                }
+                else -> { // a fresh queue, as a saved queue is restored
+                    liveQueue = DesktopQueue.restored(songs.map(::canonicalSong), 0)
+                    preShuffleOrder = emptyList()
+                    playCurrent()
+                }
+            }
+        },
+    )
     val mprisController = remember(playbackEngine) {
         DesktopMprisController(
             onPlay = ::playFromUser,
@@ -4169,6 +4191,7 @@ fun BitChordDesktopApp() {
                                         onPasteCookie = { overlays.settingsPage = DesktopSettingsPage.SPOTIFY_CANVAS },
                                         onDisconnect = {
                                             DesktopSpotifyToken.setCookie("")
+                                            runCatching { ForkSpotifyPage.dropCookies(DesktopWebCookies) } // fork: the WebView jar's spotify.com cookies (sp_dc) go with the sign-in
                                             spotifyCanvasCookie = ""
                                         },
                                     ),

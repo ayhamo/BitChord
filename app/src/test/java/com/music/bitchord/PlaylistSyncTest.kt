@@ -140,4 +140,15 @@ class PlaylistSyncTest {
         assertTrue(PlaylistSync.catchUpDue(now, lastComplete = 0L, lastAttempt = now - 6 * hour))
         assertFalse(PlaylistSync.catchUpDue(now, lastComplete = now - hour, lastAttempt = 0L))
     }
+
+    /** Audit 2026-11-24, 3B #3: the quick look after a like stamps no attempt, and a server star asks no look. */
+    @Test
+    fun aLikesQuickLookHoldsNoCatchUpOffAndAServerStarAsksNone() {
+        assertTrue(PlaylistSync.stampsAttempt(approved = false, likedOnly = false))
+        assertFalse(PlaylistSync.stampsAttempt(approved = false, likedOnly = true))
+        assertFalse(PlaylistSync.stampsAttempt(approved = true, likedOnly = false))
+        assertTrue(PlaylistSync.youTubeLike("dQw4w9WgXcQ"))
+        assertFalse(PlaylistSync.youTubeLike("navidrome:abc123"))
+        assertFalse(PlaylistSync.youTubeLike("radio:7"))
+    }
 }

@@ -76,6 +76,12 @@ class ForkV2BeatGridTest {
         assertTrue(ForkV2BeatGrid.normalizeInterval(Double.NaN).isNaN())
     }
 
+    /** These looped forever (bpm 0 or infinite never folds): now no tempo. */
+    @Test
+    fun normalizeIntervalGivesNoTempoForZeroInfiniteNegativeOrSubnormal() {
+        for (x in listOf(0.0, 1e-320, Double.POSITIVE_INFINITY, -0.5)) assertTrue(ForkV2BeatGrid.normalizeInterval(x).isNaN(), "$x")
+    }
+
     @Test
     fun trackBeatsSnapsDownbeatsToBeats() {
         val frames = 50 * 20 // 20 s at 50 fps
@@ -135,7 +141,7 @@ class ForkV2BeatGridTest {
         assertTrue(ForkV2BeatGrid.camelot("A minor", a))
         assertEquals(8, a.camelotNum)
         assertEquals('A', a.camelotLetter)
-        // KeyStrength spells keys with the real sharp and flat signs
+        // ForkKeyExtractor spells keys with the real sharp and flat signs
         assertTrue(ForkV2BeatGrid.camelot("E♭ minor", a))
         assertEquals(2, a.camelotNum)
         assertTrue(ForkV2BeatGrid.camelot("F♯ major", a))

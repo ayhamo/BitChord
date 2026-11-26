@@ -55,7 +55,7 @@ internal object DesktopMediaCache {
      */
     fun trim() {
         ForkClipCache.trim() // fork: clips have their own limit, as on the phone, which may be the larger of the two
-        val others = files().filterNot(ForkClipCache::isClip) // fork
+        val others = files().filterNot { ForkClipCache.isClip(it) || ForkClipCache.writing(it) } // fork: + a clip still being fetched (its .part) is not cache
         val limit = limitBytes()
         var total = others.sumOf { runCatching { Files.size(it) }.getOrDefault(0L) } // fork
         if (total <= limit) return

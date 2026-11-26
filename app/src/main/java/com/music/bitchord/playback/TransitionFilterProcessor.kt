@@ -578,6 +578,7 @@ interface TransitionFilters {
     fun parkEchoes() = Unit
 
     fun forkShelves(incoming: Boolean, lowDb: Float, highDb: Float, lowPassHz: Float = ForkMixShelf.OPEN_HZ, highPassHz: Float = ForkMixShelf.OFF_HZ) = Unit // fork: each sink's ForkMixShelf (shelves and 12 dB cuts), by session role as incoming()/outgoing()
+    fun forkEcho(incoming: Boolean, aim: (ForkMixShelf) -> Unit) = Unit // fork: Automix v2's echo out on that sink's ForkMixShelf (ForkV2Ride)
 
     /** Parks both. Called whenever a transition ends, however it ended. */
     fun open() {

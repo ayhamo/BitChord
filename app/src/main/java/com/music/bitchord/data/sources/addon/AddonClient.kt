@@ -200,7 +200,7 @@ class AddonClient(rawBaseUrl: String, private val pickedQuality: String? = null)
             key = keyOf(trackId, params.toString()),
             describe = { "▶ addon stream(${redact(baseUrl)}) id=$trackId tier=$tier quality=${params[QUALITY_KEY]}" },
         ) {
-            ForkAddonLimitsPhone.send(baseUrl, forkCached) { fetch<AddonStream>(endpoint(listOf("stream", trackId), params)) } // fork: was fetch(…) alone
+            ForkAddonLimitsPhone.send(baseUrl, forkCached) { fetch<AddonStream>(endpoint(listOf("stream", trackId), params)).mapCatching { a -> com.music.bitchord.data.sources.ForkAddonStream.missOf(a.url, a.error, baseUrl)?.let { throw it } ?: a } } // fork: was fetch(…) alone; a miss (error, blank or plain-http url) leaves as a failure, never cached (ForkAddonStream.missOf)
         }
     }
 

@@ -49,6 +49,8 @@ internal object ForkV2EvidencePass {
             var duration = durationSeconds
             if (!duration.isFinite() || duration <= 0) duration = open()?.use(AudioDecoder::containerDurationSeconds) ?: 0.0
             if (duration <= 0) return
+            // the queue's length can be unknown (a local file): the over-8-minutes rule is checked on the file's own
+            if (com.music.bitchord.playback.smart.ForkAnalysisProgress.tooLong(trackId, duration)) return
             val rate = TrackFeatures.sampleRate
             val stream = ForkChunkedResampler(rate, duration, TrackFeatures::resample)
             open()?.use { source ->

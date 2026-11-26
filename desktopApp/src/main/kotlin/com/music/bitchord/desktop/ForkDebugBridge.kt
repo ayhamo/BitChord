@@ -41,6 +41,7 @@ import kotlinx.serialization.json.putJsonArray
  *   the app's own client and login ([ForkHandoffStore.probe]: 4, 16, 64, 256 KB written to a
  *   separate playlist, each read back, the playlist deleted); JSON, no login in it
  * - `GET /handoff-note`: the "continue on the other device" note on the server, summarised
+ * - `POST /bench?dir=[&exports=&pos=&evidence=1&version=2|3&curator=1]` (Classic plans by default), `GET /bench-status`: the Spotify benchmark ([ForkSpotifyBench]), offline
  * - `POST /quit`: the tray's Quit, a normal JVM exit (AppCDS writes `data/bitchord.jsa` only then)
  */
 internal object ForkDebugBridge {
@@ -76,6 +77,9 @@ internal object ForkDebugBridge {
         server.createContext("/handoff-note") { respond(it) { kotlinx.coroutines.runBlocking { ForkHandoffDesktop.describe() } } }
         // Dumps the signed-in web Home (FEmusic_home, continuations, chips) into ?dir= and answers the parser diff (ForkHomeDump).
         server.createContext("/homedump") { respond(it) { kotlinx.coroutines.runBlocking { com.music.bitchord.data.innertube.ForkHomeDump.dump(java.io.File(it.query("dir"))) } } }
+        // The Spotify benchmark (ForkSpotifyBench): ?dir= (the bench folder) [?exports= ?pos= ?evidence=1 ?version=2|3 (Classic by default) ?curator=1], offline; GET /bench-status.
+        server.createContext("/bench") { ex -> respond(ex) { ForkSpotifyBench.start(java.io.File(ex.query("dir")), runCatching { ex.query("exports") }.getOrNull()?.takeIf { it.isNotBlank() }?.let { java.io.File(it) }, runCatching { ex.query("pos") }.getOrNull()?.toDoubleOrNull() ?: 30.0, runCatching { ex.query("evidence") }.getOrNull() == "1", runCatching { ex.query("version") }.getOrNull()?.toIntOrNull() ?: 2, runCatching { ex.query("curator") }.getOrNull() == "1") } }
+        server.createContext("/bench-status") { respond(it) { ForkSpotifyBench.status } }
         server.createContext("/quit") { ex ->
             respond(ex) {
                 // POST only: a page's <img> GET carries no Origin. The quit waits a moment so this reply is sent first.
@@ -185,10 +189,26 @@ internal object ForkDebugBridge {
             ?.let { java.net.URLDecoder.decode(it, Charsets.UTF_8) }
             ?: error("missing $name")
 
+    /**
+     * Whether a request comes from a local test tool (curl, Python), from [headers] and the
+     * bridge's [port]. A web page open in a browser on this PC can reach a loopback port too, so
+     * refused are: a `Host` other than `127.0.0.1:<port>` or `localhost:<port>` (a DNS-rebinding
+     * page reaches the port under its own name, and its requests carry that name), and any of the
+     * headers only browsers send (`Origin`, `Referer`, `Sec-Fetch-*`; an `<img>` or form GET
+     * carries a Referer and Sec-Fetch headers even where it has no Origin). The tools send none of
+     * those and always the loopback Host. Header names are matched without regard to case.
+     */
+    fun allowed(headers: Map<String, List<String>>, port: Int): Boolean {
+        val named = headers.mapKeys { it.key.lowercase(java.util.Locale.ROOT) }
+        if (BROWSER_HEADERS.any { it in named }) return false
+        val host = named["host"]?.singleOrNull()?.trim()?.lowercase(java.util.Locale.ROOT) ?: return false
+        return host == "127.0.0.1:$port" || host == "localhost:$port"
+    }
+
+    private val BROWSER_HEADERS = listOf("origin", "referer", "sec-fetch-site", "sec-fetch-mode", "sec-fetch-dest")
+
     private fun respond(exchange: HttpExchange, answer: () -> String) {
-        // A web page open in a browser on this PC can reach a loopback port too; it always sends an
-        // Origin, the test tools never do.
-        val (code, body) = if (exchange.requestHeaders.containsKey("Origin")) {
+        val (code, body) = if (!allowed(exchange.requestHeaders, exchange.localAddress.port)) {
             403 to "no"
         } else {
             runCatching { 200 to answer() }.getOrElse { 400 to (it.message ?: "failed") }

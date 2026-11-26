@@ -368,6 +368,7 @@ object AppleMusicCanvas {
                 .findAll(it).map(MatchResult::value).distinct().toList()
         }.orEmpty()
 
+        var forkFallback: Pair<String, Long>? = null // fork: rule 3.1, an unlabelled token only once no bundle has the web player's own
         for (path in scripts) {
             val script = canvasGet("https://music.apple.com$path", mapOf("User-Agent" to CANVAS_UA))
                 ?: continue
@@ -384,7 +385,7 @@ object AppleMusicCanvas {
             // The web player's own token first; anything else is a guess kept
             // only so a change in how Apple labels it isn't fatal.
             val (jwt, expiresAt) = candidates.firstOrNull { isWebPlayerToken(it.first) }
-                ?: candidates.first()
+                ?: run { if (forkFallback == null) forkFallback = candidates.first(); null } ?: continue // fork: was `?: candidates.first()`, a guess taken before the later bundles were read
             cachedToken = jwt
             tokenExpiresAtMs = expiresAt
             ForkAppleTokenBackup.save(jwt, expiresAt) // fork: kept on disk as the backup
@@ -392,9 +393,19 @@ object AppleMusicCanvas {
             return jwt
         }
 
+        forkFallback?.let { (jwt, expiresAt) -> return forkKeepToken(jwt, expiresAt) } // fork: no bundle had the web player's own: the first unexpired one
         Log.w(TAG, "no usable web player token in ${scripts.size} bundle(s); backing off")
         retryTokenAfterMs = now + TOKEN_RETRY_MS
         return forkBackupToken(now) // fork: the last good token, when it is still valid
+    }
+
+    /** Fork: [token]'s unlabelled fallback, kept as a scraped token is (rule 3.1: only after every bundle was read). */
+    private fun forkKeepToken(jwt: String, expiresAt: Long): String {
+        cachedToken = jwt
+        tokenExpiresAtMs = expiresAt
+        ForkAppleTokenBackup.save(jwt, expiresAt)
+        Log.d(TAG, "web player token (unlabelled) good until ${java.util.Date(expiresAt)}")
+        return jwt
     }
 
     /** Fork: [ForkAppleTokenBackup]'s saved token, made the current one; null when there is none. */

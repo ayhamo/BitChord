@@ -12,8 +12,9 @@ import kotlinx.coroutines.withContext
  * ([DesktopAudioDecoder], the spec's "Input": the same path in the fit as in playback):
  * 12 s of the copy from YouTube's position, and YouTube's copy around it.
  *
- * No match: the copy is not taken and the song stays on what plays (a follow-up may still find
- * another). A match: its offset is kept for the copy's URL, and every deck that plays that URL reads
+ * No match (or a copy whose window doesn't decode): the copy is not taken, its row is passed over for
+ * the song and the next row or source is asked ([ForkNextRowPc], protocol.md 8.1.4), the song staying
+ * on what plays meanwhile. A match: its offset is kept for the copy's URL, and every deck that plays that URL reads
  * it through the offset map ([onYouTubeClock]), so the swap, a seek, an Automix cue and the lyrics
  * all stay on YouTube's clock as the spec's Map asks (`addonTime = youtubeTime + offsetSec`).
  *
@@ -52,16 +53,21 @@ internal object ForkWindowCheckPc {
         val result = withContext(Dispatchers.IO) {
             val (from, to) = ForkWindowFit.youtubeSpan(p)
             val ytSide = decode(yt, from, to - from) ?: return@withContext null to "YouTube's copy did not decode"
-            val window = decode(better, p, ForkWindowFit.WINDOW_SEC) ?: return@withContext null to "the copy's window did not decode"
+            // read once more before it counts: a refusal passes the row over for the song (ForkAddonRefusals.copyWindow)
+            val window = com.music.bitchord.data.sources.ForkAddonRefusals.copyWindow { decode(better, p, ForkWindowFit.WINDOW_SEC) } ?: return@withContext null to COPY_UNDECODABLE
             ForkWindowFit.fitWindow(ytSide, window, p - from) to null
         }
         val fit = result.first
         if (fit == null) {
             DesktopTrackLog.log("window check for '${song.title}': ${result.second}; staying on what plays")
+            if (result.second == COPY_UNDECODABLE) ForkNextRowPc.refused(song, better, COPY_UNDECODABLE)
             return false
         }
         DesktopTrackLog.log("window check for '${song.title}' at ${"%.1f".format(java.util.Locale.ROOT, p)} s: ${fit.describe()}")
-        if (!fit.match) return false
+        if (!fit.match) {
+            ForkNextRowPc.refused(song, better, "no match")
+            return false
+        }
         noteOffset(better.url, Math.round(fit.offsetSec!! * 1_000_000))
         return true
     }
@@ -131,6 +137,7 @@ internal object ForkWindowCheckPc {
         }
     }
 
+    private const val COPY_UNDECODABLE = "the copy's window did not decode"
     private const val YOUTUBE = "youtube"
     private val YOUTUBE_ID = Regex("[A-Za-z0-9_-]{11}")
 }

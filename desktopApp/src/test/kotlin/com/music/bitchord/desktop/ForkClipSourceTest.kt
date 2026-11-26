@@ -139,4 +139,25 @@ class ForkClipSourceTest {
         retry.succeeded("u")
         assertTrue(retry.allows("u"), "a success clears it")
     }
+
+    @Test
+    fun `only https addresses with a host are fetched`() {
+        assertTrue(ForkClipHls.secure("https://mvod.itunes.apple.com/a/prog.m3u8"))
+        assertTrue(ForkClipHls.secure("HTTPS://mvod.itunes.apple.com/a/seg.mp4"))
+        assertFalse(ForkClipHls.secure("http://mvod.itunes.apple.com/a/prog.m3u8"))
+        assertFalse(ForkClipHls.secure("file:///C:/clip.mp4"))
+        assertFalse(ForkClipHls.secure("https:///no-host"))
+        assertFalse(ForkClipHls.secure("not a uri"))
+    }
+
+    @Test
+    fun `expired failures are pruned once more than 512 are kept`() {
+        var now = 0L
+        val retry = ForkClipRetry(60_000L) { now }
+        repeat(600) { retry.failed("old$it") }
+        now = 61_000L
+        retry.failed("new")
+        assertEquals(1, retry.size, "only the fresh failure is left")
+        assertFalse(retry.allows("new"))
+    }
 }

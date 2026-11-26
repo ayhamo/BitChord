@@ -1,8 +1,6 @@
 package com.music.bitchord.playback.smart.automixv2
 
-import com.music.bitchord.playback.smart.AutomixStyle
 import com.music.bitchord.playback.smart.CurveWindow
-import com.music.bitchord.playback.smart.ForkMixPicks
 import com.music.bitchord.playback.smart.LoopMix
 import com.music.bitchord.playback.smart.TrackAnalysis
 import com.music.bitchord.playback.smart.rmsFromLevel
@@ -18,15 +16,10 @@ import kotlin.math.sqrt
  * (the phone's `LoopMixSession` / `LoopMixRenderer`, the PC's `ForkLoopMixSession` /
  * `ForkLoopMixRenderer`) play whatever comes back unchanged.
  *
- * - [AutomixStyle.BITCHORD]: [LoopMix.plan] itself, untouched and ungated.
- * - [AutomixStyle.V2]: the port decides. [ForkV2Planner.planLoopMix] (version 3: its tempo cap, the
- *   sub-bass veto and the key-clash gate) finds the loops, only when both songs' grids pass
- *   [ForkV2Planner.gridOk] (the extension's fixture rule); then [ForkV2Planner.loopOrBlend] weighs it
- *   against the blend Automix v2 planned for the same pair ([ForkV2Automix.lastBlendFor]). A Loop
- *   picked in the overview takes the loop whenever one was found (the extension's loopPicked).
- *   The two hard rules of the extension's fixtures hold through here: Vaina Loca into SI NO ES
- *   CONTIGO loops, Stereo Love into Midnight Sun (tempos about 12% apart) never does
- *   (`ForkV2AutomixPairTest`).
+ * - Both styles, since the owner's baseline (2026-11-24): [LoopMix.plan] itself, the engine of the
+ *   Nov 8 recording. Picks in the overview still refuse a loop through the apps' refusal rules.
+ * - [decide] keeps the port's Automix v2 loop planning (version 3's gates, the loop on the blend's
+ *   bars, [ForkV2Planner.loopOrBlend]) for the extension's fixtures (`ForkV2AutomixPairTest`) only.
  *
  * The port's [ForkV2Planner.LoopPlan] converts to upstream's [LoopMix.Plan] field for field
  * ([toLoopMixPlan]): the same loops, fold, enter, ramp and total bars. Upstream's [LoopMix.Clock]
@@ -35,18 +28,25 @@ import kotlin.math.sqrt
  * to 0, -18 dB bass swap over a bar at the ramp's middle, the outgoing high-pass 20 Hz to 1.5 kHz
  * after the ramp) are the port's [ForkV2Curves.loop], so nothing is lost in the conversion.
  *
- * What differs from upstream's loop search under v2 (the extension's, kept as ported):
+ * What differs from upstream's loop search in [decide] (the extension's, kept as ported):
  * - Each loop's loudness comes from the analysis's 10 fps level windows (the only whole-song level
  *   either app keeps), read as the extension reads its decoded buffer: no data reads as silence,
  *   so a bar outside the analysed windows is never picked ([levelAudio]).
- * - Sung spans from synced lyrics are plain [start, end] spans: the port has no "certain until" and
- *   no lyrics-and-mask check, so a lyric line without an end is sung up to the next line.
+ * - Sung spans come from the same synced lines under versions.md "Where a song is sung" ([ForkV2Sung]:
+ *   a line about as long as its words take, then carved by the vocal mask), not upstream's spans (a
+ *   line without an end sung up to the next one); upstream's stand in only for a song whose lines
+ *   [ForkV2Sung] hasn't been given.
  */
 object ForkV2Loop {
 
     /**
-     * Upstream's [LoopMix.plan] signature. Under Automix v2, null with [why] filled when the pair plays
-     * the blend instead (no loop found, a gate, or the blend scored better).
+     * Upstream's [LoopMix.plan] signature, and upstream's plan under both styles: the owner's baseline
+     * (research/automix-baseline-2026-11-08.md, the extension at d26dc16, which is BitChord web's
+     * loopMix.ts and AutoDJ, the same engine as [LoopMix]). "No hacks to gain it on that song, the
+     * automix has to get it automatically alone": the latest instrumental loop near A's end, the
+     * earliest in B's opening, on the model's own downbeats, 4 enter bars, a ramp of 2.5 BPM a bar,
+     * whole incoming loops. Automix v2's own loop planning ([decide]: its gates, the loop on the blend's
+     * bars, the loop-or-blend score) is kept for the extension's fixtures only; the players never get it.
      */
     fun plan(
         out: TrackAnalysis,
@@ -60,23 +60,7 @@ object ForkV2Loop {
         inVideo: Boolean = false,
         why: StringBuilder? = null,
     ): LoopMix.Plan? {
-        if (ForkMixPicks.style != AutomixStyle.V2) {
-            return LoopMix.plan(out, outDuration, inn, inDuration, earliestOutSec, sungOut, sungIn, outVideo, inVideo, why)
-        }
-        if (outVideo || inVideo) return null.also { why?.append("a music video") }
-        val outId = out.trackId
-        val inId = inn.trackId
-        val from = ForkV2Automix.analysisOf(out, outId, outDuration)
-        val to = ForkV2Automix.analysisOf(inn, inId, inDuration)
-        val blend = ForkV2Automix.lastBlendFor(outId, inId)?.plan
-            ?: ForkV2Automix.planBlend(0, outId, inId, from, to, outDuration, max(0.0, earliestOutSec - ForkV2Planner.LOOP_SETUP_SEC), ForkV2Automix.overrideFor(outId, inId)).plan
-        val picked = ForkV2Automix.overrideFor(outId, inId)?.loop() == true
-        val d = decide(
-            from, levelAudio(out.levelWindows, outDuration), to, levelAudio(inn.levelWindows, inDuration),
-            earliestOutSec, sung(sungOut, sungIn), blend, picked,
-        )
-        if (d.plan == null) why?.append(d.why)
-        return d.plan
+        return LoopMix.plan(out, outDuration, inn, inDuration, earliestOutSec, sungOut, sungIn, outVideo, inVideo, why)
     }
 
     /** What [decide] found: the loop mix to play, or null and why the blend plays. */

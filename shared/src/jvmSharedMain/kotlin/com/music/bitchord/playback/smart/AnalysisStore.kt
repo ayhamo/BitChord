@@ -91,6 +91,7 @@ class AnalysisStore(
             // way, and a wrong beat grid is worse than none — so it is dropped
             // and re-earned rather than migrated.
             require(stored.version == SCHEMA_VERSION) { "schema ${stored.version}" }
+            require(stored.forkBeatSpans == ForkBeatSpans.VERSION) { "beats from the model windows (fork ${stored.forkBeatSpans})" } // fork: re-earned with ForkBeatSpans
             stored.toAnalysis(trackId)
         }
             .onFailure {
@@ -204,6 +205,7 @@ class AnalysisStore(
         val vocalWindows: List<StoredCurve> = emptyList(),
         val levelWindows: List<StoredCurve> = emptyList(),
         val forkKeyText: Boolean = false, // fork: saved since the analyser's ♯/♭ reach Kotlin whole (analysis_jni.cpp AppendString)
+        val forkBeatSpans: Int = 0, // fork: ForkBeatSpans.VERSION the beats were tracked with; 0: the model windows' seamed beats
     ) {
         fun toAnalysis(trackId: String) = TrackAnalysis(
             status = TrackAnalysis.STATUS_READY,
@@ -248,6 +250,7 @@ class AnalysisStore(
                 key = analysis.key,
                 keyConfidence = analysis.keyConfidence,
                 forkKeyText = true, // fork
+                forkBeatSpans = ForkBeatSpans.VERSION, // fork
                 audibleStartTime = analysis.audibleStartTime,
                 pickupTime = analysis.pickupTime,
                 introEndTime = analysis.introEndTime,

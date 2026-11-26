@@ -57,6 +57,8 @@ internal object DesktopPlayerHost : PlayerHost {
 
     override suspend fun canvasFor(song: Song): CanvasArtwork? = ForkClipColours.offer(song, ForkDesktopCanvas.canvasFor(song)) // fork: kept clips, else the cover clip at once; a Spotify backdrop follows (ForkCanvasSwitch.backdropFor); told to ForkClipColours
 
+    override suspend fun bestPartMs(song: Song): Long? = com.music.bitchord.data.canvas.ForkBestParts.awaitStart(song.videoId) // fork: v1.10's Best Part pill, with the fork's pick (was the interface's null)
+
     @Composable
     override fun CanvasVideo(spec: CanvasVideoSpec, modifier: Modifier) = DesktopCanvasVideo(spec, modifier)
 
@@ -193,11 +195,13 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
     override val audioQualityWifi = MutableStateFlow(AudioQuality.LOSSLESS)
     override val canvasOverCellular = MutableStateFlow(true)
     override val fullBleedArtwork = MutableStateFlow(false)
-    // fork: v1.10's members, off as the PC has no rows for them yet (no best part from the host: PlayerHost.bestPartMs is null here)
+    // fork: v1.10's members, off as the PC has no rows for them yet (Best Part button: its row in the canvas settings)
     override val showTotalDuration = MutableStateFlow(false)
     override val hideLyricsPreview = MutableStateFlow(false)
-    override val disableSpotifyCanvas = MutableStateFlow(false)
-    override val showBestPart = MutableStateFlow(false)
+    override val disableSpotifyCanvas: StateFlow<Boolean> = com.music.bitchord.data.canvas.ForkCanvasSettings.enabled // fork: was MutableStateFlow(false); the §13 list's Spotify switch, off = disabled
+        .map { com.music.bitchord.data.canvas.ForkCanvasRules.Source.SPOTIFY !in it }
+        .stateIn(CoroutineScope(Dispatchers.Default), SharingStarted.Eagerly, com.music.bitchord.data.canvas.ForkCanvasRules.Source.SPOTIFY !in com.music.bitchord.data.canvas.ForkCanvasSettings.enabled.value)
+    override val showBestPart: StateFlow<Boolean> get() = ForkPlayerSettings.showBestPart // fork: was MutableStateFlow(false); its row, and bestPartMs below
     override val hideSongStatus: StateFlow<Boolean> get() = ForkPlayerSettings.hideSongStatus // fork: was MutableStateFlow(false); its Settings row
     override val showQueueHistory: StateFlow<Boolean> get() = ForkPlayerSettings.showQueueHistory // fork: was MutableStateFlow(false); its Settings row
     override val hideVolumeBar: StateFlow<Boolean> get() = DesktopAppearanceSettings.hideVolumeBar // fork: was MutableStateFlow(false), so the row did nothing

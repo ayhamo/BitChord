@@ -41,18 +41,29 @@ object ForkV2EditorGeometry {
 
     /** The presets in the order the chip row shows them, with their names (editor.md §2; Echo out is reserved, §5). */
     val PRESET_NAMES = linkedMapOf(
-        "auto" to "Auto", "smooth" to "Smooth", "rise" to "Rise", "blend" to "Blend", "wave" to "Wave",
-        "melt" to "Melt", "slam" to "Slam", "loop" to "Loop", "custom" to "Custom",
+        "auto" to "Auto", "custom" to "Custom", "smooth" to "Fade", "rise" to "Rise", "wave" to "Wave", "blend" to "Blend",
+        "slam" to "Slam", "melt" to "Melt", "afterglow" to "Afterglow", "surge" to "Surge", "dissolve" to "Dissolve",
+        "none" to "No transition", "loop" to "Loop",
     )
 
     /** The lanes' shapes as the extension's dropdowns name them (automix-overview.js LANE_OPTIONS). */
+    /** The dropdowns' names: Spotify's, as its editor shows them (editor.md §2, spotify-mixes.md rule 4). */
     val SHAPE_NAMES = mapOf(
-        "smooth" to "Smooth", "crossfade" to "Crossfade", "overlap" to "Overlap", "cutInFadeOut" to "Cut in, fade out",
-        "fadeInCutOut" to "Fade in, cut out", "centerCut" to "Cut at the centre",
-        "centerBassSwap" to "Bass swap at the centre", "endBassSwap" to "Bass swap at the end",
-        "threeBandFade" to "Three-band fade", "quickBassCut" to "Quick bass cut", "none" to "None",
-        "lpOut" to "Low-pass out", "hpIn" to "High-pass in", "lpBoth" to "Low-pass both", "hpBoth" to "High-pass both",
-        "lpInHpOut" to "Low-pass in, high-pass out",
+        "smooth" to "Smooth crossfade", "crossfade" to "Crossfade", "overlap" to "Overlap", "cutInFadeOut" to "Cut in fade out",
+        "fadeInCutOut" to "Fade in cut out", "centerCut" to "Center cut", "fadeInFadeOut" to "Fade in fade out",
+        "fadeInFastOut" to "Fade in fast out", "fadeIn1BarCutOut" to "Fade in 1 bar cut out", "overlap1BarCutOut" to "Overlap 1 bar cut out",
+        "centerBassSwap" to "Center bass swap", "endBassSwap" to "End bass swap", "startBassSwap" to "Start bass swap",
+        "threeBandFade" to "3-band fade", "quickBassCut" to "Quick bass cut", "longBassCut" to "Long bass cut", "bassFadeOut" to "Bass fade out", "none" to "None",
+        "lpOut" to "Low pass filter out", "lpIn" to "Low pass filter in", "hpOut" to "High pass filter out",
+        "hpIn" to "High pass filter in", "lpBoth" to "LP in LP out", "hpBoth" to "HP in HP out",
+        "lpInHpOut" to "LP in HP out", "hpInLpOut" to "HP in LP out", "hpHalfOut" to "High-pass filter half out",
+        "noiseOutEnd" to "Noise out end",
+        "echo1CutEnd" to "Echo 1 cut end", "echo34CutEnd" to "Echo ¾ cut end", "echoHalfCutEnd" to "Echo ½ cut end",
+        "echo1OutEnd" to "Echo 1 out end", "echo34OutEnd" to "Echo ¾ out end", "echoHalfOutEnd" to "Echo ½ out end",
+        "delay34CutEnd" to "Delay ¾ cut end", "delayHalfCutEnd" to "Delay ½ cut end", "reverbCutEnd" to "Reverb cut end",
+        "reverbOutEnd" to "Reverb out end", "reverbOutCenter" to "Reverb out center",
+        "loop1" to "1 beat loop", "loop2" to "2 beat loop", "loop4" to "4 beat loop", "loop8" to "8 beat loop",
+        "loop16" to "16 beat loop", ForkV2MixOverride.DRAW to "Draw…",
     )
 
     // ---------------------------------------------------------------------------------------------
@@ -142,7 +153,8 @@ object ForkV2EditorGeometry {
         planOut: Double, planIn: Double, gridOut: EditorGrid?, gridIn: EditorGrid?,
     ): Pair<ForkV2MixOverride.Position, ForkV2MixOverride.Position> {
         val o = if (out) pos else ov?.out ?: positionOf(planOut, gridOut, false, false)
-        val i = if (!out) pos else ov?.`in` ?: positionOf(planIn, gridIn, false, false)
+        // (moving the mix-in keeps B's late entry: mix-file.md rule 2)
+        val i = if (!out) pos.also { if (it.delaySec == 0.0) it.delaySec = ov?.`in`?.delaySec ?: 0.0 } else ov?.`in` ?: positionOf(planIn, gridIn, false, false)
         return o to i
     }
 
@@ -153,7 +165,23 @@ object ForkV2EditorGeometry {
     fun nudged(now: ForkV2MixOverride.Position, dir: Int): ForkV2MixOverride.Position? {
         val n = now.nudgeMs + dir * NUDGE_MS
         if (abs(n) > NUDGE_MAX_MS) return null
-        return ForkV2MixOverride.Position(now.bar, now.beat, n, round((now.sec + dir * NUDGE_MS / 1000.0) * 1000) / 1000)
+        return ForkV2MixOverride.Position(now.bar, now.beat, n, round((now.sec + dir * NUDGE_MS / 1000.0) * 1000) / 1000, now.delaySec)
+    }
+
+    /**
+     * The window with B's late entry set to [sec] (mix-file.md rule 2, the editor's "B in after N s"; 0 clears it;
+     * automix-overview.js setLate): the mix-in as saved, or where the plan has it, with its delay, 0 to 60 s to 1 ms;
+     * null when that is the delay already.
+     */
+    fun withLate(
+        ov: ForkV2MixOverride?, sec: Double, planOut: Double, planIn: Double, gridOut: EditorGrid?, gridIn: EditorGrid?,
+    ): Pair<ForkV2MixOverride.Position, ForkV2MixOverride.Position>? {
+        if (!sec.isFinite()) return null
+        val now = ov?.`in` ?: positionOf(planIn, gridIn, false, false)
+        val want = round(min(max(sec, 0.0), 60.0) * 1000) / 1000
+        if (want == now.delaySec) return null
+        val o = ov?.out ?: positionOf(planOut, gridOut, false, false)
+        return o to ForkV2MixOverride.Position(now.bar, now.beat, now.nudgeMs, now.sec, want)
     }
 
     const val NUDGE_REFUSED = "Nudges reach 2 s at most: drag the song instead"
@@ -163,9 +191,9 @@ object ForkV2EditorGeometry {
 
     /** The lanes a first change starts from: the custom ones, else the preset's, else Smooth's (lanesNow). */
     fun lanesNow(ov: ForkV2MixOverride?): Array<String> {
-        val l = if (ov?.preset == "custom") arrayOf(ov.volume, ov.eq, ov.effect) else ForkV2MixOverride.lanesOf(ov?.preset)
+        val l = if (ov?.preset == "custom") ov.lanes() else ForkV2MixOverride.lanesOf(ov?.preset)
         val s = ForkV2MixOverride.lanesOf("smooth")!!
-        return Array(3) { k -> l?.get(k) ?: s[k]!! }
+        return Array(ForkV2MixOverride.LANES.size) { k -> l?.get(k) ?: s[k]!! }
     }
 
     /**
@@ -182,6 +210,9 @@ object ForkV2EditorGeometry {
             n.volume = null
             n.eq = null
             n.effect = null
+            n.fx = null
+            n.looping = null
+            n.drawings.clear()
         }
         if (n.loop()) {
             n.bars = 0
@@ -208,6 +239,7 @@ object ForkV2EditorGeometry {
         m.style == "crossfade" -> if (m.handoff) "Auto · Hand-over" else if (m.bridge) "Auto · Bridge" else "Auto · Fade"
         m.shape == "dropin" -> "Auto · Drop-in"
         m.shape == "muffle" -> "Auto · Muffle"
+        m.shape == "echo" -> "Auto · Echo out"
         m.glide != null -> "Auto · Glide"
         else -> "Auto · Blend"
     }
@@ -239,6 +271,7 @@ object ForkV2EditorGeometry {
             m.style == "filter" -> "Filter mix"
             m.shape == "dropin" -> "Drop-in"
             m.shape == "muffle" -> "Muffle"
+            m.shape == "echo" -> "Echo out"
             m.glide != null -> "Glide blend"
             else -> "Blend"
         }
@@ -269,7 +302,11 @@ object ForkV2EditorGeometry {
 
     /** "A mixes out at 3:12.4 (bar 81) · B enters at 0:32.4 (bar 17)": bars count from 1 on screen. */
     fun readout(out: ForkV2MixOverride.Position, `in`: ForkV2MixOverride.Position): String =
-        "A mixes out at ${fmtSec(out.sec)} (bar ${out.bar + 1}) · B enters at ${fmtSec(`in`.sec)} (bar ${`in`.bar + 1})"
+        "A mixes out at ${fmtSec(out.sec)}${barNo(out)} · B enters at ${fmtSec(`in`.sec)}${barNo(`in`)}" +
+            (if (`in`.delaySec > 0) ", ${forkV2Js(`in`.delaySec)} s into the mix" else "") // B's late entry (mix-file.md rule 2)
+
+    /** " (bar 81)"; nothing for a position in seconds only, until it is moved (editor.md §6 "Seconds only"). */
+    private fun barNo(p: ForkV2MixOverride.Position): String = p.bar?.let { " (bar ${it + 1})" } ?: ""
 
     /** The mixing clock under the overview: "Mix in 1:05", "Mixing · 0:04 / 0:15", or nothing once it's over. [at]: mix seconds. */
     fun mixClock(at: Double, D: Double): String = when {

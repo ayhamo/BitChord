@@ -8,7 +8,6 @@ import com.music.bitchord.playback.smart.LoopMix
 import com.music.bitchord.playback.smart.TrackAnalysis
 import com.music.bitchord.playback.smart.automixv2.ForkV2LoopGate
 import java.util.Locale
-import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -25,7 +24,7 @@ import kotlinx.coroutines.launch
  * "The loop mix" section). Both songs loop instrumental bars while one tempo ramps from the outgoing
  * song's to the incoming one's; the incoming loop lets go into its own song, which its deck hands over
  * to two bars later. The plan and its clock are the shared `LoopMix`; the gains go through
- * `ForkAutomix.trimmedGains` (the fix for the crackle a 16-bit output clipped into on the phone).
+ * `ForkAutomix.loopGains` (the owner's baseline curves, as on the phone).
  *
  * What is different from the phone is where it plays. The phone has a player per song and renders the
  * mix inside the outgoing player's sink, then lines the incoming player up against it by measuring
@@ -60,6 +59,8 @@ internal class ForkLoopPair(
     val positionSec: Double,
     val sampleRate: Int,
     val channels: Int,
+    /** Fork: the output's speaker mask (0 = the channel count's usual layout), for [ForkLoopChannels.frontPair]. */
+    val channelMask: Long = 0L,
     val automix: Boolean,
     val inParty: Boolean,
     val speed: Float,
@@ -70,6 +71,9 @@ internal class ForkLoopPair(
     val swapping: Boolean,
     /** The Automix overlap chosen in Settings: 0 adaptive, else a fixed 8 or 16 bars. */
     val phraseBars: Int = 0,
+    /** Fork: [outAnalysis] / [inAnalysis] are the playing copy's own (ForkCopyAnalysis), so [ForkLoopMixRules.analysedCopy] holds. */
+    val outCopy: Boolean = false,
+    val inCopy: Boolean = false,
 ) {
     val pairKey: String get() = "${outSong.videoId}->${inSong.videoId}"
 }
@@ -117,11 +121,11 @@ internal object ForkLoopMixRules {
         p.inParty -> "in a Listen Together party"
         p.speed != 1f -> "playback speed is not 1x"
         p.skipSilence -> "skip silence is on"
-        p.channels != 2 || p.sampleRate <= 0 -> "this output can't take it"
+        !ForkLoopChannels.frontPair(p.channels, p.channelMask) || p.sampleRate <= 0 -> "this output can't take it" // fork: was channels != 2 (ForkLoopChannels)
         abs(p.deckRate - 1.0) > 1e-9 -> "the song is still easing out of its own mix"
         p.swapping -> "a better copy is crossing in"
         p.outState !in MEASURED || p.inState !in MEASURED -> "waiting on analysis"
-        !analysedCopy(p.outSong, p.outStream) || !analysedCopy(p.inSong, p.inStream) -> "analysed off another recording"
+        !(p.outCopy || analysedCopy(p.outSong, p.outStream)) || !(p.inCopy || analysedCopy(p.inSong, p.inStream)) -> "analysed off another recording" // fork: p.outCopy || / p.inCopy || (ForkCopyAnalysis)
         p.outDurationSec <= 0 || p.inDurationSec <= 0 -> "no duration"
         else -> null
     }
@@ -333,6 +337,20 @@ internal class ForkLoopMixSession private constructor(
         else -> max
     }
 
+    /** Where the outgoing deck has fallen silent (its `stopAt`): the two songs' decks sum from mix frame 0 up to here. */
+    val outEndFrame: Long = ((clock.releaseAt + OUT_TAIL_SEC) * sr).roundToLong()
+
+    /**
+     * Whether the block at mix frame [mf] sums two sources and so goes under the −1 dBFS mix limiter, as a clip guard
+     * only (the extension at 7f110ae, versions.md "The loop mix's baseline" rule 1): both decks from the loop start
+     * until the outgoing one stops, at the baseline's untrimmed gains (the sum sat at -1 dBFS through the extension's
+     * recording of the baseline pair, and would clip without it), and the incoming deck with its own decoder over the
+     * handover. Between the two the incoming deck plays alone and stays under it too: the limiter is on while any deck
+     * sounds, up to the take-over (versions.md fd53b38f "The mix's ceiling" rule 1: B's run-on after the release
+     * clipped on the phone without it).
+     */
+    fun summing(mf: Long): Boolean = mf < handoverEndFrame
+
     /** The renderer's [frames] frames from mix frame [mf], interleaved; the array is reused. */
     fun render(mf: Long, frames: Int): FloatArray {
         if (mixed.size < frames * 2) mixed = FloatArray(frames * 2)
@@ -391,6 +409,9 @@ internal class ForkLoopMixSession private constructor(
 
     companion object {
         const val NONE = Long.MIN_VALUE
+
+        /** The outgoing deck rings this far past its release, then stops ([outEndFrame]). */
+        const val OUT_TAIL_SEC = 0.05
 
         /** Seconds of the song listened to before the splice, for [alignOut]. */
         const val CAPTURE_SECONDS = 0.5
@@ -499,7 +520,7 @@ internal class ForkLoopMixSession private constructor(
                 knotFrames = DoubleArray(beats + 1) { clock.beatTimes[it] * sr },
                 knotPositions = DoubleArray(beats + 1) { samplesOf(outRegion, clock.outPositionAt(it)) },
                 runOn = false,
-                stopAt = clock.releaseAt + 0.05,
+                stopAt = clock.releaseAt + OUT_TAIL_SEC,
                 preroll = 0.4,
                 level = 1f,
                 sampleRate = sampleRate,
@@ -521,23 +542,16 @@ internal class ForkLoopMixSession private constructor(
                 sampleRate = sampleRate,
             )
             // Gains: the outgoing deck takes over from its song, the incoming loop rises over the
-            // entry and the ramp, the outgoing one falls away — trimmed where they overlap past full
-            // scale, the phone's fix for the crackle (ForkAutomix.trimmedGains).
+            // entry and the ramp, the outgoing one falls away: the owner's baseline curves, no trim
+            // (ForkAutomix.loopGains, the phone's too).
             val h = LoopMix.HANDOVER_SEC
-            val gains = ForkAutomix.trimmedGains(
-                outTimes = doubleArrayOf(-h, 0.0, clock.enterEnd, clock.rampEnd, clock.releaseAt),
-                outGains = floatArrayOf(0f, 1f, 1f, 0.6f, 0f),
-                inTimes = doubleArrayOf(0.0, clock.enterEnd, clock.rampEnd),
-                inGains = floatArrayOf(0f, 0.55f, 1f),
-            )
+            val gains = ForkAutomix.loopGains(clock.enterEnd, clock.rampEnd, clock.releaseAt, h)
             outDeck.gain = ForkLoopEnvelope(gains.outTimes, gains.outGains)
             inDeck.gain = ForkLoopEnvelope(gains.inTimes, gains.inGains)
             // Bass: the incoming loop comes in without it; they swap over one bar mid-ramp.
-            val swapFrom = clock.handoffAt - clock.swapBar / 2
-            val swapTo = clock.handoffAt + clock.swapBar / 2
-            val cut = LoopMix.BASS_CUT_DB.toFloat()
-            outDeck.lowDb = ForkLoopEnvelope(doubleArrayOf(swapFrom, swapTo), floatArrayOf(0f, cut))
-            inDeck.lowDb = ForkLoopEnvelope(doubleArrayOf(swapFrom, swapTo), floatArrayOf(cut, 0f))
+            val swap = ForkAutomix.loopBassSwap(clock.handoffAt, clock.swapBar)
+            outDeck.lowDb = ForkLoopEnvelope(swap.times, swap.outDb)
+            inDeck.lowDb = ForkLoopEnvelope(swap.times.copyOf(), swap.inDb)
             // The outgoing loop drains away through a rising high-pass once the tempo has arrived.
             outDeck.highPassHz = ForkLoopEnvelope(
                 doubleArrayOf(clock.rampEnd, clock.releaseAt),
@@ -596,8 +610,10 @@ internal class ForkDesktopLoopMix(private val scope: CoroutineScope) {
     /** Synced-lyric spans per song, once asked: [Spans.spans] null when it has none. */
     private class Spans(val spans: List<LoopMix.Span>?)
 
-    private val lyricSpans = ConcurrentHashMap<String, Spans>()
-    private val lyricsAskedAt = ConcurrentHashMap<String, Long>()
+    // Bounded (forkLruMap): one entry per song the mix ever planned, for as long as the app ran.
+    // A song evicted is asked again, as a new one is. putIfAbsent stays atomic under the map's lock.
+    private val lyricSpans = com.music.bitchord.data.forkLruMap<String, Spans>(64)
+    private val lyricsAskedAt = com.music.bitchord.data.forkLruMap<String, Long>(64)
     private val noLyricsYet = Spans(null)
 
     /**
@@ -784,15 +800,11 @@ internal class ForkDesktopLoopMix(private val scope: CoroutineScope) {
         if (lyricsAskedAt.putIfAbsent(id, System.currentTimeMillis()) != null) return
         scope.launch {
             val lines = runCatching { DesktopLyricsClient.lookup(song, (durationSec * 1000).roundToLong()).getOrNull()?.lines }.getOrNull()
-            // Only line-synced lyrics say where a voice is; plain text says nothing about time.
-            val spans = lines?.takeIf { found -> found.count { it.timeMs > 0 } >= 4 }?.let { found ->
-                LoopMix.sungSpans(
-                    found.map { line ->
-                        val end = line.sungUntilMs ?: line.words.lastOrNull()?.endMs
-                        LoopMix.Line(line.timeMs, end, blank = line.isGap || line.text.isBlank())
-                    },
-                )
-            }
+            // Automix v2 reads the same lines under its own rule (versions.md "Where a song is sung"), before the
+            // loop mix's spans land, so a plan that sees those sees these
+            com.music.bitchord.playback.smart.automixv2.ForkV2SungLyrics.remember(id, lines)
+            // the baseline's loop spans (ForkLoopLyrics, the extension's loopSpansFromLines); blends keep ForkV2Sung's
+            val spans = com.music.bitchord.playback.smart.ForkLoopLyrics.spans(lines, song.title, song.artist)
             lyricSpans[id] = Spans(spans)
         }
     }
@@ -867,5 +879,48 @@ internal class ForkDesktopLoopMix(private val scope: CoroutineScope) {
                 decoder.close()
             }
         }
+    }
+}
+
+/**
+ * Fork (owner 2026-11-25: "u can use stereo also"): the loop mix on an output of more than two channels. The
+ * renderer stays stereo, as Windows plays any stereo app: its left and right go out on the layout's front left and
+ * front right and the other channels are silent ([spread]), and the songs' own blocks, which arrive in the output's
+ * layout (a stereo song padded onto the front pair, [ForkMultichannel]), are folded to stereo for it ([fold]). An
+ * output with no front pair (mono, an unknown layout) still refuses the mix ([frontPair]). A stereo output takes
+ * neither: its blocks go through as they always did, so the loop's plan and timing are the same on every output.
+ */
+internal class ForkLoopChannels {
+    private val folder = ForkChannelAdapter()
+    private val spreader = ForkChannelAdapter()
+
+    /** Samples in the last [fold]'s or [spread]'s result. */
+    var count = 0
+        private set
+
+    /** [block] ([samples] in [format]'s layout) folded to interleaved stereo; [block] itself for a stereo format. */
+    fun fold(block: FloatArray, samples: Int, format: DesktopPcmFormat): FloatArray {
+        if (format.channels == 2) {
+            count = samples
+            return block
+        }
+        count = folder.adapt(block, samples, format, format.copy(channels = 2, forkChannelMask = 0L))
+        return folder.output
+    }
+
+    /** Interleaved stereo [block] ([samples]) onto [format]'s front left/right, the rest silent; [block] itself for stereo. */
+    fun spread(block: FloatArray, samples: Int, format: DesktopPcmFormat): FloatArray {
+        if (format.channels == 2) {
+            count = samples
+            return block
+        }
+        count = spreader.adapt(block, samples, format.copy(channels = 2, forkChannelMask = 0L), format)
+        return spreader.output
+    }
+
+    companion object {
+        /** Whether a layout of [channels] ([mask], 0 = the count's usual one) has a front left and right to play the mix on. */
+        fun frontPair(channels: Int, mask: Long = 0L): Boolean =
+            channels >= 2 && ForkChannelLayout.maskOf(channels, mask) and ForkChannelLayout.STEREO == ForkChannelLayout.STEREO
     }
 }

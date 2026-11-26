@@ -34,8 +34,9 @@ import java.io.File
  *  - the rulebook's sources go through [ForkCanvasStore] (§2);
  *  - a downloaded song reads its clips saved by its id first, Spotify's canvas and then its art
  *    clip (rules 1.5 and 2.5, [ForkDownloadedCanvas]), and a clip found for it is kept by its id;
- *  - Spotify: the signed-in route (`DesktopSpotifyCanvas`) with an `sp_dc` cookie, else the
- *    rulebook's anonymous one ([ForkAnonymousSpotifyCanvas]).
+ *  - Spotify (rule 4.0): the listener's own sign-in first (`DesktopSpotifyCanvas`, its clip kept only
+ *    on `scdn.co`), then, with no sign-in or when it finds nothing or fails, the anonymous lookup
+ *    ([ForkAnonymousSpotifyCanvas]), else none.
  *
  * The client's `firstHit` moves its last source to the front when "Prioritize Spotify Canvas" is on
  * (`ForkSpotifyCanvasFirst.ordered`, for the album lists too). So [song] always ends with Spotify,
@@ -73,7 +74,7 @@ internal object ForkDesktopCanvasSources {
         ForkCanvasSwitch.videos.value = prefs.get(KEY_VIDEOS, null) != "off"
         ForkCanvasSettings.load(store, ForkCanvasSwitch.videos.value)
         ForkCanvasSwitch.videos.value = ForkCanvasSettings.videoOn()
-        ForkBestParts.loadSettings(store)
+        if (ForkBestParts.takeOldButtonOff(store)) ForkPlayerSettings.setShowBestPart(false) // the fork's old Best part button, off: v1.10's pill off
     }
 
     /** "Music video canvas", the music video's switch in the sources list too. */
@@ -108,11 +109,14 @@ internal object ForkDesktopCanvasSources {
         val covers = covers(song, title, artist, album)
         val spotifyFirst = ForkSpotifyCanvasFirst.prioritized.value
         val backdrops = backdrops(song, title, artist, album, order(song, spotifyFirst))
+        // The phone's order: the clips saved by id first (rule 1.5, they answer offline), then with
+        // "Prioritise Spotify Canvas" the backdrops in their order (Spotify first) and the covers.
         // The client's firstHit moves the last source to the front when Spotify is prioritised, so
-        // Spotify goes last then (the same order it asks in: Spotify, the video, the covers).
-        val spotify = backdrops.filter { it.first == ForkCanvasRules.Source.SPOTIFY }.map { it.second }
-        val others = backdrops.filter { it.first != ForkCanvasRules.Source.SPOTIFY }.map { it.second }
-        return (savedById(song) + if (spotifyFirst) others + covers + spotify else covers + backdrops.map { it.second }).toTypedArray()
+        // the list is handed over turned the other way ([ForkSpotifyCanvasFirst.forOrdered]). Moving
+        // Spotify to the end for it put the community index first when Spotify was off, and a
+        // network Spotify lookup before a downloaded song's saved clip (audit 2026-11-24).
+        val asked = savedById(song) + if (spotifyFirst) backdrops.map { it.second } + covers else covers + backdrops.map { it.second }
+        return ForkSpotifyCanvasFirst.forOrdered(asked, spotifyFirst).toTypedArray()
     }
 
     /** The backdrops worth asking beside a cover clip already shown (those ordered before the cover). */
@@ -170,7 +174,10 @@ internal object ForkDesktopCanvasSources {
 
     private fun readText(url: String): String? {
         val request = okhttp3.Request.Builder().url(url).build()
-        return com.music.bitchord.data.Http.client.newCall(request).execute().use { if (it.isSuccessful) it.body?.string() else null }
+        // capped (ForkCappedBody): an HLS master list is a few KB; anything past 256 KB is not one
+        return com.music.bitchord.data.Http.client.newCall(request).execute().use {
+            if (it.isSuccessful) com.music.bitchord.data.ForkCappedBody.text(it, 256 * com.music.bitchord.data.ForkCappedBody.KB) else null
+        }
     }
 
     /**
@@ -254,13 +261,30 @@ internal object ForkDesktopCanvasSources {
 
     private suspend fun spotifySearch(song: Song, title: String, artist: String, album: String?): DesktopCanvasArtwork? =
         cached(ForkCanvasRules.spotifyKey(title, artist)) {
-            if (DesktopSpotifyToken.cookie().isBlank()) {
+            signedInSpotify(title, artist, album) ?: run {
                 val songMs = ForkMusicVideoMatch.lengthOf(song.durationText) * 1000
                 ForkAnonymousSpotifyCanvas.search(title, artist, album, songMs.takeIf { it > 0 })?.toDesktop()
-            } else {
-                DesktopSpotifyCanvas.search(title, artist, album)
             }
         }
+
+    /**
+     * Rule 4.0's first step: the listener's own sign-in, or null to go on to the anonymous lookup
+     * (no sign-in, nothing found, a clip not on `scdn.co` over https, or a failure; the token's
+     * backoff and a thrown search are reported, so the song isn't saved as a miss then).
+     */
+    private fun signedInSpotify(title: String, artist: String, album: String?): DesktopCanvasArtwork? {
+        if (DesktopSpotifyToken.cookie().isBlank()) return null
+        val found = try {
+            DesktopSpotifyCanvas.search(title, artist, album)
+        } catch (e: Exception) {
+            return com.music.bitchord.data.canvas.ForkCanvasLookup.failed("Spotify (signed in): ${e.message}")
+        }
+        if (found != null && !com.music.bitchord.data.canvas.ForkSpotifyCanvasRules.trusted(found.url)) {
+            DesktopTrackLog.log("canvas: Spotify (signed in): the clip is not on scdn.co; not taken")
+            return null
+        }
+        return found
+    }
 
     /** [ForkCanvasStore.cached] for the PC's own artwork type. */
     private suspend fun cached(key: String, saveMiss: Boolean = true, lookUp: suspend () -> DesktopCanvasArtwork?): DesktopCanvasArtwork? =

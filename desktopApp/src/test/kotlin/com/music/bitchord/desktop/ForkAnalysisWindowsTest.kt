@@ -57,4 +57,17 @@ class ForkAnalysisWindowsTest {
         assertEquals(listOf("b"), queue.pendingIds())
         assertEquals(false, queue.isRelevant("a"))
     }
+
+    /** A queued song the pair moved past is handed back, so its "waiting its turn" row can be ended. */
+    @Test
+    fun theQueueHandsBackWhatAFocusOrAClearDrops() {
+        val queue = ForkAnalysisQueue<String>()
+        queue.focus("a", "b")
+        queue.offer("a", "playing")
+        queue.offer("b", "next")
+        assertEquals(listOf("a"), queue.focus("b", "c"))
+        assertEquals(listOf("b"), queue.pendingIds())
+        assertEquals(listOf("b"), queue.clear())
+        assertEquals(emptyList<String>(), queue.clear())
+    }
 }

@@ -443,6 +443,7 @@ internal object DesktopSpotifyToken {
     fun cookie(): String = DesktopPersistence().string(KEY_SPDC).trim()
 
     fun setCookie(value: String) {
+        forkGeneration.bump() // fork: first, so a mint in flight stores nothing (ForkTokenGeneration)
         DesktopPersistence().saveString(KEY_SPDC, value.trim())
         cachedAccessToken = null
         accessTokenExpiresAtMs = 0L
@@ -451,8 +452,21 @@ internal object DesktopSpotifyToken {
         com.music.bitchord.data.canvas.ForkCanvasLookup.clearNotes() // fork: songs held back by the old sign-in's backoff are asked again
     }
 
+    /** Fork: the sign-in a mint was started under ([setCookie] and [forkForgetTokens] bump it). */
+    private val forkGeneration = com.music.bitchord.data.canvas.ForkTokenGeneration()
+
+    /** Fork: a token minted for a sign-in that has since ended, undone; null to the caller. */
+    private fun forkDropMinted(): String? {
+        cachedAccessToken = null
+        accessTokenExpiresAtMs = 0L
+        cachedClientId = null
+        DesktopTrackLog.log("canvas: a Spotify token minted before the sign-in changed was dropped")
+        return null
+    }
+
     /** Fork: the cached tokens and the 30-minute backoff dropped, for a Retry (ForkSpotifyLibraryRetry). */
     fun forkForgetTokens() {
+        forkGeneration.bump()
         cachedAccessToken = null
         accessTokenExpiresAtMs = 0L
         retryAfterMs = 0L
@@ -464,6 +478,7 @@ internal object DesktopSpotifyToken {
 
     @Synchronized
     fun accessToken(): String? {
+        val forkGen = forkGeneration.start() // fork: before the cookie, so a sign-out after this read voids the mint
         val cookie = cookie().ifBlank { return null }
         val now = System.currentTimeMillis()
         cachedAccessToken?.let { if (now < accessTokenExpiresAtMs - 30_000) return it }
@@ -474,6 +489,7 @@ internal object DesktopSpotifyToken {
             cachedAccessToken = minted.token
             accessTokenExpiresAtMs = minted.expiresAtMs ?: (now + 3_600_000)
             minted.clientId?.let { cachedClientId = it }
+            if (!forkGeneration.current(forkGen)) return forkDropMinted() // fork: signed out (or into another account) while it minted
             return minted.token
         }
 
@@ -490,6 +506,7 @@ internal object DesktopSpotifyToken {
         cachedAccessToken = signed.accessToken // fork: the three lines read `signed` (were the parsed answer)
         accessTokenExpiresAtMs = signed.expiresAtMs
         cachedClientId = signed.clientId
+        if (!forkGeneration.current(forkGen)) return forkDropMinted() // fork: signed out (or into another account) while it minted
         return signed.accessToken
     }
 

@@ -37,8 +37,9 @@ internal object ForkYouTubeHistory {
 
     private lateinit var saved: NavidromePlatform.Store
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val matches = ConcurrentHashMap<String, String>()
-    private val songs = ConcurrentHashMap<String, Song>()
+    // Bounded (forkLruMap): they grew by every Navidrome song played; an evicted one is matched again.
+    private val matches = com.music.bitchord.data.forkLruMap<String, String>(500)
+    private val songs = com.music.bitchord.data.forkLruMap<String, Song>(500)
 
     /** Navidrome ids being searched for, so a pause and resume doesn't start a second search. */
     private val searching: MutableSet<String> = ConcurrentHashMap.newKeySet()

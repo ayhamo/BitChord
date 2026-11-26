@@ -2,6 +2,7 @@ package com.music.bitchord.playback.smart.automixv2
 
 import com.music.bitchord.playback.smart.AutomixStyle
 import com.music.bitchord.playback.smart.FilterTransitionVariant
+import com.music.bitchord.playback.smart.ForkAnalysisProgress
 import com.music.bitchord.playback.smart.ForkMixPicks
 import com.music.bitchord.playback.smart.TrackAnalysis
 import com.music.bitchord.playback.smart.TransitionPlan
@@ -21,7 +22,7 @@ import kotlin.math.roundToInt
  * What it does with a pair, the way the extension's crossfade.js asks automix.js for a plan:
  * - Both songs' [TrackAnalysis] are read as the port's [ForkV2Analysis] ([ForkV2FromTrackAnalysis]),
  *   with the whole-song evidence each app measured while analysing ([evidence]: sub-bass ratio, bass
- *   and loudness curves, pitch profiles and the key from [ForkV2KeyStrength]). Without evidence the
+ *   and loudness curves, pitch profiles and the key from [ForkKeyExtractor]). Without evidence the
  *   key's confidence is 0, as the phone app sets it for the native analyser's key: that analyser's
  *   "confidence" is a 0-0.1 best-to-second gap and would never be trusted anyway.
  * - [ForkV2Planner.plan] with version 3 (Automix v2), the app's phrase length as "Up to N bars"
@@ -55,6 +56,9 @@ object ForkV2Automix {
      * long before its ramp.
      */
     const val LATCH_LEAD_SEC = ForkV2Mix.HAND_LEAD + 0.5
+
+    /** The plan's reason for a pair set to No transition (editor.md §2): blocked, so neither app mixes or crossfades it. */
+    const val NO_TRANSITION = "No transition: the next song starts when this one ends"
 
     /**
      * A song's Automix v2 evidence by track id, or null when it was never measured. Set by each app
@@ -96,6 +100,21 @@ object ForkV2Automix {
         return withDuration(a, durationSec)
     }
 
+    /** [t] as v2 reads it with [ev] merged in, as [analysisOf] but from no store or memo (the Spotify benchmark). */
+    fun analysisWith(t: TrackAnalysis, id: String, ev: ForkV2Analysis?): ForkV2Analysis {
+        val a = ForkV2FromTrackAnalysis.map(t)
+        if (a.fileKey.isNullOrBlank()) a.fileKey = id
+        merge(a, ev)
+        return a
+    }
+
+    /** A copy of [a] with [ev] merged in afresh (the Spotify benchmark's evidence-only pass, as the app's backfill). */
+    fun withEvidence(a: ForkV2Analysis, ev: ForkV2Analysis?): ForkV2Analysis {
+        val c = a.copy()
+        merge(c, ev)
+        return c
+    }
+
     private fun withDuration(a: ForkV2Analysis, durationSec: Double): ForkV2Analysis {
         if (a.durationSec > 0 || !(durationSec > 0)) return a
         val c = a.copy()
@@ -103,7 +122,7 @@ object ForkV2Automix {
         return c
     }
 
-    /** The evidence fields into [a]; the key only when [ForkV2KeyStrength] named one the grid table reads. */
+    /** The evidence fields into [a]; the key only when [ForkKeyExtractor] named one the grid table reads. */
     internal fun merge(a: ForkV2Analysis, ev: ForkV2Analysis?) {
         // The native analyser's key confidence is a 0-0.1 gap, never the 0.5-0.9 correlation v2's rules read.
         a.keyConfidence = 0.0
@@ -113,6 +132,12 @@ object ForkV2Automix {
         a.loudnessCurve = ev.loudnessCurve
         a.chroma = ev.chroma
         a.chromaCurve = ev.chromaCurve
+        // the intro and outro the PC's way, over 4 bars of the head grid (ForkV2Sections; master, 2026-11-25)
+        val beat = if (a.beatIntervalSec > 0) a.beatIntervalSec else a.tailGrid?.beatIntervalSec ?: Double.NaN
+        ForkV2Sections.introOutro(ev.powerCurve, beat, ev.durationSec)?.let { (intro, outro) ->
+            a.introEndSec = intro
+            a.outroStartSec = outro
+        }
         val key = ev.keyName
         if (key != null && ev.keyConfidence > 0) {
             val probe = ForkV2Analysis()
@@ -158,7 +183,12 @@ object ForkV2Automix {
         ov: ForkV2MixOverride?,
     ): ForkV2Transition {
         val earliest = pos + LATCH_LEAD_SEC
-        val planned = ForkV2Planner.plan(settings(phraseBars), fromId, toId, from, to, durationSec, pos, earliest, null, ov)
+        val s = settings(phraseBars)
+        // each song's playlist speed (spotify-mixes.md rule 10)
+        ForkSongSpeed.pair(fromId, toId)?.let { s.speedOut = it[0]; s.speedIn = it[1] }
+        // the songs' sung spans where their lyrics came in (versions.md "Where a song is sung"), else the vocal mask
+        // (Automix v2's blend the curator's way where it fits: analysis-cases.md "The curator blend")
+        val planned = ForkV2Planner.planAuto(s, fromId, toId, from, to, durationSec, pos, earliest, ForkV2Sung.liveSung(fromId, toId), ov)
         val p = kickLocked(planned, fromId, toId, pos)
         return ForkV2Transition(p, ForkV2Mix.blend(p, fromId, toId, durationSec))
     }
@@ -227,6 +257,7 @@ object ForkV2Automix {
         albumSequential: Boolean,
         phraseBars: Int = 0,
     ): TransitionPlan? {
+        ForkAnalysisProgress.notePair(currentTrack?.id ?: analysis.trackId, nextTrack?.id ?: nextAnalysis.trackId) // the editor's progress row, any style
         if (style != AutomixStyle.V2 || albumSequential) return null
         val length = max(duration.takeIf { it.isFinite() } ?: 0.0, (currentTrack?.durationMs ?: 0L) / 1000.0)
         if (length < MIN_DURATION_SEC || spokenOrLive(currentTrack) || spokenOrLive(nextTrack)) {
@@ -252,9 +283,22 @@ object ForkV2Automix {
         // The store's change counter too, so no memo outlives a write to the store (a restored backup
         // re-installs it without any one pair's JSON telling): an edit is planned at once, unless the
         // latch above already holds the armed plan (editor.md §8, "for the next time").
-        val ovKey = ov?.let { ForkV2Json.write(it.toJson()) + it.migrated }.orEmpty() + "#" + ForkV2OverrideStore.changes.value
+        val ovKey = ov?.let { ForkV2Json.write(it.toJson()) + it.migrated }.orEmpty() + "#" + ForkV2OverrideStore.changes.value +
+            "#" + ForkSongSpeed.on // (the songs' speeds play only while it is on)
         val memoKey = "$key|${from?.let { mapKey(analysis) }}|${to?.let { mapKey(nextAnalysis) }}|$ovKey"
         val second = floor(pos).toLong()
+        if (ov?.preset == "none") {
+            // No transition (editor.md §2): no mix and no crossfade, B starts when A ends. The blend is still planned for
+            // the editor, which shows the pair with its presets to pick another.
+            if (memo?.let { it.key == memoKey && it.second == second } != true) {
+                val tr = planBlend(bars, curId, nextId, from, to, length, pos, ov)
+                memo = Memo(memoKey, second, toTransitionPlan(tr, pos))
+                ForkV2EditorFeed.note(curId, nextId, tr.plan, from, to, length, pos + LATCH_LEAD_SEC)
+            }
+            latch = null
+            ForkMixPicks.notePlannedNothing()
+            return TransitionPlan(blocked = true, reason = NO_TRANSITION)
+        }
         memo?.takeIf { it.key == memoKey && it.second == second }?.let { m ->
             return m.plan.copy(shouldStart = pos >= m.plan.transitionStart, reason = tag(m.plan.forkV2!!, pos >= m.plan.transitionStart))
         }
@@ -343,7 +387,8 @@ object ForkV2Automix {
             else -> TransitionStyle.EQUAL_POWER
         }
         val crossfade = p.style == "crossfade"
-        val outRate = if (p.style == "blend" && !t.glides && p.outRate > 0) p.outRate else 1.0
+        // (a song's playlist speed: A is at it already, whatever the style; rule 10)
+        val outRate = if (ForkSongSpeed.off1(p.speedOut)) p.speedOut else if (p.style == "blend" && !t.glides && p.outRate > 0) p.outRate else 1.0
         val inRate = t.incomingStartRate
         val fade = fadeSeconds(t)
         val beats = if (crossfade) 0 else p.bars * 4
@@ -357,7 +402,7 @@ object ForkV2Automix {
             fadeSeconds = fade,
             transitionStyle = transitionStyle,
             incomingCueTime = max(0.0, p.mixInTrackTime),
-            incomingHandoffTime = max(0.0, p.mixInTrackTime) + t.incomingSongSeconds,
+            incomingHandoffTime = max(0.0, p.mixInTrackTime) + t.incomingSongSeconds - (if (p.inDelaySec > 0) p.inDelaySec * inRate else 0.0), // (B's late entry: it starts that long in)
             incomingPlaybackRate = round4(inRate),
             outgoingPlaybackRate = round4(outRate),
             handoffDuration = fade,
@@ -381,7 +426,7 @@ object ForkV2Automix {
     internal fun fadeSeconds(t: ForkV2Transition): Double {
         val p = t.plan
         if (!(t.outputSeconds > 0)) return 0.0
-        val outRate = if (p.style == "blend" && !t.glides && p.outRate > 0) p.outRate else 1.0
+        val outRate = if (ForkSongSpeed.off1(p.speedOut)) p.speedOut else if (p.style == "blend" && !t.glides && p.outRate > 0) p.outRate else 1.0
         return t.incomingSongSeconds * outRate / t.incomingStartRate
     }
 

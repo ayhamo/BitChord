@@ -292,7 +292,14 @@ object ForkCanvasSettings {
         if (now == _enabled.value) return
         _enabled.value = now
         save(KEY_ENABLED, storeEnabled(now))
+        onSourceSet?.invoke(source, on)
     }
+
+    /**
+     * Told each switch change: the phone keeps v1.10's "Disable Spotify Canvas" the Spotify switch's
+     * other side (`ForkSettings.joinSpotifySwitch`), so upstream's own checks follow the list.
+     */
+    @Volatile var onSourceSet: ((Source, Boolean) -> Unit)? = null
 
     fun setCoverQuality(value: CoverQuality) { _coverQuality.value = value; save(KEY_COVER_QUALITY, value.name) }
     fun setVideoQuality(value: VideoQuality) { _videoQuality.value = value; save(KEY_VIDEO_QUALITY, value.name) }

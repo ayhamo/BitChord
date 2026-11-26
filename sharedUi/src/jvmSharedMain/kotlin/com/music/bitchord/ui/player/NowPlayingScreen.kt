@@ -3926,7 +3926,7 @@ fun NowPlayingScreen(
                                             }
                                         }
                                     }
-                                    .forkCoverFade(art.request, art.loaded).forkBassGlowAnchor(art.request), // fork: Cover fade (ForkCoverFade), the PC's Bass glow (ForkBassGlow); bare Modifiers while off
+                                    .forkCoverFade(art.request, art.loaded, autoMixFrames != null).forkBassGlowAnchor(art.request), // fork: Cover fade (ForkCoverFade; stands down while AutoMixCover has frames), the PC's Bass glow (ForkBassGlow); bare Modifiers while off
                             )
 
                             // Where the clip plays when it can't have the banner:

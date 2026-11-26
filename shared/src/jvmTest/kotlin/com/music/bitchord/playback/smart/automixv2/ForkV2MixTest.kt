@@ -27,6 +27,17 @@ class ForkV2MixTest {
         assertEquals(7.0, l.at(1e6), 0.0)
     }
 
+    /** editor.md §3: before a curve's first point its first value is held, as the editor draws it (was: flat, then a step). */
+    @Test
+    fun aCurveStartingPastZeroHoldsItsFirstValueFromTheStart() {
+        val l = ForkV2Mix.Lane(0.0)
+        ForkV2Mix.play(l, arrayOf(doubleArrayOf(2.0, -12.0), doubleArrayOf(4.0, 0.0)), 10.0, 8.0, 8.0, false, null)
+        assertEquals(-12.0, l.at(10.5), 1e-9)
+        assertEquals(-12.0, l.at(12.0), 1e-9)
+        assertEquals(-6.0, l.at(13.0), 1e-9)
+        assertEquals(0.0, l.at(14.5), 1e-9)
+    }
+
     @Test
     fun laneCurveIsSpreadEvenly() {
         val l = ForkV2Mix.Lane(0.0).curve(floatArrayOf(0f, 1f, 0f), 10.0, 2.0)
@@ -67,6 +78,46 @@ class ForkV2MixTest {
 
     private fun basePlan(nextBpm: Double): ForkV2Planner.Plan =
         ForkV2Planner.plan(ForkV2Planner.Settings(), "a", "b", song("a", 120.0, 200.0, 0.9), song("b", nextBpm, 180.0, 0.9), 200.0, 60.0, 60 + EARLIEST_LEAD, null)
+
+    /** An echo out is named as one in the popup's title, like the ladder's other rungs. */
+    @Test
+    fun anEchoOutIsTitledOne() {
+        val p = basePlan(120.0).apply {
+            style = "blend"
+            shape = "echo"
+            echo = ForkV2Planner.Echo(1, 0.5, 0.4, 2.0)
+        }
+        val title = ForkV2Mix.blend(p, "a", "b", 200.0).title!!
+        assertTrue(title.endsWith(" · echo out"), title)
+    }
+
+    /** A 0 s hand-over or fallback put the incoming deck's two knots on one time: 0/0 made its cue and seconds NaN. */
+    @Test
+    fun aZeroLengthBlendHasNoNan() {
+        val p = basePlan(120.0).apply { durationSec = 0.0 }
+        val m = ForkV2Mix.blend(p, "a", "b", 200.0)
+        assertEquals(p.mixInTrackTime, m.`in`.trackAt(m.t0), 1e-9)
+        assertTrue(m.`in`.rateAt(m.t0 - 1).isFinite())
+        val t = ForkV2Transition(p, m)
+        assertTrue(t.incomingSongSeconds.isFinite())
+        assertEquals(p.mixInTrackTime, t.incomingCue, 1e-9)
+        val f = t.frameAt(m.t0 - 1, ForkV2Transition.Frame())
+        assertTrue(f.inRate.isFinite())
+    }
+
+    /** A gliding blend started late (the PC's [ForkV2Transition.startingAt]) counts the phone's clock from there too. */
+    @Test
+    fun aLateGlideCountsTheIncomingClockFromWhereItStarted() {
+        // version 3 (Automix v2) glides past 4% apart; the default settings are AutoDJ's, which speed up instead
+        val p = ForkV2Planner.plan(ForkV2Planner.Settings().apply { version = 3 }, "a", "b", song("a", 120.0, 200.0, 0.9), song("b", 127.2, 180.0, 0.9), 200.0, 60.0, 60 + EARLIEST_LEAD, null)
+        val m = ForkV2Mix.blend(p, "a", "b", 200.0)
+        val t = ForkV2Transition(p, m)
+        assertTrue(t.glides, "6% apart glides under v3")
+        val late = t.startingAt(2.0)
+        assertEquals(m.t0 + 2.0, late.mixTimeForIncoming(0.0), 1e-6)
+        assertEquals(m.t0 + m.D, late.mixTimeForIncoming(1.0), 1e-6)
+        assertEquals(m.t0, t.mixTimeForIncoming(0.0), 1e-6)
+    }
 
     @Test
     fun blendKnotsAndGainsFollowThePlan() {

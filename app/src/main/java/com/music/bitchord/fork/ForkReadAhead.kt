@@ -127,6 +127,7 @@ object ForkUpgradeByHand {
     /** From `PlaybackService.upgradeQualityNow`: the listener asked for [mediaId], playing [uri]. */
     fun asked(mediaId: String, uri: Uri?) {
         if (uri?.getQueryParameter("v") == null) return
+        ForkNextRowPhone.forgetSong(mediaId, uri) // its refused rows can be opened again (8.1.7 drops the ticket)
         asked[mediaId] = uri
         TrackLog.d("BitChord", "upgrade by hand: $mediaId's cached copy and choice go once it stops playing", about = mediaId)
     }

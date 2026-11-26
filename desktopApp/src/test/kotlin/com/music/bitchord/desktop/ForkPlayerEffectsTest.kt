@@ -12,6 +12,7 @@ import com.music.bitchord.ui.player.ForkBassOnsets
 import com.music.bitchord.ui.player.ForkCoverFade
 import com.music.bitchord.ui.player.ForkCoverFadeState
 import com.music.bitchord.ui.player.forkCoverFadeHoldMs
+import com.music.bitchord.ui.player.forkCoverFadeStandsDown
 import com.music.bitchord.ui.player.forkCropPlacement
 import com.music.bitchord.ui.player.forkEaseInOutSine
 import com.music.bitchord.ui.player.forkGlowAccent
@@ -317,5 +318,16 @@ class ForkPlayerEffectsTest {
         assertTrue(ForkBackup.FORK.any { it.phoneKey == "cover_fade" && it.pcKey == ForkPlayerEffects.KEY_COVER_FADE })
         assertFalse(ForkBackup.pcOnly(ForkPlayerEffects.KEY_COVER_FADE))
         assertTrue(ForkBackup.pcOnly(ForkPlayerEffects.KEY_BASS_GLOW))
+    }
+
+    @Test
+    fun coverFadeLeavesTheChangeToAutomixArtWhileItHasFrames() {
+        // The mix flag already down while the sleeve still draws the promoted cover: stand down.
+        assertTrue(forkCoverFadeStandsDown(autoMixFrames = true, gateOn = true, mixing = false))
+        // The song moved before the frames did, mid-mix with the transition on: stand down.
+        assertTrue(forkCoverFadeStandsDown(autoMixFrames = false, gateOn = true, mixing = true))
+        // Any other change, or the transition off: the fade runs.
+        assertFalse(forkCoverFadeStandsDown(autoMixFrames = false, gateOn = true, mixing = false))
+        assertFalse(forkCoverFadeStandsDown(autoMixFrames = false, gateOn = false, mixing = true))
     }
 }

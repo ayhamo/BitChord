@@ -47,6 +47,7 @@ class ForkAudioSniffTest {
         assertEquals(Probe.Manifest(dash = true), sniffed("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<MPD xmlns=".toByteArray()))
         assertEquals(Probe.Manifest(dash = false), sniffed("garbage".toByteArray(), contentType = "application/vnd.apple.mpegurl"))
         assertEquals(Probe.Manifest(dash = true), sniffed("garbage".toByteArray(), contentType = "application/dash+xml"))
+        assertEquals(Probe.Manifest(dash = true), sniffed("<!-- x --><mpd xmlns=".toByteArray()), "lowercase, after a comment")
     }
 
     @Test

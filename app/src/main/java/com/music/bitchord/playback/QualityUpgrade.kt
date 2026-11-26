@@ -503,6 +503,7 @@ object QualityUpgrade {
                             servedBy = late.sourceConfigId,
                         )
                     }
+                    com.music.bitchord.fork.ForkNextRowPhone.keep(mediaId, waiting.target.copy(durationSec = effectiveDurationSec), waiting.playing, waiting.servedBy, com.music.bitchord.fork.ForkAddonFloorPhone.passFor(mediaId, waiting.playing, waiting.servedBy)) // fork: the live lookup's copy is window-checked too; a refusal's next row is asked with this look, not none or the last play's (8.1.4)
                     answered = true
                     return late
                 }
@@ -515,7 +516,7 @@ object QualityUpgrade {
                 waiting.target.copy(durationSec = effectiveDurationSec),
                 playing = waiting.playing,
                 servedBy = waiting.servedBy,
-                forkLook = com.music.bitchord.fork.ForkAddonFloorPhone.passFor(mediaId, waiting.playing, waiting.servedBy), // fork: the rulebook's pass (8.2.1)
+                forkLook = com.music.bitchord.fork.ForkNextRowPhone.keep(mediaId, waiting.target.copy(durationSec = effectiveDurationSec), waiting.playing, waiting.servedBy, com.music.bitchord.fork.ForkAddonFloorPhone.passFor(mediaId, waiting.playing, waiting.servedBy)), // fork: the rulebook's pass (8.2.1), kept so a refused copy's next row is asked the same way (8.1.4)
             ).also {
                 found = it
                 if (it != null && needsLosslessFollowUp(it.format)) {
@@ -759,6 +760,7 @@ object QualityUpgrade {
         // auditioned or still holding a live lookup is torn down properly — and
         // so the badge for it goes out with it.
         (pending.keys + followUps.keys + forced.keys + shelved.keys + auditioning).forEach(::forget)
+        com.music.bitchord.fork.ForkNextRowPhone.clearLooks() // fork: the last session's looks go with it
         asked.clear()
         refused.clear()
     }

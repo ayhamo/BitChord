@@ -1,5 +1,6 @@
 package com.music.bitchord.desktop
 
+import com.music.bitchord.data.sources.ForkAddonRefusals
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.nio.file.Files
@@ -19,6 +20,11 @@ import java.security.MessageDigest
  * media cache (`<media cache>/audio_ranges`, inside the portable app's data), cleared with "Clear song
  * cache". Navidrome songs don't come through here: their pre-loaded and kept files ([ForkPreload],
  * offline) are read from disk first.
+ *
+ * Never a playlist or a manifest (the addon rulebook's 8.1.6, YT Music Extension baa5e1d): a window
+ * whose content type is an `mpegurl` or `dash+xml` one, or a file's first window whose first bytes are
+ * `#EXTM3U` or an `<MPD` ([ForkAddonRefusals.isManifest]), isn't written, and such a window already on
+ * disk is dropped instead of served. Only immutable YouTube files are kept here, so this is a guard.
  */
 internal class ForkAudioRangeCache(
     private val directory: () -> Path,
@@ -40,6 +46,7 @@ internal class ForkAudioRangeCache(
             val hash = ByteArray(32).also(input::readFully)
             val bytes = ByteArray(size).also(input::readFully)
             check(input.read() == -1 && MessageDigest.isEqual(hash, sha(bytes)))
+            check(start != 0L || !ForkAddonRefusals.isManifest(bytes)) // a playlist or manifest kept is dropped, not served (rulebook 8.1.6)
             Span(bytes, total)
         }
         Files.setLastModifiedTime(file, java.nio.file.attribute.FileTime.fromMillis(now()))
@@ -50,8 +57,10 @@ internal class ForkAudioRangeCache(
     }
 
     @Synchronized
-    fun write(key: String, start: Long, bytes: ByteArray, total: Long, expiresAt: Long) {
+    fun write(key: String, start: Long, bytes: ByteArray, total: Long, expiresAt: Long, mime: String? = null) {
         if (bytes.isEmpty() || bytes.size > MAX_SPAN || total < start + bytes.size || expiresAt <= now()) return
+        // Never a playlist or a manifest (rulebook 8.1.6), by its type or by its first bytes.
+        if (ForkAddonRefusals.isManifest(if (start == 0L) bytes else null, mime)) return
         // A full or read-only disk never stops playback.
         runCatching {
             val dir = directory()
@@ -149,6 +158,10 @@ internal class ForkAudioRangeCache(
             if (!immutable) return null
             return identity("gv|${query["id"]}|${query["itag"]}|${query["lmt"]}|${query["clen"]}|$windowBytes")
         }
+
+        /** The file's length googlevideo signed into [url] (`clen`), or null when it names none. */
+        fun clenOf(url: String): Long? =
+            runCatching { java.net.URI.create(url) }.getOrNull()?.let { queryOf(it)["clen"]?.toLongOrNull() }
 
         /** How long a span is kept at most; its bytes don't change, the limit and LRU do the rest. */
         const val KEEP_MS = 7L * 24 * 60 * 60 * 1000

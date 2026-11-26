@@ -444,6 +444,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // on them would cost every such file the synced lyrics it got
             // before the file's own words were read at all.
             var embeddedPlain: List<LyricLine>? = null
+            var forkServerLines: List<LyricLine>? = null // fork: a Navidrome song's line-timed lyrics, until a word-timed source answers
             if (localUri != null) {
                 EmbeddedLyrics.forUri(getApplication(), localUri)?.let { embedded ->
                     _lyrics.value = embedded
@@ -451,7 +452,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     // not which of the eight services they came from months ago.
                     _lyricsSource.value = null
                     _lyricsChecked.value = true
-                    if (EmbeddedLyrics.isSynced(embedded)) return@launch
+                    if (EmbeddedLyrics.isSynced(embedded)) {
+                        // fork: was `return@launch`; line-timed server lyrics still ask the sources for word timing (ForkNavidromeWordTimed)
+                        if (com.music.bitchord.data.navidrome.NavidromeLyrics.songIdFor(localUri) == null || !com.music.bitchord.data.navidrome.ForkNavidromeWordTimed.asksOnline(embedded)) return@launch
+                        forkServerLines = embedded
+                        return@let
+                    }
                     embeddedPlain = embedded
                 }
             }
@@ -475,8 +481,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // or a provider the listener picked by hand, displaces them.
             val selected = picked
                 ?: found?.takeIf { embeddedPlain == null || EmbeddedLyrics.isSynced(it.lines) }
-            if (selected == null && embeddedPlain != null) {
-                _lyrics.value = embeddedPlain
+                    ?.takeIf { forkServerLines == null || com.music.bitchord.data.navidrome.ForkNavidromeWordTimed.wins(it.lines) } // fork
+            val forkKept = embeddedPlain ?: forkServerLines // fork: was embeddedPlain
+            if (selected == null && forkKept != null) { // fork: was embeddedPlain != null
+                _lyrics.value = forkKept // fork: was embeddedPlain
                 _lyricsSource.value = null
             } else {
                 _lyrics.value = selected?.lines

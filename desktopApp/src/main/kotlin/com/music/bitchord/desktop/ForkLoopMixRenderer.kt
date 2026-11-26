@@ -461,7 +461,8 @@ internal class ForkLoopMixRenderer(val sampleRate: Int) {
         }
         java.util.Arrays.fill(mixLeft, 0, frames, 0f)
         java.util.Arrays.fill(mixRight, 0, frames, 0f)
-        for (deck in decks) deck?.renderInto(frame, frames, mixLeft, mixRight)
+        decks[OUT]?.renderInto(frame, frames, mixLeft, mixRight)
+        decks[IN]?.renderInto(frame, frames, mixLeft, mixRight)
         for (i in 0 until frames) {
             interleaved[2 * i] = mixLeft[i]
             interleaved[2 * i + 1] = mixRight[i]

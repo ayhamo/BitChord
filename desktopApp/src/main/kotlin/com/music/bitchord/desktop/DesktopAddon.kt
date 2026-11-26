@@ -331,7 +331,7 @@ internal class DesktopAddonClient(rawBaseUrl: String, private val forkSourceId: 
             return Result.failure(ForkDesktopAddonLimits.Skipped())
         }
         return streams.get(keyOf(trackId, params.toString())) {
-            ForkDesktopAddonLimits.send(baseUrl, forkCached) { fetch<DesktopAddonStream>(endpoint(listOf("stream", trackId), params)) } // fork: was fetch(…) alone
+            ForkDesktopAddonLimits.send(baseUrl, forkCached) { fetch<DesktopAddonStream>(endpoint(listOf("stream", trackId), params)).mapCatching { a -> com.music.bitchord.data.sources.ForkAddonStream.missOf(a.url, a.error, baseUrl)?.let { throw it } ?: a } } // fork: was fetch(…) alone; a miss (error, blank or plain-http url) leaves as a failure, never cached (ForkAddonStream.missOf)
         }
     }
 

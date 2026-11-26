@@ -9,6 +9,7 @@ import com.music.bitchord.playback.smart.TrackAnalysis
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -90,6 +91,18 @@ class ForkDesktopLoopMixTest {
         assertEquals(0f, run.inGain(run.handoverFrame))
         assertEquals(0.5f, run.inGain(run.handoverFrame + 100))
         assertEquals(1f, run.inGain(run.handoverEndFrame))
+    }
+
+    /** The owner's baseline has no limiter on the loop mix: only the incoming deck's handover to its own decoder is. */
+    @Test
+    fun `the two songs' overlap and the handover go under the clip guard, B alone between them does not`() {
+        val run = session()
+        assertTrue(run.summing(0))
+        assertTrue(run.summing(run.outEndFrame - 1))
+        assertTrue(run.summing(run.outEndFrame)) // B's run-on alone, still limited (versions.md fd53b38f)
+        assertTrue(run.summing(run.handoverFrame - 1))
+        assertTrue(run.summing(run.handoverFrame))
+        assertTrue(run.summing(run.handoverEndFrame - 1))
     }
 
     /** Plays the outgoing song through the splice in decoder-sized blocks; the output from 0.6 s before the loop. */
@@ -204,10 +217,13 @@ class ForkDesktopLoopMixTest {
         swapping: Boolean = false,
         state: TrackAnalysisState = TrackAnalysisState.ANALYSED,
         phraseBars: Int = 0,
+        outStream: DesktopStream = DesktopStream("C:/music/a.flac"),
+        outCopy: Boolean = false,
     ) = ForkLoopPair(
         outSong = Song("a", "A", "Artist", null),
         inSong = Song("b", "B", "Artist", null),
-        outStream = DesktopStream("C:/music/a.flac"),
+        outStream = outStream,
+        outCopy = outCopy,
         inStream = DesktopStream("C:/music/b.flac"),
         outAnalysis = TrackAnalysis(trackId = "a"),
         inAnalysis = TrackAnalysis(trackId = "b"),
@@ -228,13 +244,23 @@ class ForkDesktopLoopMixTest {
     )
 
     @Test
+    fun `an add-on's copy loops once its own analysis is the one planned with`() {
+        val flac = DesktopStream("https://addon.example/a.flac", sourceId = "addon")
+        assertEquals("analysed off another recording", ForkLoopMixRules.refusal(pair(outStream = flac)))
+        assertNull(ForkLoopMixRules.refusal(pair(outStream = flac, outCopy = true)))
+    }
+
+    @Test
     fun `the loop mix is refused exactly where it can't run`() {
         assertNull(ForkLoopMixRules.refusal(pair()))
         assertNull(ForkLoopMixRules.refusal(pair(state = TrackAnalysisState.REFINING)))
         assertEquals("Automix is off", ForkLoopMixRules.refusal(pair(automix = false)))
         assertEquals("playback speed is not 1x", ForkLoopMixRules.refusal(pair(speed = 1.25f)))
         assertEquals("skip silence is on", ForkLoopMixRules.refusal(pair(skipSilence = true)))
-        assertEquals("this output can't take it", ForkLoopMixRules.refusal(pair(channels = 6)))
+        // fork (ForkLoopChannels): 5.1 and 7.1 take the mix on their front pair; only an output with no front pair refuses
+        assertNull(ForkLoopMixRules.refusal(pair(channels = 6)))
+        assertNull(ForkLoopMixRules.refusal(pair(channels = 8)))
+        assertEquals("this output can't take it", ForkLoopMixRules.refusal(pair(channels = 1)))
         assertEquals("the song is still easing out of its own mix", ForkLoopMixRules.refusal(pair(deckRate = 1.02)))
         assertEquals("a better copy is crossing in", ForkLoopMixRules.refusal(pair(swapping = true)))
         assertEquals("waiting on analysis", ForkLoopMixRules.refusal(pair(state = TrackAnalysisState.ANALYSING)))

@@ -34,6 +34,20 @@ object ForkV2Planner {
 
         /** 0: Auto; else "Up to N bars". */
         var bars = 0
+
+        /** Each song's playlist speed (spotify-mixes.md rule 10; [ForkSongSpeed]): A's and B's, 1 for none. */
+        var speedOut = 1.0
+        var speedIn = 1.0
+
+        /**
+         * Ask for the curator blend (analysis-cases.md "The curator blend" [all]; automix.js plan's `curator`,
+         * extension fe61438): Automix v2's beat-matched blend, when Auto didn't pick the loop mix, placed as
+         * Spotify's playlist editors place theirs. The planner falls back to the usual blend where it doesn't
+         * fit; [Plan.curator] says which it got. [ForkV2Planner.planAuto] asks for it as the players do.
+         */
+        var curator = false
+
+        internal val speeds: Boolean get() = ForkSongSpeed.off1(speedOut) || ForkSongSpeed.off1(speedIn)
     }
 
     /** Sung spans of each song from synced lyrics ([start, end] seconds), or null: the vocal mask. */
@@ -65,8 +79,17 @@ object ForkV2Planner {
         var handoff = false
         var bridge = false
 
-        /** The fallback ladder's shape: dropin | muffle, or null. */
+        /** The fallback ladder's shape: dropin | muffle | echo, or null. */
         var shape: String? = null
+
+        /** Automix v2's own placement (versions.md "Where the blend sits"), or null: the natural point. */
+        var anchor: Anchor? = null
+
+        /** The curator blend (analysis-cases.md "The curator blend"; plan.schema.json `curator`): false, the usual blend. */
+        var curator = false
+
+        /** The echo out's delay line (editor.md §5), with shape "echo". */
+        var echo: Echo? = null
         var muffleLead = Double.NaN
         var subBassContrast = Double.NaN
         var swapAt = Double.NaN
@@ -97,8 +120,25 @@ object ForkV2Planner {
         /** What each deck does over the transition (spec/automix/plan.schema.json "curves"). */
         var curves: ForkV2Curves? = null
 
+        /** The Looping lane (editor.md §13): curves.loopBeats of A's beats in A's own seconds, looped from the mix-out; 0: none. */
+        var loopSec = 0.0
+
+        /** The songs' playlist speeds (plan.schema.json speedOut, speedIn; rule 10), 1: none. */
+        var speedOut = 1.0
+        var speedIn = 1.0
+
         /** Automix v2's kick lock applied to mixInTrackTime, or null. */
         var kick: ForkV2KickLock.Result? = null
+
+        /**
+         * B's late entry (plan.schema.json inDelaySec; mix-file.md rule 2 [all]): the incoming song stays silent and unstarted
+         * this long after the mix starts, then starts at [mixInTrackTime]; the curves still run from the mix start. 0: none.
+         * Only on a plain blend or crossfade, at most [durationSec] - 0.5.
+         */
+        var inDelaySec = 0.0
+
+        /** B's second at the mix start (crossfade.js inStartOf): its mix-in less the late entry, before 0 while B is silent. */
+        fun inStart(): Double = mixInTrackTime - inDelaySec * rate
 
         /** A shallow copy (the kick lock moves the copy's cue). */
         fun copy(): Plan {
@@ -107,6 +147,9 @@ object ForkV2Planner {
             p.fallback = fallback
             p.reason = reason
             p.preset = preset
+            p.loopSec = loopSec
+            p.speedOut = speedOut
+            p.speedIn = speedIn
             p.warnings = warnings
             p.windowIn = windowIn
             p.v2 = v2
@@ -114,6 +157,9 @@ object ForkV2Planner {
             p.handoff = handoff
             p.bridge = bridge
             p.shape = shape
+            p.anchor = anchor
+            p.curator = curator
+            p.echo = echo
             p.muffleLead = muffleLead
             p.subBassContrast = subBassContrast
             p.swapAt = swapAt
@@ -142,6 +188,7 @@ object ForkV2Planner {
             p.loop = loop
             p.curves = curves
             p.kick = kick
+            p.inDelaySec = inDelaySec
             return p
         }
 
@@ -321,8 +368,11 @@ object ForkV2Planner {
      */
     fun plan(
         s0: Settings, fromId: String?, toId: String?, from: ForkV2Analysis?, to: ForkV2Analysis?, durationSec: Double,
-        pos: Double, earliest: Double, sung: Sung?, ov: ForkV2MixOverride?,
+        pos: Double, earliest: Double, sung: Sung?, ov0: ForkV2MixOverride?,
     ): Plan {
+        // fork: a mix file's beats counted on another app's grid at half or double time, on this one's (mix-file.md rule 4)
+        val folded = ForkV2MixFile.fold(ov0, ForkV2EditorGeometry.editorGrid(from, true)?.bpm)
+        val ov = folded.ov
         var s = s0
         val pinned = ov?.pinnedBars() ?: 0
         if (pinned > 0) {
@@ -330,10 +380,12 @@ object ForkV2Planner {
             p.version = s.version
             p.keyAware = s.keyAware
             p.bars = pinned
-            s = p
+            p.speedOut = s.speedOut
+            p.speedIn = s.speedIn
+            s = p // (no curator: a length asked for wins)
         }
         val warnings = ArrayList<String>()
-        val p = planFor(s, fromId, toId, from, to, durationSec, pos, earliest, sung, ov, warnings)
+        val p = planFor(s, fromId, toId, from, to, durationSec, pos, earliest, sung, ov, warnings, s.curator)
         p.curves = ForkV2Curves.blend(p)
         // A length the planner didn't use (a hand-over, a drop-in's two bars): why, not "fit here"
         // (editor.md §6; automix.js plan, editor-cases.json's last plans case).
@@ -342,11 +394,17 @@ object ForkV2Planner {
         ) {
             warnings.add("${ov.bars} bars not used: ${p.reason ?: "a plain fade here"}")
         }
+        folded.note?.let { warnings.add(it) }
         if (ov != null && !ov.loop()) {
             if (warnings.isNotEmpty()) p.warnings = warnings
             if (ov.`in` != null) p.windowIn = true // placed by the user: the kick lock leaves it
             val both = from != null && to != null
-            val pc = if (!(p.fallback && !both)) ForkV2MixOverride.presetCurves(ov, p.durationSec, if (p.style == "crossfade") Double.NaN else p.beatSec) else null
+            // a drawing's beats (editor.md §10 rule 4): the mix's beat of A, its glide steps; with no beat match, A's own beat
+            val beatMatched = p.style != "crossfade" && p.barSec > 0
+            val drawBeat = if (beatMatched) p.barSec / 4 else ForkV2EditorGeometry.editorGrid(from, true)?.beatSec ?: 0.5
+            val pc = if (!(p.fallback && !both)) {
+                ForkV2MixOverride.presetCurves(ov, p.durationSec, if (p.style == "crossfade") Double.NaN else p.beatSec, drawBeat, if (beatMatched) p.glide else null)
+            } else null
             if (pc != null) {
                 // the preset's gain, shelves and filters; the planner's tempo stays
                 val cur = p.curves!!
@@ -354,8 +412,32 @@ object ForkV2Planner {
                 cur.`in`["rate"]?.let { pc.`in`["rate"] = it }
                 p.curves = pc
                 p.preset = ov.preset
+                // the Looping lane (editor.md §13): N of A's beats, in A's song seconds
+                if (pc.loopBeats > 0) p.loopSec = pc.loopBeats * (if (p.beatSec > 0) p.beatSec else ForkV2EditorGeometry.editorGrid(from, true)?.beatSec ?: 0.5)
                 // the phone: Morphe's crossfade can't play a preset, our decks can
                 if (both) p.fallback = false
+            }
+        }
+        // each song's speed (spotify-mixes.md rule 10): A plays at its own from before the mix (a blend's outRate is
+        // it), B at its own, through the mix and after it
+        if (s.speeds) {
+            p.speedOut = s.speedOut
+            p.speedIn = s.speedIn
+            if (p.style != "blend") {
+                p.rate = s.speedIn
+                p.outRate = s.speedOut // (the deck schedule's outgoing clock: A plays at it, whatever the style)
+            }
+        }
+        // B's late entry (mix-file.md rule 2): B stays silent that long into the mix, then starts at its mix-in; the curves
+        // stay where they are. Only a plain blend or crossfade plays it (automix.js plan, 0a9559a).
+        val late = if (ov != null && !ov.loop()) ov.`in`?.delaySec ?: 0.0 else 0.0
+        if (late > 0) {
+            if (p.fallback || p.handoff || p.bridge || p.shape != null || p.glide != null || (p.style != "blend" && p.style != "crossfade")) {
+                p.warnings = (p.warnings ?: emptyList()) + "B's late start (${js(late)} s) isn't played in this kind of mix: B starts with it"
+            } else {
+                val most = max(0.0, p.durationSec - 0.5)
+                if (late > most + 1e-6) p.warnings = (p.warnings ?: emptyList()) + "B's late start of ${js(late)} s is past the mix's end: ${forkV2Format("%.1f", most)} s"
+                p.inDelaySec = jround(min(late, most) * 1e3) / 1e3
             }
         }
         return p
@@ -393,7 +475,7 @@ object ForkV2Planner {
         } else if (outW != null) {
             mixOut = clampWindow(outW.sec, earliest, hi, "the mix-out", warnings, fromGrid)
         }
-        val mixIn = if (inW != null) clampWindow(inW.sec, 0.0, max(0.0, next.durationSec - 10 - D), "the mix-in", warnings, gridOf(next)) else base.mixInTrackTime
+        val mixIn = if (inW != null) clampWindow(inW.sec, 0.0, inRoom(next, D), "the mix-in", warnings, gridOf(next)) else base.mixInTrackTime
         base.fallback = false
         base.mixOutTrackTime = mixOut
         base.durationSec = D
@@ -417,16 +499,25 @@ object ForkV2Planner {
         return c
     }
 
+    /**
+     * The latest a saved mix-in can sit: [span] of the blend and 10 s of the next song after it. An
+     * unknown length (0 or NaN, as a stub or an analysis saved without one) leaves no room: max(0, NaN)
+     * is NaN in Kotlin, so a NaN length used to pass through the clamp and plan the mix-in at NaN.
+     */
+    internal fun inRoom(next: ForkV2Analysis, span: Double): Double =
+        if (next.durationSec > 0 && span.isFinite()) max(0.0, next.durationSec - 10 - span) else 0.0
+
     /** A saved mix-out the playhead has passed: the planner's own plays (editor.md §6). */
     internal fun playedNote(sec: Double): String =
         forkV2Format("the mix-out at %.1f s has already played: Auto's mix-out instead", sec)
 
     /** May Automix v2's kick lock move this plan's mix-in (automix.js kickLockAllowed): a blend not placed in the editor. */
-    fun kickLockAllowed(p: Plan?): Boolean = p != null && "blend" == p.style && !p.windowIn
+    fun kickLockAllowed(p: Plan?): Boolean = p != null && "blend" == p.style && "echo" != p.shape && !p.windowIn && !(p.inDelaySec > 0) // an echo out isn't beatmatched (editor.md §5); a late B entry is left alone (mix-file.md rule 2)
 
     private fun planFor(
         s: Settings, fromId: String?, toId: String?, from: ForkV2Analysis?, to: ForkV2Analysis?, durationSec: Double,
         pos: Double, earliest: Double, sungIn: Sung?, pick: ForkV2MixOverride?, warnings: MutableList<String>,
+        curatorAsk: Boolean = false,
     ): Plan {
         val both = from != null && to != null
         val cur: ForkV2Analysis
@@ -440,7 +531,12 @@ object ForkV2Planner {
         val next = if (both) to!! else stub(toId, 0.0)
         val fromGrid = gridOf(cur)
         val toGrid = gridOf(next)
-        val sung = sungIn ?: Sung()
+        // Every check below reads the spans as automix.js lyricSpans returns them: none for a stub
+        // or a music video, else carved by the song's own vocal mask (versions.md "Where a song is
+        // sung" rules 2-3). The playing song's are carved on its end grid's beat (cur is asOutgoing).
+        val sung = Sung()
+        sung.out = ForkV2Sung.forPlanner(sungIn?.out, cur)
+        sung.`in` = ForkV2Sung.forPlanner(sungIn?.`in`, next)
         val forced = pick != null && pick.forced()
         val bm = pick?.beatMatchOrAuto() ?: "auto"
         val family = pick?.family
@@ -462,8 +558,10 @@ object ForkV2Planner {
             warnings.add("the next song has no beat grid: plays without beat match")
             return overlap(cur, next, fromGrid, pick, earliest, "next song has no beat grid", warnings)
         }
+        // the tempos as they play: each BPM x its song's speed (spotify-mixes.md rule 10, 333b2fc5)
+        fun played(a: Double, b: Double): Double = foldRate(a * s.speedOut / (b * s.speedIn))
         if (both && (bm == "sync" || bm == "glide")) {
-            val st = stretchOf(foldRate(fromGrid.bpm / toGrid!!.bpm))
+            val st = stretchOf(played(fromGrid.bpm, toGrid!!.bpm))
             if (st > V2_MAX_STRETCH) {
                 val why = "tempos " + jround(st * 100) + "% apart: " + (if (bm == "sync") "Sync" else "Glide") + " stretches at most " +
                     jround(V2_MAX_STRETCH * 100) + "%, so this plays without beat match"
@@ -486,13 +584,13 @@ object ForkV2Planner {
         }
         toGrid!!
 
-        val ratio = foldRate(fromGrid.bpm / toGrid.bpm)
+        val ratio = played(fromGrid.bpm, toGrid.bpm)
         // v2: never more than V2_MAX_STRETCH of speed-up, never two 808 styles at once, never
         // keys that clash badly; it can't beatmatch those, so it hands over instead (an override
         // is the user's choice: the style gates warn instead)
         if (v3 && stretchOf(ratio) > V2_MAX_STRETCH) {
             val why = "tempos " + jround(stretchOf(ratio) * 100) + "% apart (v2 stretches at most " + jround(V2_MAX_STRETCH * 100) + "%)"
-            if (!forced && (pick == null || pick.bars == 0)) return handoff(cur, next, earliest, why, sung)
+            if (!forced && (pick == null || pick.bars == 0)) return unmatchedMix(s, cur, next, fromGrid, toGrid, pos, earliest, why, sung)
             // the user's preset, length or window: played as asked without beat match (editor.md §6)
             warnings.add("$why: plays without beat match")
             return overlap(cur, next, fromGrid, pick, earliest, why, warnings)
@@ -516,19 +614,29 @@ object ForkV2Planner {
         // Tempo only moves up: the next song faster, the playing one is brought up to it before the
         // blend; slower, it is sped up. Automix v2: over 4% apart, a glide on both songs instead
         // (glideSteps). The editor's Sync: always the speed-up; Glide: always the glide.
-        val glideQ = if (bm == "sync") Double.NaN
+        // (each song's speed from its playlist, spotify-mixes.md rule 10: A at its speed with no ramp or glide, B at
+        // its speed times what is left between the played tempos (A's played tempo), gliding back to its speed after
+        // the mix; this one may slow a song)
+        val sp = s.speeds
+        val glideQ = if (sp || bm == "sync") Double.NaN
         else if (bm == "glide") (if (abs(ratio - 1) > 1e-4) 1 / ratio else Double.NaN)
         else if (v3 && stretchOf(ratio) > V2_MAX_CONSTANT) 1 / ratio else Double.NaN
         val gliding = !glideQ.isNaN()
-        val rate = if (gliding) 1.0 else if (ratio < 1) 1.0 else ratio
-        val outRate = if (gliding) 1.0 else if (ratio < 1) 1 / ratio else 1.0
-        val rampBeats = if (outRate > 1.0001) ceil((outRate - 1) / TEMPO_STEP_PER_BEAT).toInt() else 0
+        val rate = if (sp) s.speedIn * ratio else if (gliding) 1.0 else if (ratio < 1) 1.0 else ratio
+        val outRate = if (sp) s.speedOut else if (gliding) 1.0 else if (ratio < 1) 1 / ratio else 1.0
+        val rampBeats = if (!sp && outRate > 1.0001) ceil((outRate - 1) / TEMPO_STEP_PER_BEAT).toInt() else 0
         val rampSongSec = rampBeats * fromGrid.beatSec
         // AutoDJ's key-aware length (its own toggle); Automix v2: Orchard's key score, always on
         val keyClash = if (v3) (if (harmonic!!.shortBlend) cur.keyName + " → " + next.keyName + ", " + forkV2Js(harmonic.score) else null)
         else if (s.version >= 2 && s.keyAware) keysClash(cur, next) else null
         val pinnedBars = pick != null && pick.pinnedBars() > 0
-        val bars = if (keyClash != null && !pinnedBars) keyClashBars(fromGrid) else requestedBars(s, cur, next, fromGrid, toGrid.downbeatSec, false)
+        // the curator blend (analysis-cases.md "The curator blend"): only Auto's own blend on Automix v2, nothing
+        // picked or set for its length, keys both trusted and not clashing, a song of 2 min or more (fallbacks 1
+        // and 3; 2 and 4 are below). A fallback is the usual blend exactly: planned again without the ask.
+        val curator = curatorAsk && v3 && !forced && !pinnedBars && s.bars == 0 && pick?.out == null && pick?.`in` == null &&
+            keyClash == null && (harmonic?.confidence ?: 0.0) >= TRUSTED_KEY && musicEnd(cur).durationSec >= CURATOR_MIN_SONG_SEC
+        fun usual(): Plan = planFor(s, fromId, toId, from, to, durationSec, pos, earliest, sungIn, pick, warnings, false)
+        val bars = if (curator) CURATOR_BARS else if (keyClash != null && !pinnedBars) keyClashBars(fromGrid) else requestedBars(s, cur, next, fromGrid, toGrid.downbeatSec, false)
         val effBars = effectiveBlendBars(bars, cur.gridConfidence, next.gridConfidence)
         val outSpan = effBars * fromGrid.barSec
         val glide = if (gliding) glideSteps(glideQ, effBars * 4, fromGrid.beatSec) else null
@@ -538,6 +646,15 @@ object ForkV2Planner {
         val first = earliest + rampSongSec
         val v2 = s.version >= 2
         var mixOut = naturalMixOut(fromGrid, if (v2) musicEnd(cur) else cur, outSpan)
+        // Automix v2: where the blend sits, from the playing song's own shape (versions.md "Where the blend sits")
+        val anchor = if (v3 && !forced && !curator) anchoredMixOut(cur, fromGrid, outSpan, max(first, pos + rampSongSec), sung.out) else null
+        if (anchor != null) mixOut = anchor.mixOut
+        if (curator) {
+            // the downbeat (on the song's end grid) nearest 31 s before its music ends; too early to reach: the usual blend
+            val t = musicEnd(cur).durationSec - CURATOR_LEAD_SEC
+            mixOut = fromGrid.downbeatSec + jround((t - fromGrid.downbeatSec) / fromGrid.barSec) * fromGrid.barSec
+            if (mixOut < max(first, pos + rampSongSec)) return usual()
+        }
         if (mixOut < pos + rampSongSec) mixOut = phraseAtOrAfter(fromGrid, first)
         if (mixOut < first) mixOut = downbeatAtOrAfter(fromGrid, first)
         // the editor's window (editor.md §6): A's mix-out on A's end grid, clamped to what can still play
@@ -548,6 +665,8 @@ object ForkV2Planner {
             mixOut = clampWindow(wOut.sec, first, max(first, min(musicEnd(cur).durationSec, cur.durationSec - 0.3) - outSpan), "the mix-out", warnings, fromGrid)
         }
         if (wOut != null && wOut.moved) warnings.add("the mix-out moved with a new beat grid")
+        // (the curator blend too close to the end: the usual blend, as its other fallbacks, not a hand-over)
+        if (curator && mixOut + outSpan > cur.durationSec - 0.3) return usual()
         if (mixOut + outSpan > cur.durationSec - 0.3) {
             if (forced) {
                 warnings.add("too close to the end for the window asked for")
@@ -566,10 +685,18 @@ object ForkV2Planner {
         var dj: Reroute? = null
         val wIn = if (pick != null) ForkV2MixOverride.resolveWindow(pick.`in`, toGrid) else null
         if (wIn != null) {
-            mixIn = clampWindow(wIn.sec, 0.0, max(0.0, next.durationSec - 10 - outSpan * inPerOut), "the mix-in", warnings, toGrid)
+            mixIn = clampWindow(wIn.sec, 0.0, inRoom(next, outSpan * inPerOut), "the mix-in", warnings, toGrid)
             if (wIn.moved) warnings.add("the mix-in moved with a new beat grid")
         }
-        if (v2 && wIn == null && wOut == null) {
+        if (curator) {
+            // B comes in as the planner places it (its cue, at most a quarter in); both singing over more than
+            // V2_CLASH_MAX of the 8 bars, or no intro to blend over: the usual blend (fallback 2)
+            mixIn = capIncomingSkip(next, toGrid, mixIn)
+            val both = vocalOverlap(cur, next, mixOut, outSpan, mixIn, inPerOut, sung)
+            val clash = if (both.isNaN()) 0.0 else both
+            if (introShort || clash > V2_CLASH_MAX) return usual()
+            dj = Reroute().also { it.clash = clash; it.mixOut = mixOut; it.mixIn = mixIn }
+        } else if (v2 && wIn == null && wOut == null) {
             mixIn = capIncomingSkip(next, toGrid, mixIn)
             dj = rerouteForVocals(cur, next, fromGrid, toGrid, mixOut, mixIn, outSpan, inPerOut, max(first, pos + rampSongSec), sung)
             mixOut = dj.mixOut
@@ -598,13 +725,15 @@ object ForkV2Planner {
             val dGlide = if (gliding) glideSteps(glideQ, DROP_IN_BARS * 4, fromGrid.beatSec) else null
             val lo = max(first, pos + rampSongSec)
             val natural = naturalMixOut(fromGrid, musicEnd(cur), dSpan)
+            val avoid = ForkV2Moves.avoidedMove() // an effect heard twice running isn't picked a third time
             var kNext = 0
-            while (kNext * fromGrid.barSec <= MAX_DISCARD_SEC) {
+            while (avoid != "dropin" && kNext * fromGrid.barSec <= MAX_DISCARD_SEC) {
                 val k = kNext++
                 val o = natural - k * fromGrid.barSec
                 if (o < lo) break
                 val cut = voiceRisk(cur, o + dSpan - 1.5, o + dSpan, sung.out)
-                if (!cut.isNaN() && cut >= SWAP_CLEAR) continue
+                // a voice that sings out to the end (an adlib outro) is cut by any exit, the song's own end included
+                if (!cut.isNaN() && cut >= SWAP_CLEAR && !singsOut(cur, o + dSpan, sung.out)) continue
                 val bothSing = vocalOverlap(cur, next, o, dSpan, toGrid.downbeatSec, inPerOut, sung)
                 if ((if (bothSing.isNaN()) 0.0 else bothSing) > V2_CLASH_MAX) continue
                 val dDur = dGlide?.total ?: (dSpan / outRate)
@@ -649,7 +778,7 @@ object ForkV2Planner {
             val outRisk = voiceRisk(cur, mixOut + at * outSpan - 0.5, mixOut + at * outSpan + 0.5, sung.out)
             val inRisk = voiceRisk(next, inAtSwap - 0.5, inAtSwap + 0.5, sung.`in`)
             val swapsSingers = (if (outRisk.isNaN()) 0.0 else outRisk) >= 0.5 && (if (inRisk.isNaN()) 0.0 else inRisk) >= 0.7
-            if (!introShort && leadBeats >= MUFFLE_MIN_LEAD_BEATS && at + MUFFLE_EXIT_BEATS / B.toDouble() <= 1 + 1e-6 &&
+            if (avoid != "muffle" && !introShort && leadBeats >= MUFFLE_MIN_LEAD_BEATS && at + MUFFLE_EXIT_BEATS / B.toDouble() <= 1 + 1e-6 &&
                 (body.isNaN() || body >= MUFFLE_MIN_BODY) && inAtLead >= MUFFLE_MIN_OPENING_SEC && !swapsSingers
             ) {
                 shape = "muffle"
@@ -671,6 +800,8 @@ object ForkV2Planner {
         p.rerouted = dj?.rerouted
         p.vocalsBy = dj?.by
         p.keyClash = keyClash
+        p.anchor = anchor
+        p.curator = curator
         // every blend carries its glide: Classic's too, when the editor's Glide asks for one
         p.glide = if (glide != null) Glide(glideQ, effBars * 4, fromGrid.beatSec) else null
         if (v3) {
@@ -700,12 +831,15 @@ object ForkV2Planner {
     /** The phone's DJ_FILTER: incoming on its own downbeat at its own tempo. */
     internal fun filterMix(
         s: Settings, cur: ForkV2Analysis, next: ForkV2Analysis, fromGrid: Grid, toGrid: Grid?, requested: Int, pos: Double,
-        earliest: Double, reason: String, sung: Sung,
+        earliest: Double, reason: String, sung: Sung, anchorLo: Double = Double.NaN,
     ): Plan {
         var bars = min(requested, FILTER_MAX_BARS)
         var dur = bars * fromGrid.barSec
         val v2 = s.version >= 2
         var mixOut = naturalMixOut(fromGrid, if (v2) musicEnd(cur) else cur, dur)
+        // Automix v2's own filter mix (a tempo gap): placed as its blend is (versions.md "Where the blend sits")
+        val anchor = if (!anchorLo.isNaN()) anchoredMixOut(cur, fromGrid, dur, anchorLo, sung.out) else null
+        if (anchor != null) mixOut = anchor.mixOut
         if (mixOut < pos) mixOut = phraseAtOrAfter(fromGrid, earliest)
         if (mixOut < earliest) mixOut = downbeatAtOrAfter(fromGrid, earliest)
         val room = cur.durationSec - 0.3 - mixOut
@@ -725,6 +859,7 @@ object ForkV2Planner {
         p.reason = reason
         p.v2 = v2
         p.clash = clash
+        p.anchor = anchor
         p.mixOutTrackTime = mixOut
         p.durationSec = dur
         p.mixInTrackTime = mixIn
@@ -753,6 +888,32 @@ object ForkV2Planner {
         if (ok) return null
         return (a.keyName ?: (a.camelotNum.toString() + a.camelotLetter)) + " → " +
             (b.keyName ?: (b.camelotNum.toString() + b.camelotLetter))
+    }
+
+    /** The curator blend's length, its lead before the music's end and the shortest song it plays on (automix.js CURATOR_*). */
+    internal const val CURATOR_BARS = 8
+    internal const val CURATOR_LEAD_SEC = 31.0
+    internal const val CURATOR_MIN_SONG_SEC = 120.0
+
+    /**
+     * The plan as the players ask for it (crossfade.js, extension fe61438): the usual plan, then on Automix v2 a
+     * plain beat-matched blend (no drop-in, muffle or echo; not a fallback) is asked again the curator's way and
+     * kept when the planner gave it ([Plan.curator]). The loop-or-blend choice is upstream's and never reads this.
+     */
+    fun planAuto(
+        s: Settings, fromId: String?, toId: String?, from: ForkV2Analysis?, to: ForkV2Analysis?, durationSec: Double,
+        pos: Double, earliest: Double, sung: Sung?, ov: ForkV2MixOverride?,
+    ): Plan {
+        s.curator = false
+        val p = plan(s, fromId, toId, from, to, durationSec, pos, earliest, sung, ov)
+        if (s.version != 3 || p.style != "blend" || p.shape != null || p.fallback) return p
+        s.curator = true
+        try {
+            val k = plan(s, fromId, toId, from, to, durationSec, pos, earliest, sung, ov)
+            return if (k.curator) k else p
+        } finally {
+            s.curator = false
+        }
     }
 
     internal fun keyClashBars(g: Grid): Int = if (2 * g.barSec >= (if (g.bpm >= 140) 6 else 4)) 2 else 4
@@ -914,6 +1075,7 @@ object ForkV2Planner {
     internal const val TRIM_TOLERANCE_DB = 1.0
     internal const val TRIM_MAX_DB = 6.0
     internal const val LOOP_MARGIN = 0.02
+
 
     /** The speed-up a pair needs, however it is split. */
     internal fun stretchOf(ratio: Double): Double = max(ratio, 1 / ratio) - 1
@@ -1134,6 +1296,279 @@ object ForkV2Planner {
         if (abs(diff) <= TRIM_TOLERANCE_DB) return Trim(r1(diff), 0.0, 0.0)
         val t = r1(min(abs(diff), TRIM_MAX_DB))
         return if (diff > 0) Trim(r1(diff), -t, 0.0) else Trim(r1(diff), 0.0, -t)
+    }
+
+    // ───────── Automix v2: where the blend sits (versions.md "Where the blend sits") ─────────
+    // Orchard pairTransitionEvidence + track.rs, Prism SongShape.outroStartMs; automix.js anchoredMixOut.
+
+    class Anchor internal constructor(val kind: String, val sec: Double, val mixOut: Double, val score: Double)
+
+    /** The echo out's delay line: [beats] of A's beat, fed the beat before the catch (editor.md §5). */
+    class Echo internal constructor(val beats: Int, val delaySec: Double, val feedback: Double, val cutSec: Double)
+
+    internal const val ANCHOR_SEARCH_SEC = 60.0
+    internal const val ANCHOR_SEARCH_SHARE = 0.4
+    internal const val ANCHOR_SIDE_SEC = 2.0
+    internal const val ANCHOR_STEP_SEC = 0.5
+    internal const val NOVELTY_MIN = 0.14
+    internal const val NOVELTY_MERGE_SEC = 4.0
+    internal const val AUDIBLE_SHARE = 0.1
+    internal const val OUTRO_BELOW = 0.6
+    internal const val OUTRO_MIN_SEC = 6
+    internal const val OUTRO_NOT_BEFORE = 0.6
+    internal const val OUTRO_MAX_EARLY_SEC = 20.0
+
+    private fun anchorSource(kind: String): Double = when (kind) {
+        "change", "outro" -> 4.0
+        "end" -> 3.0
+        else -> 2.0
+    }
+
+    /** The loudness curve as amplitude, mean over [from, to); NaN: none there. */
+    internal fun ampMean(a: ForkV2Analysis?, from: Double, to: Double): Double {
+        val c = a?.loudnessCurve
+        if (c == null || c.values.isEmpty()) return Double.NaN
+        val i0 = max(0.0, floor((from - c.start) / c.step)).toInt()
+        val i1 = min(c.values.size.toDouble(), ceil((to - c.start) / c.step)).toInt()
+        if (i1 <= i0) return Double.NaN
+        var s = 0.0
+        for (i in i0 until i1) s += 10.0.pow(c.values[i] / 20)
+        return s / (i1 - i0)
+    }
+
+    private fun or0(v: Double): Double = if (v.isNaN()) 0.0 else v
+
+    /** The song's 85th-percentile second (amplitude): its usual level. */
+    internal fun usualLevel(a: ForkV2Analysis): Double {
+        val xs = ArrayList<Double>()
+        var t = 0.0
+        while (t + 1 <= a.durationSec) {
+            val v = ampMean(a, t, t + 1)
+            if (!v.isNaN()) xs.add(v)
+            t += 1
+        }
+        xs.sort()
+        return if (xs.isEmpty()) Double.NaN else xs[min(xs.size - 1, floor(xs.size * 0.85).toInt())]
+    }
+
+    private fun meanOf(xs: List<Double>): Double {
+        var s = 0.0
+        for (v in xs) s += v
+        return s / xs.size
+    }
+
+    private class AnchorCand(val kind: String, val sec: Double, val end: Double, val conf: Double, val stab: Double)
+
+    /**
+     * Candidates over the playing song's last min(60 s, 40%), each a mix-out of [span] on its end grid,
+     * scored as Orchard does; null when none fits (the natural point then).
+     */
+    internal fun anchoredMixOut(cur: ForkV2Analysis, g: Grid, span: Double, lo: Double, sung: Array<DoubleArray>?): Anchor? {
+        if (cur.loudnessCurve?.values?.isNotEmpty() != true || cur.bassCurve?.values?.isNotEmpty() != true) return null
+        val level = usualLevel(cur)
+        if (!(level > 0)) return null
+        val dur = cur.durationSec
+        // the audible end: the last half second at a tenth of the usual level, within the music
+        var audible = min(musicEnd(cur).durationSec, dur - 0.3)
+        while (audible > dur / 2 && or0(ampMean(cur, audible - ANCHOR_STEP_SEC, audible)) < AUDIBLE_SHARE * level) audible -= ANCHOR_STEP_SEC
+        val from = max(dur / 2, audible - min(ANCHOR_SEARCH_SEC, ANCHOR_SEARCH_SHARE * dur))
+        val E = { x: Double, y: Double -> min(1.5, or0(ampMean(cur, x, y)) / level) }
+        val L = { x: Double, y: Double -> min(1.5, or0(bassMean(cur, x, y))) }
+        val V = { x: Double, y: Double -> or0(voiceRisk(cur, x, y, sung)) }
+        // how steady the energy is over [x, x + 2 s): 1 - 2 x its spread in half seconds
+        val steady = { x: Double ->
+            val e = listOf(0, 1, 2, 3).map { k -> E(x + k * 0.5, x + k * 0.5 + 0.5) }
+            val m = meanOf(e)
+            clamp(1 - 2 * sqrt(meanOf(e.map { v -> (v - m).pow(2) })), 0.0, 1.0)
+        }
+        val nearestDownbeat = { t: Double -> g.downbeatSec + jround((t - g.downbeatSec) / g.barSec) * g.barSec }
+        val grid = clamp(cur.gridConfidence, 0.0, 1.0)
+        val cands = ArrayList<AnchorCand>()
+        // a section change: Orchard's novelty (energy 0.55, low end 0.25, voice 0.2), the 2 s after against the 2 s before
+        val ft = ArrayList<Double>()
+        val fn = ArrayList<Double>()
+        var t = from + ANCHOR_SIDE_SEC
+        while (t <= audible - ANCHOR_SIDE_SEC) {
+            val a0 = t - ANCHOR_SIDE_SEC
+            val b1 = t + ANCHOR_SIDE_SEC
+            val n = abs(E(t, b1) - E(a0, t)) / 1.5 * 0.55 + abs(L(t, b1) - L(a0, t)) / 1.5 * 0.25 + abs(V(t, b1) - V(a0, t)) * 0.2
+            ft.add(t)
+            fn.add(clamp(n, 0.0, 1.0))
+            t += ANCHOR_STEP_SEC
+        }
+        val pt = ArrayList<Double>()
+        val pn = ArrayList<Double>()
+        for (i in 1 until fn.size - 1) {
+            val n = fn[i]
+            if (n < NOVELTY_MIN || n < fn[i - 1] || n < fn[i + 1]) continue
+            if (pt.isNotEmpty() && ft[i] - pt.last() < NOVELTY_MERGE_SEC) {
+                if (n > pn.last()) {
+                    pt[pt.size - 1] = ft[i]
+                    pn[pn.size - 1] = n
+                }
+                continue
+            }
+            pt.add(ft[i])
+            pn.add(n)
+        }
+        for (i in pt.indices) {
+            val end = nearestDownbeat(pt[i])
+            val stab = max(steady(pt[i] - ANCHOR_SIDE_SEC), steady(pt[i]))
+            cands.add(AnchorCand("change", end, end, clamp(pn[i] * 0.65 + grid * 0.2 + stab * 0.15, 0.0, 1.0), stab))
+        }
+        // the outro (Prism's finding): energy over 3 s under 0.6 of the body's median to the end, 6 s or
+        // more; the blend ENDS on the phrase that opens it (else the first beat in it), so the next song
+        // is in by the time the playing one drops. Its music doesn't count as cut.
+        val secs = ArrayList<Double>()
+        var s1 = 0.0
+        while (s1 + 1 <= audible) {
+            secs.add(or0(ampMean(cur, s1, s1 + 1)))
+            s1 += 1
+        }
+        val body = if (secs.isEmpty()) Double.NaN else secs.sorted()[secs.size / 2]
+        val smooth = { i: Int -> meanOf(secs.subList(max(0, i - 1), min(secs.size, i + 2))) }
+        var o = secs.size - 1
+        while (o >= 0 && smooth(o) < OUTRO_BELOW * body) o--
+        o++
+        var keepUntil = audible // the music a blend ending early cuts: up to the outro
+        if (body > 0 && secs.size - o >= OUTRO_MIN_SEC && o >= OUTRO_NOT_BEFORE * dur && o >= audible - OUTRO_MAX_EARLY_SEC) {
+            val phrase = g.downbeatSec + floor((o + 2 * g.beatSec - g.downbeatSec) / g.phraseSec) * g.phraseSec
+            val start = if (o - phrase <= g.barSec) phrase else g.downbeatSec + ceil((o - g.downbeatSec) / g.beatSec) * g.beatSec
+            val drop = 1 - meanOf(secs.subList(o, secs.size)) / body
+            val stab = steady(start)
+            cands.add(AnchorCand("outro", start, start, clamp(drop * 0.65 + grid * 0.2 + stab * 0.15, 0.0, 1.0), stab))
+            keepUntil = min(audible, start)
+        }
+        // the end of the music (today's point), and each downbeat in the search as Orchard's downbeat evidence
+        val natural = naturalMixOut(g, musicEnd(cur), span) + span
+        cands.add(AnchorCand("end", natural, natural, 0.5, steady(natural - ANCHOR_SIDE_SEC)))
+        var d = g.downbeatSec + ceil((from - g.downbeatSec) / g.barSec) * g.barSec
+        while (d <= audible) {
+            val stab = steady(d - ANCHOR_SIDE_SEC)
+            cands.add(AnchorCand("downbeat", d, d, min(0.6, grid * 0.35 + stab * 0.35 + (1 - V(d - 1, d + 1)) * 0.3), stab))
+            d += g.barSec
+        }
+        // Orchard's score; the blend must fit before the audible end, cut at most 12 s of the music before
+        // the outro (all of it without one), start past half the song
+        var best: Anchor? = null
+        for (c in cands) {
+            val start = c.end - span
+            val cut = max(0.0, keepUntil - c.end)
+            if (start < lo - 1e-6 || start < dur / 2 || c.end > audible + 1e-6 || c.end > dur - 0.3 || cut > MAX_DISCARD_SEC) continue
+            val risk = voiceRisk(cur, c.end - 1.5, c.end, sung)
+            val clean = if (risk.isNaN()) 0.35 else 1 - risk
+            val score = anchorSource(c.kind) / 4 * 0.2 + c.conf * 0.55 + c.stab * 0.15 + clean * 0.1 - cut / MAX_DISCARD_SEC * 0.15
+            if (best == null || score > best.score + 1e-9) best = Anchor(c.kind, jround(c.sec * 1000) / 1000.0, start, jround(score * 1000) / 1000.0)
+        }
+        return best
+    }
+
+    // ───────── Automix v2: a pair too far apart in tempo (versions.md "Tempo too far apart") ─────────
+
+    /** The beatless bridge, else a filter mix at an anchor, else (both would sing over it) an echo out at one, else the hand-over. */
+    internal fun unmatchedMix(
+        s: Settings, cur: ForkV2Analysis, next: ForkV2Analysis, fromGrid: Grid, toGrid: Grid, pos: Double, earliest: Double, why: String, sung: Sung,
+    ): Plan {
+        val b = DoubleArray(3)
+        if (beatlessBridge(cur, next, sung, b) == null && b[0] >= earliest) return handoff(cur, next, earliest, why, sung)
+        val lo = max(earliest, pos)
+        val avoid = ForkV2Moves.avoidedMove() // versions.md "No effect three times in a row"
+        val f = filterMix(
+            s, cur, next, fromGrid, toGrid, requestedBars(s, cur, next, fromGrid, toGrid.downbeatSec, true), pos, earliest,
+            "$why: a filter mix (no beat match)", sung, lo,
+        )
+        if ("filter" == f.style && f.clash <= V2_CLASH_MAX && avoid != "filter") return f
+        val sang = when {
+            "filter" != f.style -> ""
+            avoid == "filter" -> ", a filter mix the last two times"
+            f.clash > V2_CLASH_MAX -> ", both would sing " + jround(f.clash * 100) + "% of a filter mix"
+            else -> ""
+        }
+        val e = if (avoid == "echo") null else echoOut(cur, next, fromGrid, toGrid, lo, "$why$sang: an echo out (no beat match)", sung)
+        return e ?: handoff(cur, next, earliest, "$why$sang, and no " + (if (avoid == "echo") "third echo out in a row or " else "") + "filter mix or echo out fits", sung)
+    }
+
+    // ───────── Automix v2: an adlib outro (versions.md "Adlib outro"; Orchard transitionFlow.js singsOut) ─────────
+
+    internal const val SINGS_OUT_TAIL_SEC = 4.0
+    internal const val LINE_PAUSE_SEC = 2.0
+
+    /**
+     * Whether the playing song's voice sings out from [time] to its music's end: at least 4 s of
+     * music left, the beat gone (beat presence under 0.5 both 2 s and 0.5 s before the end), and the
+     * voice never pausing 2 s (0.25 s steps, voice risk under 0.3). Some songs end on the singer alone
+     * over a fading beat; no exit can wait for that voice to finish a line, the song's own end cuts it
+     * too, so the drop-in may cut it. Unknown vocals don't count as singing out.
+     */
+    internal fun singsOut(a: ForkV2Analysis, time: Double, spans: Array<DoubleArray>?): Boolean {
+        val end = min(musicEnd(a).durationSec, a.durationSec - 0.3)
+        if (!(end - time >= SINGS_OUT_TAIL_SEC)) return false
+        val closing = beatPresence(a, end - SINGS_OUT_TAIL_SEC / 2)
+        if (closing.isNaN() || closing >= 0.5) return false
+        val last = beatPresence(a, end - 0.5)
+        if ((if (last.isNaN()) 1.0 else last) >= 0.5) return false
+        var pause = 0.0
+        var at = time
+        while (at < end - 1) {
+            val r = voiceRisk(a, at, at + 0.5, spans)
+            if (r.isNaN()) return false
+            pause = if (r < 0.3) pause + 0.25 else 0.0
+            if (pause >= LINE_PAUSE_SEC) return false
+            at += 0.25
+        }
+        return true
+    }
+
+    internal const val ECHO_BEATS = 8
+    internal const val ECHO_FEEDBACK = 0.53
+    internal const val ECHO_CUT_SEC = 0.01
+    internal const val ECHO_FIRST_BEAT_MAX_SEC = 10.0
+
+    /**
+     * Echo out (Prism MixMoves ECHO_OUT; editor.md §5): the beat before the catch (a bar line, at an
+     * anchor) is fed to a 1-beat delay with feedback 0.53; the playing song's dry sound is cut on the
+     * catch in 10 ms and the next song comes in there at full level on its first downbeat (its first
+     * 10 s; else from its start), at its own speed, under 8 beats of echo. The repeated beat may not be
+     * sung; at most 12 s of music earlier than the anchor.
+     */
+    internal fun echoOut(cur: ForkV2Analysis, next: ForkV2Analysis, g: Grid, toGrid: Grid?, lo: Double, reason: String, sung: Sung): Plan? {
+        val beat = g.beatSec
+        val D = ECHO_BEATS * beat
+        val end = min(musicEnd(cur).durationSec, cur.durationSec - 0.3)
+        val a = anchoredMixOut(cur, g, beat, lo, sung.out)
+        val bar = { t: Double -> g.downbeatSec + floor((t - g.downbeatSec + 1e-6) / g.barSec) * g.barSec }
+        val first = if (a != null) bar(a.mixOut + beat) else bar(end - beat)
+        // the anchor's bar, then the nearest bars either side (earlier first), within 12 s of it
+        val jMax = 2 * floor(MAX_DISCARD_SEC / g.barSec).toInt()
+        for (j in 0..jMax) {
+            val k = if (j % 2 == 1) (j + 1) / 2 else -j / 2 // 0, 1, -1, 2, -2, ...: k bars earlier
+            val c = first - k * g.barSec
+            if (c - beat < lo - 1e-6 || c < cur.durationSec / 2 || c + D > cur.durationSec - 0.3 || c > end) continue
+            if (or0(voiceRisk(cur, c - beat, c, sung.out)) >= SWAP_CLEAR) continue // the beat that repeats is sung
+            val mixIn = if (toGrid != null && toGrid.downbeatSec <= ECHO_FIRST_BEAT_MAX_SEC) toGrid.downbeatSec else 0.0
+            val p = Plan()
+            p.style = "blend"
+            p.shape = "echo"
+            p.reason = reason + if (k != 0) " (" + abs(k) + " bar" + (if (abs(k) == 1) "" else "s") + " " + (if (k > 0) "earlier" else "later") + ", off a sung beat)" else ""
+            p.v2 = true
+            p.v3 = true
+            p.anchor = a
+            p.echo = Echo(ECHO_BEATS, beat, ECHO_FEEDBACK, ECHO_CUT_SEC)
+            p.mixOutTrackTime = c
+            p.durationSec = D
+            p.mixInTrackTime = mixIn
+            p.rate = 1.0
+            p.outRate = 1.0
+            p.beatSec = beat
+            p.bars = ECHO_BEATS / 4
+            p.swapDb = 0.0
+            p.barSec = g.barSec
+            p.bpm = g.bpm
+            p.outBpm = g.bpm
+            p.inBpm = toGrid?.bpm ?: Double.NaN
+            return p
+        }
+        return null
     }
 
     // the hand-over and the beatless bridge (Orchard's boundary hand-off, beatlessBridge)
@@ -1393,6 +1828,8 @@ object ForkV2Planner {
 
         val outEnd = min(out.durationSec - 0.5, outBuffer.duration() - 0.1)
         val outFirst = max(earliestOutSec, out.durationSec - OUT_SEARCH_SEC)
+        // versions.md "The loop mix's baseline" (020f8a1): the model's own downbeats, else the main grid;
+        // the sung spans as given (the loop's, loopSpansFromLines), not carved
         val outPick = firstClean({ bars ->
             val l = loopsBetween(out.tailBeats, out.firstDownbeatSec, outBar, outFirst, outEnd, bars)
             l.reverse()
@@ -1452,12 +1889,16 @@ object ForkV2Planner {
         return s
     }
 
-    /** [bars]-bar loops in [from, to]: on the model's own downbeats where it has them, else the constant grid. */
+    /**
+     * [bars]-bar loops in [from, to]: on the model's own downbeats where it has them (the seam is the
+     * music's bar line), else the constant grid (versions.md "The loop mix's baseline", 020f8a1).
+     */
     internal fun loopsBetween(side: ForkV2Analysis.BeatSide?, anchor: Double, bar: Double, from: Double, to: Double, bars: Int): MutableList<DoubleArray> {
         val loops = ArrayList<DoubleArray>()
-        if (side != null && side.downbeats.size >= bars + 1) {
+        val downs = side?.downbeats?.toList() ?: emptyList()
+        // no tempo (bpm 0 or NaN): 60 / bpm is no beat to match a loop's end by, and every end "matched"
+        if (side != null && side.bpm > 0 && downs.size >= bars + 1) {
             val beat = 60 / side.bpm
-            val downs = side.downbeats
             for (start in downs) {
                 if (start < from) continue
                 val target = start + bars * 4 * beat
@@ -1468,7 +1909,7 @@ object ForkV2Planner {
             }
             if (loops.isNotEmpty()) return loops
         }
-        if (to < from) return loops
+        if (to < from || !(bar > 0) || bars <= 0) return loops // no bar length: no grid to loop on
         val len = bars * bar
         var t = anchor + ceil((from - anchor) / bar) * bar
         while (t + len <= to) {

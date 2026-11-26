@@ -198,7 +198,7 @@ internal object ForkMusicVideo {
     /** Bumped when a verdict below changes what the playing song should get. */
     private val revision = MutableStateFlow(0)
     private val noPicture = ConcurrentHashMap.newKeySet<String>()
-    private val ageGated = ConcurrentHashMap.newKeySet<String>()
+    private val ageGated = com.music.bitchord.data.forkLruSet<String>(512) // bounded: an evicted id takes the normal route once more
     private val stepDown = ConcurrentHashMap.newKeySet<String>()
     private val slow = ConcurrentHashMap.newKeySet<String>()
     private val refused = ConcurrentHashMap<String, MutableSet<String>>()

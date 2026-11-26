@@ -104,11 +104,28 @@ object ForkCanvasStore {
         return found
     }
 
-    /** A clip is still playable: its file is there (a local loop), or it is a remote URL. */
-    private fun playable(value: String): Boolean {
-        val url = decode(value)?.url ?: return false
-        return !isLocal(url) || File(localPath(url)).length() > 0
+    /**
+     * A clip is still playable: its file is there (a local loop), or it is a remote clip that would
+     * pass the trust a fresh answer passes. The file on disk is not a trusted input (an older build,
+     * a hand edit, a copied settings folder can put anything there), and a saved clip skips every
+     * provider check: without this a saved `http://` or off-host "Spotify" URL was handed to the
+     * player for as long as the entry lived. So a Spotify clip must be on Spotify's media host
+     * ([ForkSpotifyCanvasRules.trusted], rule 4.6) and any other remote clip https; each URL the
+     * player may open (the clip, its fallback, the tall cut) is checked. An entry that fails reads
+     * back as nothing, so the source is asked again and a good answer replaces it.
+     */
+    internal fun playable(value: String): Boolean {
+        val art = decode(value) ?: return false
+        val url = art.url
+        if (isLocal(url)) return File(localPath(url)).length() > 0
+        val trust: (String) -> Boolean =
+            if (art.source == CanvasSource.SPOTIFY) ForkSpotifyCanvasRules::trusted else ::https
+        return listOfNotNull(url, art.fallbackUrl, art.portraitUrl).all(trust)
     }
+
+    private fun https(url: String): Boolean =
+        runCatching { java.net.URI(url).let { it.scheme.equals("https", ignoreCase = true) && !it.host.isNullOrEmpty() } }
+            .getOrDefault(false)
 
     fun isLocal(url: String): Boolean = url.startsWith("/") || url.startsWith("file:") || Regex("^[A-Za-z]:[\\\\/]").containsMatchIn(url)
 
@@ -133,7 +150,7 @@ object ForkCanvasStore {
             title = text("title"),
             artist = text("artist"),
             album = text("album"),
-            source = text("source")?.let { name -> CanvasSource.entries.firstOrNull { it.name == name } } ?: CanvasSource.OTHER,
+            source = appleOrigin(text("source")?.let { name -> CanvasSource.entries.firstOrNull { it.name == name } } ?: CanvasSource.OTHER, text("url")),
             portraitUrl = text("portraitUrl"),
         )
     }.getOrNull()
@@ -153,4 +170,16 @@ object ForkCanvasStore {
             Log.w(TAG, "write failed: ${it.message}")
         }
     }
+}
+
+/**
+ * v1.10 tags Apple's clips [CanvasSource.APPLE] (its player and the lyrics share treat them as
+ * Apple's); one kept from before that, or handed over as [CanvasSource.OTHER] (the PC's clips), is
+ * read back as Apple's when its URL is on Apple's hosts.
+ */
+fun appleOrigin(source: CanvasSource, url: String?): CanvasSource {
+    if (source != CanvasSource.OTHER || url == null) return source
+    val host = runCatching { java.net.URI(url).host?.lowercase() }.getOrNull() ?: return source
+    val apple = host == "apple.com" || host.endsWith(".apple.com") || host == "mzstatic.com" || host.endsWith(".mzstatic.com")
+    return if (apple) CanvasSource.APPLE else source
 }

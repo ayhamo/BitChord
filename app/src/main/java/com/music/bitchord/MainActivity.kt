@@ -446,6 +446,7 @@ class MainActivity : AppCompatActivity() {
             val iosOverscrollFactory = rememberIosOverscrollFactory()
             val performanceRefreshRate by AppSettings.performanceRefreshRate.collectAsStateWithLifecycle()
             val composeView = LocalView.current
+            com.music.bitchord.fork.ForkMixFilesPhone() // fork: the transition editor's mix import and export
             LaunchedEffect(highPerformance, performanceRefreshRate, composeView) {
                 applyPerformanceMode(highPerformance, performanceRefreshRate, composeView)
             }
@@ -2039,6 +2040,7 @@ private fun BitChordApp(
     }
     val addSongsToQueue: (List<Song>) -> Unit = { songs -> queueSongs(songs, false) }
     val playSongsNext: (List<Song>) -> Unit = { songs -> queueSongs(songs, true) }
+    com.music.bitchord.fork.ForkMixQueuePhone(controller, play) // fork: a mix file's "Play these mixes" queues through this controller
 
     // ---- Links from outside the app ----
 
@@ -5453,7 +5455,7 @@ private fun BitChordApp(
                     QueueShuffle.enableForNextQueue()
                     play(songs, songs.indices.random())
                 }.takeIf { target.fromCard },
-                onAddToPlaylists = if (target.type == BrowseType.ALBUM && target.browseId != null && signedIn) {
+                onAddToPlaylists = if (target.type == BrowseType.ALBUM && target.browseId != null && signedIn && com.music.bitchord.fork.ForkPlaylistTargets.albumOffersPlaylists(target.browseId)) { // fork: + albumOffersPlaylists; not on a Navidrome album
                     {
                         browseActions = null
                         viewModel.loadPlaylists()

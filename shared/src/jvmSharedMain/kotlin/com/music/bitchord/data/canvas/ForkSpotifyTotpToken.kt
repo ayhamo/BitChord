@@ -1,6 +1,7 @@
 package com.music.bitchord.data.canvas
 
 import com.music.bitchord.data.DebugLog as Log
+import com.music.bitchord.data.ForkCappedBody
 import com.music.bitchord.data.Http
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -179,7 +180,7 @@ object ForkSpotifyTotpToken {
                 Log.w(TAG, "web player page answered http ${response.code}")
                 return@use null
             }
-            val html = response.body?.string() ?: return@use null
+            val html = ForkCappedBody.text(response, PAGE_MAX)
             val deviceId = response.headers("Set-Cookie").firstNotNullOfOrNull { header ->
                 SP_T.find(header)?.groupValues?.get(1)
             }
@@ -197,7 +198,7 @@ object ForkSpotifyTotpToken {
         val fetched = runCatching {
             val request = Request.Builder().url(SECRETS_URL).header("User-Agent", UA).build()
             Http.client.newCall(request).execute().use { response ->
-                if (response.isSuccessful) response.body?.string()?.let(::parseSecretDict) else null
+                if (response.isSuccessful) ForkCappedBody.text(response, JSON_MAX).let(::parseSecretDict) else null
             }
         }.getOrNull()
         if (fetched == null) {
@@ -208,6 +209,14 @@ object ForkSpotifyTotpToken {
         // A list that loaded is kept for the run: one request per run, as the extension does.
         return fetched.also { secretForRun = it }
     }
+
+    /**
+     * The most a web player page may weigh (it is ~1 MB with its inline config) and the most the
+     * secret list, server time or token JSON may (a few KB): [ForkCappedBody] throws past these,
+     * which [mint] and [webPlayerConfig] already treat as a failed attempt.
+     */
+    private const val PAGE_MAX = 2 * ForkCappedBody.MB
+    private const val JSON_MAX = 256 * ForkCappedBody.KB
 
     @Volatile private var secretRetryAfterMs = 0L
     private const val SECRET_RETRY_MS = 60L * 60 * 1000
@@ -228,7 +237,7 @@ object ForkSpotifyTotpToken {
             .apply { headers.forEach { (name, value) -> header(name, value) } }
             .build()
         return cookieClient.newCall(request).execute().use { response ->
-            response.code to if (response.isSuccessful) response.body?.string() else null
+            response.code to if (response.isSuccessful) ForkCappedBody.text(response, JSON_MAX) else null
         }
     }
 

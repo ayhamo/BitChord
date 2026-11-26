@@ -519,6 +519,7 @@ object SourceResolver {
         forkLook: com.music.bitchord.fork.ForkAddonFloorPhone.Look? = null, // fork: the rulebook's pass after a copy plays (8.2.1)
     ): SourceStream? {
         if (target.title.isBlank() || target.durationSec == null || target.isVideo) return null
+        if (com.music.bitchord.fork.ForkNextRowPhone.exhausted(target)) return null // fork: the song used up its next rows (8.1.4): what plays stays, no more searches
         val request = requestForNow()
         val active = SourceRegistry.activeForPlayback()
         val youtube = active.firstOrNull { it.kind == SourceKind.YOUTUBE } ?: return null
@@ -1329,7 +1330,7 @@ object SourceResolver {
         val wantsLossless = request is StreamRequest.Lossless
         val ordered = com.music.bitchord.data.sources.addon.ForkAddonLimitsPhone.cachedFirst( // fork: cached rows first within a tier
             source,
-            preferred(matches, target, wantsLossless, sameLengthSec),
+            com.music.bitchord.fork.ForkNextRowPhone.left(target, source.configId, preferred(matches, target, wantsLossless, sameLengthSec)), // fork: was preferred(…); a row refused for the song is passed over (rulebook 8.1.4)
         )
         var settleFor: SourceStream? = null
         var best: SourceStream? = null
@@ -1348,6 +1349,8 @@ object SourceResolver {
                 durationSec = TrackMatcher.secondsOf(match.durationText),
                 sourceConfigId = source.configId,
             )
+            com.music.bitchord.fork.ForkNextRowPhone.opened(stream.url, source.configId, trackId) // fork: which row this URL came from, for a refusal (rulebook 8.1.4)
+            if (com.music.bitchord.fork.ForkNextRowPhone.refusesManifest(target, source, stream)) { if (com.music.bitchord.fork.ForkNextRowPhone.exhausted(target)) break else continue } // fork: an addon's manifest is refused, the next row opens (rulebook 8.1.4 + 8.1.6)
             // Dropped outright, not kept as a floor: a clip is not a lesser
             // copy of the recording, it is not the recording.
             if (checkFileLength && cutShort(source, match, stream, target)) continue

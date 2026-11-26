@@ -11,6 +11,9 @@ import com.music.bitchord.R
 import com.music.bitchord.data.ForkSettingsBadge
 import com.music.bitchord.fork.ForkSettings
 import com.music.bitchord.playback.smart.AutomixStyle
+import com.music.bitchord.playback.smart.automixv2.ForkV2OverrideStore
+import com.music.bitchord.ui.player.ForkMixFiles
+import com.music.bitchord.ui.player.ForkMixImportConfirm
 import com.music.bitchord.ui.icons.SfIcons
 
 /**
@@ -28,6 +31,44 @@ internal fun SettingsGroupScope.forkAutomixStyleRow(enabled: Boolean) = forkDisa
     row(phraseTitle, "fork", "automix", "phrase", "length", "bars", "blend", "mix") { ForkAutomixPhraseRow() }
     val title = stringResource(R.string.fork_automix_style)
     row(title, "fork", "automix", "autodj", "dj", "mix", "style", "extension", "v2") { ForkAutomixStyleRow() }
+    row("Mix files", "fork", "automix", "mix", "file", "import", "export", "vivimix", "ready-made") { ForkMixFilesRow() }
+}
+
+/**
+ * Mix files (spec/automix/mix-file.md rule 9: the phone's own place in the Automix screen): import ready-made mixes,
+ * export every saved edit. "Export this pair" is in the transition editor, where a pair is on screen. Their edits
+ * play under Automix v2 ([ForkMixFiles]).
+ */
+@Composable
+internal fun ForkMixFilesRow() {
+    val saved by ForkV2OverrideStore.overrides.collectAsStateWithLifecycle()
+    SettingsRow(
+        icon = SfIcons.FileDownload,
+        title = "Import mixes…",
+        subtitle = ForkMixFiles.status ?: "Ready-made mixes from a .vivimix.json file: play the two songs one after the other and the mix plays",
+        badge = ForkSettingsBadge.TEXT,
+        enabled = ForkMixFiles.available,
+        onClick = { ForkMixFiles.importMixes() },
+    )
+    SettingsRow(
+        icon = SfIcons.FileUpload,
+        title = "Export all mixes…",
+        subtitle = if (saved.isEmpty()) "No edited pairs yet" else "${saved.size} edited pair${if (saved.size == 1) "" else "s"}, as one .vivimix.json file",
+        badge = ForkSettingsBadge.TEXT,
+        enabled = ForkMixFiles.available,
+        onClick = { ForkMixFiles.exportMixes() },
+    )
+    // mix-file.md rule 7: the last imported file's songs, queued after the playing one in its order
+    SettingsRow(
+        icon = SfIcons.Play,
+        title = "Play these mixes",
+        subtitle = ForkMixFiles.lastImport?.let { "The last imported file's ${it.ids.size} songs, in its order, after the playing song" }
+            ?: "Import a mix file first",
+        badge = ForkSettingsBadge.TEXT,
+        enabled = ForkMixFiles.canPlay,
+        onClick = { ForkMixFiles.playImported() },
+    )
+    ForkMixImportConfirm()
 }
 
 /** Auto, 8 or 16 bars, the PC's "Automix phrase length" chips; `CrossfadeController` passes it to the planner. */

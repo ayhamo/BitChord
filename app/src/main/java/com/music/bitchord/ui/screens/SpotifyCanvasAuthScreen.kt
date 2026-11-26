@@ -79,7 +79,7 @@ fun SpotifyCanvasAuthScreen(
                 modifier = Modifier.padding(bottom = 16.dp)
             )
 
-            if (com.music.bitchord.fork.ForkUpstreamRows.SHOWN) // fork: the §13 source list's Spotify switch is the one control (ForkSettings.foldUpstreamSpotifySwitch)
+            if (com.music.bitchord.fork.ForkUpstreamRows.SHOWN) // fork: this flag is the §13 source list's Spotify switch, which sets it (ForkSettings.joinSpotifySwitch); one row for it
             SpotifyCanvasSettingToggle(
                 icon = SfIcons.MotionPhotosOff,
                 title = stringResource(R.string.disable_spotify_canvas),

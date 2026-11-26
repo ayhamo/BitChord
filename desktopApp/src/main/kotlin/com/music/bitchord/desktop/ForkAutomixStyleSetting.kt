@@ -17,6 +17,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.music.bitchord.playback.smart.AutomixStyle
+import com.music.bitchord.playback.smart.automixv2.ForkV2OverrideStore
+import com.music.bitchord.ui.player.ForkMixFiles
+import com.music.bitchord.ui.player.ForkMixImportConfirm
 
 /**
  * Fork: Settings > Playback "Automix style", under the Automix phrase length (and greyed with it
@@ -47,6 +50,55 @@ internal fun ForkAutomixStyleSetting() {
         Spacer(Modifier.height(8.dp))
         Text(detail(style), color = DesktopSecondary, style = MaterialTheme.typography.bodySmall)
     }
+    ForkMixFilesSetting()
+}
+
+/**
+ * Mix files (spec/automix/mix-file.md rule 9: BitChord's own place in the Automix screen), under the Automix style:
+ * import ready-made mixes, export every saved edit. "Export this pair" is in the transition editor, where a pair is
+ * on screen ([ForkMixFiles], files through [ForkDesktopMixFiles]).
+ */
+@Composable
+private fun ForkMixFilesSetting() {
+    val title = "Mix files"
+    val subtitle = "Ready-made mixes from a .vivimix.json file: play the two songs one after the other and the mix plays"
+    val saved by ForkV2OverrideStore.overrides.collectAsState()
+    if (settingsRowVisible(title, subtitle)) Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
+        ForkSettingsTitle(title, fontWeight = FontWeight.Medium, fork = true)
+        Text(subtitle, color = DesktopSecondary, style = MaterialTheme.typography.bodySmall)
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                colors = desktopChipColors(),
+                selected = false,
+                enabled = ForkMixFiles.available,
+                onClick = { ForkMixFiles.importMixes() },
+                label = { Text("Import…") },
+            )
+            FilterChip(
+                colors = desktopChipColors(),
+                selected = false,
+                enabled = ForkMixFiles.available && saved.isNotEmpty(),
+                onClick = { ForkMixFiles.exportMixes() },
+                label = { Text("Export all") },
+            )
+            // mix-file.md rule 7: the last imported file's songs, queued after the playing one in its order
+            FilterChip(
+                colors = desktopChipColors(),
+                selected = false,
+                enabled = ForkMixFiles.canPlay,
+                onClick = { ForkMixFiles.playImported() },
+                label = { Text("Play these mixes") },
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            ForkMixFiles.status ?: if (saved.isEmpty()) "No edited pairs yet" else "${saved.size} edited pair${if (saved.size == 1) "" else "s"}",
+            color = DesktopSecondary,
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
+    ForkMixImportConfirm()
 }
 
 private fun detail(style: AutomixStyle): String = when (style) {

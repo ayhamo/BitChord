@@ -104,6 +104,21 @@ object ForkAddonStream {
     }
 
     /**
+     * A `/stream` answer that is a miss (protocol.md §4: "`error`: logged; the answer is a miss";
+     * §6: a `/stream` miss is never cached). Thrown inside the shared call so it leaves as a failure:
+     * the shared cache drops it (it used to hold an error or a blank `url` for 5 minutes, so the song
+     * got no stream from that addon until then), the per-addon limits give its uncached slot back,
+     * and the caller falls back to the row's own `streamURL` as for any failed `/stream` (§4: "on a
+     * 404, a blank `url` or an `error`: use the row's `streamURL`"). An answer with an `error` *and*
+     * a `url` used to be played.
+     */
+    class Miss(error: String?) : Exception(error?.trim()?.ifBlank { null } ?: "no stream")
+
+    /** The [Miss] an answer with [url] and [error] from the addon at [addonBase] is, or null when it is a hit. */
+    fun missOf(url: String, error: String?, addonBase: String): Miss? =
+        if (url.isBlank() || !error.isNullOrBlank() || cleartextRefused(url, addonBase)) Miss(error) else null
+
+    /**
      * HLS or DASH from a stream answer's `mimeType`, or null. Upstream's
      * `transport` reads `manifest`, `mediaType` and `format` (the first one
      * filled in) and never `mimeType`, so an extensionless playlist link

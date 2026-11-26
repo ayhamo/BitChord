@@ -1246,6 +1246,29 @@ class AddonSourceTest {
         assertNull(AddonSource(config()).stream("t1", StreamRequest.Lossless))
     }
 
+    /**
+     * Fork (protocol.md §4, §6): an `error` is a miss even beside a `url`, it falls back to the
+     * row's own `streamURL`, and it is never cached, so the next ask goes to the addon again.
+     */
+    @Test
+    fun `fork an error beside a url is an uncached miss that falls back to the row`() = runBlocking {
+        route("/manifest.json", manifest())
+        route(
+            "/search",
+            json(
+                """{"tracks":[{"id":"t1","title":"S","artist":"A","duration":180,
+                   "streamURL":"https://cdn.example.com/direct.mp3","format":"mp3"}]}""",
+            ),
+        )
+        route("/stream/t1", json("""{"url":"https://cdn.example.com/wrong.flac","error":"all clients exhausted"}"""))
+        val source = AddonSource(config())
+        source.search("s", limit = 5)
+        assertEquals("https://cdn.example.com/direct.mp3", source.stream("t1", StreamRequest.Best)!!.url)
+        source.stream("t1", StreamRequest.Best)
+        val asked = synchronized(seen) { seen.count { it.requestUrl?.encodedPath == "/stream/t1" } }
+        assertEquals("a miss is asked again, not served from the cache", 2, asked)
+    }
+
     /** That addon answers an unknown id with a 502, not the 404 the spec implies. */
     @Test
     fun `a gateway error on an unknown id is a miss rather than a crash`() = runBlocking {

@@ -24,7 +24,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.coroutineContext
 
 /**
@@ -83,10 +82,10 @@ internal object ForkVersionSwitch {
     private val missing = MutableStateFlow<Set<String>>(emptySet())
 
     /** The row a switch came from, by the id it switched to: the way back is that exact row. */
-    private val origins = ConcurrentHashMap<String, Song>()
+    private val origins = com.music.bitchord.data.forkLruMap<String, Song>(256) // bounded: one per switch, never emptied
 
     /** Measured shifts, (from, to) -> ms, kept both ways, as the phone's aligner caches them. */
-    private val offsets = ConcurrentHashMap<Pair<String, String>, Long>()
+    private val offsets = com.music.bitchord.data.forkLruMap<Pair<String, String>, Long>(256) // bounded: a dropped pair is measured again
 
     /** Set by the window. */
     @Volatile var engine: DesktopPlaybackEngine? = null

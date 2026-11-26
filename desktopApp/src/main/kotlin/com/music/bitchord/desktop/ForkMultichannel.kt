@@ -31,9 +31,9 @@ import kotlinx.coroutines.withContext
  * engine's `readSource`.
  *
  * What changes downstream with more than two channels: the equaliser, loudness, crossfade and
- * Automix sends are per channel already; Spatial audio (a stereo widener), Karaoke (centre
- * cancel on a stereo pair) and the loop mix (stereo renderer) don't run, as they never did for a
- * non-stereo stream; the backdrop/bass meters and the silent-tail check read the stereo fold of
+ * Automix sends are per channel already; Spatial audio (a stereo widener) and Karaoke (centre
+ * cancel on a stereo pair) don't run, as they never did for a non-stereo stream; the loop mix
+ * (stereo renderer) plays on the front left/right with the rest silent (ForkLoopChannels, 2026-11-25); the backdrop/bass meters and the silent-tail check read the stereo fold of
  * the block, so padded silent channels don't read as quieter music.
  *
  * Applies from the next song: a playing deck's decoder keeps the layout it opened with.

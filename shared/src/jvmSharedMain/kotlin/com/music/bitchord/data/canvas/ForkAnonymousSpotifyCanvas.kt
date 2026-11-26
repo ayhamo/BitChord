@@ -17,7 +17,6 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
-import java.net.URLEncoder
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
@@ -26,14 +25,15 @@ import java.util.concurrent.TimeUnit
  * `DirectCanvasProvider.getSpotifyCanvas` as the owner's phone extension ports it
  * (`SpotifyCanvas.java`): the anonymous web player's token (spotlib's TOTP, v61) and a client token,
  * Spotify's own top-results search (`searchTopResultsList`), Metrolist's match
- * ([ForkSpotifyCanvasRules.matches]), and the clip's URL from the public mirror
- * (`spotify-canva.vercel.app`), only ever a `scdn.co` URL over https ([ForkSpotifyCanvasRules.trusted]).
+ * ([ForkSpotifyCanvasRules.matches]), and the clip from Spotify's own pathfinder `canvas` query
+ * (rule 4.5, Metrolist 460a3168a: `data.trackUnion.canvas.url`, [canvasOf]), only ever a `scdn.co`
+ * URL over https ([ForkSpotifyCanvasRules.trusted]). Until 2026-11-24 the clip came from the public
+ * mirror `spotify-canva.vercel.app`, which now answers every request with HTTP 402.
  *
- * The fork's Spotify source signs in with the listener's `sp_dc` cookie (`SpotifyToken`,
- * `DesktopSpotifyToken`), and without one asked nothing: no Spotify Canvas at all for anyone who
- * hadn't pasted a cookie. This is what the apps ask in that case; with a cookie set the signed-in
- * route stays first, as the owner set it up. The rulebook asks for anonymous only ("never the
- * listener's account"); keeping the cookie route is the fork's recorded difference.
+ * The order (rule 4.0): the listener's own Spotify sign-in first (`SpotifyCanvas` / `SpotifyToken`
+ * on the phone, `DesktopSpotifyCanvas` / `DesktopSpotifyToken` on the PC), then this lookup when
+ * there is no sign-in or it finds nothing or fails, else no Spotify canvas. The apps' callers
+ * (`ForkCanvasSources`, `ForkDesktopCanvasSources`) keep that order.
  *
  * Every request: 8 s, no redirects, an answer read up to 256 KB (rule 4.7). Throws on a failed
  * request (the caller reports it, and the song is asked again later, not saved as "no canvas");
@@ -45,8 +45,9 @@ object ForkAnonymousSpotifyCanvas {
     private const val TOKEN_URL = "https://open.spotify.com/api/token"
     private const val CLIENT_TOKEN_URL = "https://clienttoken.spotify.com/v1/clienttoken"
     private const val PATHFINDER_URL = "https://api-partner.spotify.com/pathfinder/v2/query"
-    private const val MIRROR_URL = "https://spotify-canva.vercel.app/api/canvas?trackId="
     private const val SEARCH_HASH = "12d940b3f7381506a82ff5382eb59b0ed65118656e6bcdfbe4cebc528f75d29d"
+    /** The `canvas` persisted query (rule 4.5); the same hash upstream's signed-in route knows ([SpotifyCanvasQuery.KNOWN_CANVAS_HASH]). */
+    private const val CANVAS_HASH = "575138ab27cd5c1b3e54da54d0a7cc8d85485402de26340c2145f0f6bb5e7a9f"
     private const val USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64; rv:153.0) Gecko/20100101 Firefox/153.0"
     private const val APP_VERSION = "1.2.96.390.gd46a85db"
     private const val WEB_CLIENT_ID = "d8a5ed958d274c2e8ee717e6a4b0971d"
@@ -79,8 +80,11 @@ object ForkAnonymousSpotifyCanvas {
         return CanvasArtwork(url = url, title = title, artist = artist, album = album, source = CanvasSource.SPOTIFY)
     }
 
-    /** Metrolist's `spotifyCanvas`: the first matching Track among the top 10 results that has a canvas. */
-    @Synchronized
+    /**
+     * Metrolist's `spotifyCanvas`: the first matching Track among the top 10 results that has a canvas.
+     * Not synchronized as a whole: up to 12 requests of 16 s each held one lock, so the player's
+     * lookup waited behind a Top Picks or album lookup. Only the shared tokens are locked ([tokens]).
+     */
     fun canvasUrl(title: String, artist: String, album: String?, durationMs: Long?): String? {
         if (title.isBlank() || artist.isBlank()) return null
         val variables = buildJsonObject {
@@ -96,8 +100,7 @@ object ForkAnonymousSpotifyCanvas {
             put("includeEpisodeContentRatingsV2", true)
             putJsonArray("sectionFilters") { add("GENERIC"); add("VIDEO_CONTENT") }
         }
-        val items = ((((query("searchTopResultsList", SEARCH_HASH, variables)["data"] as? JsonObject)
-            ?.get("searchV2") as? JsonObject)?.get("topResultsV2") as? JsonObject)?.get("itemsV2") as? JsonArray)
+        val items = searchItems(query("searchTopResultsList", SEARCH_HASH, variables))
             ?: return null.also { Log.d(TAG, "no results for '$title'") }
         for (entry in items.take(10)) {
             val track = ((entry as? JsonObject)?.get("item") as? JsonObject)?.get("data") as? JsonObject ?: continue
@@ -110,31 +113,59 @@ object ForkAnonymousSpotifyCanvas {
             val foundAlbum = (track["albumOfTrack"] as? JsonObject)?.text("name")
             val foundMs = ((track["duration"] as? JsonObject)?.get("totalMilliseconds") as? JsonPrimitive)?.longOrNull ?: 0L
             if (!ForkSpotifyCanvasRules.matchesHit(title, artist, album, durationMs, name, names, foundAlbum, foundMs)) continue
-            val canvas = publicCanvas(id)
+            val canvas = trackCanvas(id)
             if (ForkSpotifyCanvasRules.trusted(canvas)) return canvas
             Log.d(TAG, "'$name' matches, no canvas")
         }
         return null
     }
 
-    /** Metrolist's `publicSpotifyCanvas`: the public mirror's canvas for a 22-character track id (rule 4.5). */
-    private fun publicCanvas(trackId: String): String? {
-        if (!Regex("[A-Za-z0-9]{22}").matches(trackId)) return null
-        val request = Request.Builder().url(MIRROR_URL + URLEncoder.encode(trackId, "UTF-8"))
-            .header("User-Agent", USER_AGENT).build()
-        client.newCall(request).execute().use { response ->
-            if (response.code == 404) return null // the mirror has none
-            // busy or down (429, 5xx): a failure, so the song is asked again later
-            if (response.code != 200) throw IOException("canvas mirror: HTTP ${response.code}")
-            val list = (json.parseToJsonElement(read(response)) as? JsonObject)?.get("canvasesList") as? JsonArray ?: return null
-            return list.firstNotNullOfOrNull { c ->
-                val o = c as? JsonObject ?: return@firstNotNullOfOrNull null
-                o.text("canvasUrl")?.takeIf { o.text("trackUri") == "spotify:track:$trackId" && ForkSpotifyCanvasRules.trusted(it) }
-            }
-        }
+    /**
+     * Rule 4.5: the canvas URL in a pathfinder `canvas` answer, `data.trackUnion.canvas.url`, when it
+     * is a string rule 4.6 trusts; null for no canvas, no track, no data or any other host or scheme
+     * (Metrolist's `spotifyTrackCanvas`, the extension's `canvasOf`; case group `spotifyCanvas`).
+     */
+    fun canvasOf(answer: JsonObject?): String? {
+        val canvas = (((answer?.get("data") as? JsonObject)?.get("trackUnion") as? JsonObject)?.get("canvas") as? JsonObject)
+            ?: return null
+        val url = (canvas["url"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return null
+        return url.takeIf { ForkSpotifyCanvasRules.trusted(it) }
     }
 
-    /** A pathfinder persisted query with the anonymous tokens, fetched again once on a 401. */
+    /**
+     * A search answer's results, `data.searchV2.topResultsV2.itemsV2`; null when Spotify searched
+     * and found nothing. An answer with no `data` object at all (an empty `{}`, a proxy's page that
+     * happened to parse) throws: it is a failed lookup, so the caller doesn't save it as a 24 h miss
+     * ([ForkCanvasStore.cached] keeps a null answer, never a throw).
+     */
+    fun searchItems(answer: JsonObject): JsonArray? {
+        val data = answer["data"] as? JsonObject ?: throw IOException("searchTopResultsList: no data")
+        return ((data["searchV2"] as? JsonObject)?.get("topResultsV2") as? JsonObject)?.get("itemsV2") as? JsonArray
+    }
+
+    /**
+     * [canvasOf] for an answer to the `canvas` query, where a missing answer is an error, not "no
+     * canvas": no `data` object, or no `trackUnion` object in it, throws (asked again later, never
+     * saved as a miss). Only a track that is there and has no trusted canvas is null. [canvasOf]
+     * itself stays lenient, as the rulebook's `spotifyCanvas` cases read it.
+     */
+    fun trackCanvasOf(answer: JsonObject): String? {
+        val data = answer["data"] as? JsonObject ?: throw IOException("canvas: no data")
+        if (data["trackUnion"] !is JsonObject) throw IOException("canvas: no track")
+        return canvasOf(answer)
+    }
+
+    /** Rule 4.5: the track's canvas, asked of Spotify itself for a 22-character track id. */
+    private fun trackCanvas(trackId: String): String? {
+        if (!Regex("[A-Za-z0-9]{22}").matches(trackId)) return null
+        return trackCanvasOf(query("canvas", CANVAS_HASH, buildJsonObject { put("trackUri", "spotify:track:$trackId") }))
+    }
+
+    /**
+     * A pathfinder persisted query with the anonymous tokens. An expired session (401) drops both
+     * tokens and asks once more; a second 401, a rate limit (429, never retried), GraphQL `errors`
+     * or any other HTTP error throws: a failed lookup, never saved as a miss (rule 4.5, §2 rule 1).
+     */
     private fun query(operation: String, hash: String, variables: JsonObject): JsonObject {
         val body = buildJsonObject {
             put("variables", variables)
@@ -142,7 +173,7 @@ object ForkAnonymousSpotifyCanvas {
             putJsonObject("extensions") { putJsonObject("persistedQuery") { put("version", 1); put("sha256Hash", hash) } }
         }.toString()
         repeat(2) { attempt ->
-            auth()
+            val (access, clientTok) = tokens()
             val request = Request.Builder().url(PATHFINDER_URL)
                 .post(body.toRequestBody("application/json;charset=UTF-8".toMediaType()))
                 .header("User-Agent", USER_AGENT)
@@ -151,16 +182,15 @@ object ForkAnonymousSpotifyCanvas {
                 .header("Referer", "https://open.spotify.com/")
                 .header("app-platform", "WebPlayer")
                 .header("spotify-app-version", APP_VERSION)
-                .header("Authorization", "Bearer $accessToken")
-                .header("client-token", clientToken.orEmpty())
+                .header("Authorization", "Bearer $access")
+                .header("client-token", clientTok)
                 .build()
             client.newCall(request).execute().use { response ->
                 if (response.code == 401 && attempt == 0) {
-                    accessToken = null
-                    clientToken = null
+                    dropTokens(access)
                     return@repeat
                 }
-                if (response.code >= 400) throw IOException("$operation: HTTP ${response.code}")
+                checkStatus(operation, response.code)
                 val data = json.parseToJsonElement(read(response)) as? JsonObject ?: throw IOException("$operation: not JSON")
                 if (data.containsKey("errors")) throw IOException("$operation: GraphQL errors")
                 return data
@@ -169,7 +199,31 @@ object ForkAnonymousSpotifyCanvas {
         throw IOException("$operation: session expired")
     }
 
-    /** spotlib's AuthHttp: the anonymous web-player token (TOTP v61), then the client token. */
+    private val tokenLock = Any()
+
+    /** The access and client tokens, minted once for every lookup running at the time ([auth]). */
+    private fun tokens(): Pair<String, String> = synchronized(tokenLock) {
+        auth()
+        (accessToken ?: throw IOException("/api/token: no access token")) to (clientToken ?: throw IOException("clienttoken: no token"))
+    }
+
+    /** A 401 on [stale]: both tokens go, unless another lookup has already replaced them. */
+    private fun dropTokens(stale: String) = synchronized(tokenLock) {
+        if (accessToken == stale) {
+            accessToken = null
+            clientToken = null
+        }
+    }
+
+    /**
+     * Only a 2xx answer is read. The client follows no redirects (rule 4.7), and a 3xx used to pass a
+     * `>= 400` check and fail later as a JSON parse error; it is an HTTP failure like any other.
+     */
+    internal fun checkStatus(operation: String, code: Int) {
+        if (code !in 200..299) throw IOException("$operation: HTTP $code")
+    }
+
+    /** spotlib's AuthHttp: the anonymous web-player token (TOTP v61), then the client token. Under [tokenLock]. */
     private fun auth() {
         if (accessToken == null || System.currentTimeMillis() > accessExpiresMs - 60_000) {
             val code = ForkSpotifyCanvasRules.totp(System.currentTimeMillis())
@@ -178,7 +232,7 @@ object ForkAnonymousSpotifyCanvas {
                 .header("User-Agent", USER_AGENT).header("Accept", "*/*").header("Referer", "https://open.spotify.com/")
                 .build()
             client.newCall(request).execute().use { response ->
-                if (response.code >= 400) throw IOException("/api/token: HTTP ${response.code}")
+                checkStatus("/api/token", response.code)
                 val t = json.parseToJsonElement(read(response)) as? JsonObject ?: throw IOException("/api/token: not JSON")
                 val token = t.text("accessToken")?.takeIf { it.isNotEmpty() } ?: throw IOException("/api/token: no access token")
                 accessToken = token
@@ -204,7 +258,7 @@ object ForkAnonymousSpotifyCanvas {
                 .header("Origin", "https://open.spotify.com").header("Referer", "https://open.spotify.com/")
                 .build()
             client.newCall(request).execute().use { response ->
-                if (response.code >= 400) throw IOException("clienttoken: HTTP ${response.code}")
+                checkStatus("clienttoken", response.code)
                 val granted = (json.parseToJsonElement(read(response)) as? JsonObject)?.get("granted_token") as? JsonObject
                 clientToken = granted?.text("token")?.takeIf { it.isNotEmpty() } ?: throw IOException("clienttoken: no token")
             }

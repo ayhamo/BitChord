@@ -28,6 +28,7 @@ object ForkV2Evidence {
         a.bassCurve = bassCurve(c)
         chroma(x, sr, a)
         a.loudnessCurve = loudnessCurve(x, sr)
+        a.powerCurve = ForkV2Sections.power(x, sr) // fork: the intro and outro the PC's way (ForkV2Sections)
     }
 
     internal fun biquad(x: FloatArray, lowpass: Boolean, f: Double, sr: Double): FloatArray = ForkV2KickLock.biquad(x, lowpass, f, sr)

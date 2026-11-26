@@ -49,7 +49,7 @@ object BestParts {
     private val starts = ConcurrentHashMap<String, BestPartStart>()
 
     /** What is already known about [videoId], without asking anything. */
-    fun known(videoId: String): BestPartStart? = starts[videoId]
+    fun known(videoId: String): BestPartStart? = com.music.bitchord.data.canvas.ForkBestParts.mine(videoId)?.let { BestPartStart(it, BestPartStart.Source.HEATMAP) } ?: starts[videoId] // fork: "Your best part" over a pick remembered before it was saved, as startFor
 
     /**
      * Where [song]'s best part starts.
@@ -60,6 +60,7 @@ object BestParts {
      * returns: at worst with [BestPart.fallbackMs].
      */
     suspend fun startFor(context: Context, song: Song): BestPartStart {
+        com.music.bitchord.data.canvas.ForkBestParts.mine(song.videoId)?.let { return BestPartStart(it, BestPartStart.Source.HEATMAP) } // fork: "Your best part" first (canvas.md §14 rule 5), not remembered so a change shows
         starts[song.videoId]?.let { return it }
         ensureLoaded(context)
         // The Replay's songs come off the listening files, which keep no

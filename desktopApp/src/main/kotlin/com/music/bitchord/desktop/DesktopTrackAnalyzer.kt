@@ -77,7 +77,7 @@ internal class DesktopTrackAnalyzer(
      * playing first. One drain runs at a time; a song that stops being either is dropped from the
      * queue, and its pass in flight stops at its next check.
      */
-    private class Job(val song: Song, val stream: DesktopStream?, val seconds: Double)
+    private class Job(val song: Song, val stream: DesktopStream?, val seconds: Double, val key: String = song.videoId) // fork: key (ForkCopyAnalysis)
     private val pending = ForkAnalysisQueue<Job>()
     private val schedulerLock = Any()
     private var drainScheduled = false
@@ -116,7 +116,7 @@ internal class DesktopTrackAnalyzer(
 
     /** fork (Desktop Revived a5603aa5): the songs worth measuring now; anything else queued is dropped. */
     fun focusOn(currentId: String?, nextId: String?) {
-        pending.focus(currentId, nextId)
+        synchronized(schedulerLock) { pending.focus(currentId, nextId).forEach { com.music.bitchord.playback.smart.ForkAnalysisProgress.ended(it, results[it]?.isUsable, stopped = true) } } // fork: a queued song dropped here never reaches drain's ended; it read "waiting its turn" for good
     }
 
     /** What is known now, never a computation — the planner asks this every tick. */
@@ -125,7 +125,7 @@ internal class DesktopTrackAnalyzer(
 
     /** A stored analysis, promoted into memory on first ask. */
     private fun restored(trackId: String): TrackAnalysis? =
-        store.load(trackId)?.also { results[trackId] = it }
+        store.load(trackId)?.takeUnless { com.music.bitchord.playback.smart.ForkAnalysisProgress.isTooLong(trackId) }?.also { results[trackId] = it } // fork: a saved analysis over 8 minutes isn't restored under Automix v2, as on the phone (versions.md "Analysis length")
 
     fun isAnalysed(trackId: String): Boolean =
         results.containsKey(trackId) || restored(trackId) != null
@@ -156,7 +156,8 @@ internal class DesktopTrackAnalyzer(
     fun request(song: Song, stream: DesktopStream?, durationSeconds: Double) {
         val trackId = song.videoId
         if (trackId.isBlank()) return
-        if (durationSeconds <= 0) return
+        if (!ForkAnalysisLength.asks(durationSeconds)) return // fork: was `<= 0` return; an unknown length is measured from the decode (ForkAnalysisLength)
+        if (com.music.bitchord.playback.smart.ForkAnalysisProgress.tooLong(trackId, durationSeconds)) return // fork: over 8 minutes isn't analysed, a saved one isn't restored (versions.md "Analysis length")
         if (stopped() || released.get()) return
         if (!DesktopAnalysisRuntime.available) {
             if (warnedNoAnalyser.compareAndSet(false, true)) {
@@ -164,19 +165,20 @@ internal class DesktopTrackAnalyzer(
             }
             return
         }
-        if (results.containsKey(trackId) || restored(trackId) != null) return ForkDesktopV2Evidence.offer(song, stream, durationSeconds) { stopped() || released.get() } // fork: Automix v2 evidence for a song analysed before it, once (ForkV2EvidenceBackfill); was `return`
+        if (results.containsKey(trackId) || restored(trackId) != null) return if (durationSeconds <= 0) Unit else ForkDesktopV2Evidence.offer(song, stream, durationSeconds) { stopped() || released.get() } // fork: Automix v2 evidence for a song analysed before it, once (ForkV2EvidenceBackfill); was `return`
         // Asked every tick; a track that just failed is not resolved and decoded again each time.
         failedAt[trackId]?.let { if (System.currentTimeMillis() - it < RETRY_AFTER_MS) return }
         val job = Job(song, stream?.takeIf { it.isLocalFile }, durationSeconds)
         synchronized(schedulerLock) {
             if (trackId in running || !pending.offer(trackId, job)) return
+            com.music.bitchord.playback.smart.ForkAnalysisProgress.queued(trackId) // fork: the editor's progress row
             if (!drainScheduled) {
                 drainScheduled = true
                 try {
                     worker.execute(::drain)
                 } catch (_: java.util.concurrent.RejectedExecutionException) {
                     drainScheduled = false
-                    pending.clear()
+                    pending.clear().forEach { com.music.bitchord.playback.smart.ForkAnalysisProgress.ended(it, null, stopped = true) } // fork: dropped, not left "waiting its turn"
                 }
             }
         }
@@ -195,25 +197,28 @@ internal class DesktopTrackAnalyzer(
                 run(picked.second)
             } finally {
                 // fork (Desktop Revived 8f9ed4a8): released however the pass ends, so no song stays "analysing"
+                val forkCalledOff = cancelled() // fork: read while activeId still names the pass (a song moved past is an abort)
                 activeId = null
                 running.remove(picked.first)
+                com.music.bitchord.playback.smart.ForkAnalysisProgress.ended(picked.first, results[picked.first]?.isUsable ?: if (picked.first in failed) false else null, forkCalledOff) // fork: a failure that threw nothing (no audio, an empty decode) reads as one
             }
         }
     }
 
     private fun run(job: Job) {
         val song = job.song
-        val trackId = song.videoId
+        val trackId = job.key // fork: was song.videoId; a copy's own key (ForkCopyAnalysis)
         if (cancelled()) return
         // Android's rule: the lowest rung yields to playback rather than competing for a core, and
         // the thread count stays the speed knob for the other two.
         Thread.currentThread().priority =
             if (performance().yieldsToPlayback) Thread.MIN_PRIORITY else Thread.NORM_PRIORITY
         failed.remove(trackId)
+        com.music.bitchord.playback.smart.ForkAnalysisProgress.stage(trackId, com.music.bitchord.playback.smart.ForkAnalysisProgress.Stage.AUDIO) // fork
         val local = job.stream
         DesktopTrackLog.log(
-            "automix: analysing '${song.title}' (${"%.0f".format(job.seconds)}s)" +
-                if (local != null) " from the file" else if (ForkNavidrome.owns(song)) " from the server" else " from YouTube Opus", // fork: the server
+            "automix: analysing '${song.title}' (${if (job.seconds > 0) "%.0fs".format(job.seconds) else "length from the audio"})" + // fork: an unknown length
+                if (trackId != song.videoId) " from ${local?.sourceId}'s copy" else if (local != null) " from the file" else if (ForkNavidrome.owns(song)) " from the server" else " from YouTube Opus", // fork: the server
         )
         val serverCopy = if (local == null) ForkPreload.analysisCopy(song) else null // fork: one /rest/stream, not one per window
         val analysis = runCatching {
@@ -221,6 +226,7 @@ internal class DesktopTrackAnalyzer(
             analyse(trackId, source, job.seconds)
         }.also { serverCopy?.delete() } // fork
             .onFailure { if (!cancelled()) DesktopTrackLog.log("analysis of '${song.title}' failed: ${it.message}") }
+            .onFailure { if (!cancelled()) com.music.bitchord.playback.smart.ForkAnalysisProgress.failed(trackId, it) } // fork: the row's reason
             .getOrNull()
         // Called off, not failed: it is free to be measured once it is wanted again.
         if (cancelled()) return
@@ -230,6 +236,7 @@ internal class DesktopTrackAnalyzer(
             return
         }
         failedAt.remove(trackId)
+        com.music.bitchord.playback.smart.ForkAnalysisProgress.stage(trackId, com.music.bitchord.playback.smart.ForkAnalysisProgress.Stage.SAVING) // fork
         runCatching { store.save(trackId, analysis) }
             .onFailure { DesktopTrackLog.log("automix: could not keep the analysis of '${song.title}': ${it.message}") }
         results[trackId] = analysis
@@ -272,14 +279,19 @@ internal class DesktopTrackAnalyzer(
     private fun analyse(
         trackId: String,
         stream: DesktopStream,
-        durationSeconds: Double,
+        knownSeconds: Double, // fork: was durationSeconds; 0 when the song carried no length
     ): TrackAnalysis? {
-        val features = decode(stream, TrackFeatures.sampleRate)
-            ?.also { com.music.bitchord.playback.smart.automixv2.ForkV2EvidenceStore.measure(DesktopAnalysisRuntime.analysisHome(), trackId, it, TrackFeatures.sampleRate) } // fork: Automix v2's whole-song evidence from this same buffer
-            ?.let { TrackFeatures.analyze(it, durationSeconds) }
+        com.music.bitchord.playback.smart.ForkAnalysisProgress.stage(trackId, com.music.bitchord.playback.smart.ForkAnalysisProgress.Stage.DECODING) // fork
+        val samples = decode(stream, TrackFeatures.sampleRate) ?: return null // fork: split out, for the length
+        val durationSeconds = ForkAnalysisLength.seconds(knownSeconds, samples.size, TrackFeatures.sampleRate) // fork
+        if (com.music.bitchord.playback.smart.ForkAnalysisProgress.tooLong(trackId, durationSeconds)) return null // fork: a length only the decode knew
+        val features = samples
+            .also { mono -> forkEvidence?.invoke(trackId, mono) ?: com.music.bitchord.playback.smart.automixv2.ForkV2EvidenceStore.measure(DesktopAnalysisRuntime.analysisHome(), trackId, mono, TrackFeatures.sampleRate) } // fork: Automix v2's whole-song evidence from this same buffer (the benchmark's kept apart)
+            .let { TrackFeatures.analyze(it, durationSeconds) }
             ?: return null
         if (cancelled()) return null
 
+        com.music.bitchord.playback.smart.ForkAnalysisProgress.stage(trackId, com.music.bitchord.playback.smart.ForkAnalysisProgress.Stage.MODELS) // fork
         val span = if (VocalSpectrogram.available) {
             (VocalTracker.FIXED_FRAMES - 2) * VocalSpectrogram.hop / VocalSpectrogram.sampleRate
         } else {
@@ -296,9 +308,11 @@ internal class DesktopTrackAnalyzer(
         }
         if (cancelled()) return null
 
-        val all = ForkAnalysisWindows.seam(regions.mapNotNull { r -> r.grid?.let { ForkAnalysisWindows.Graded(it, r.start, r.seconds) } })
-        val headSide = ForkAnalysisWindows.side(all, 0.0, headEnd)
-        val tailSide = ForkAnalysisWindows.side(all, tailStart, durationSeconds)
+        // fork: Beat This! over one 59 s span at each end, as the phone's analyser (ForkBeatSpans); was the vocal windows' beats seamed
+        val (headSpan, tailSpan) = com.music.bitchord.playback.smart.ForkBeatSpans.spans(durationSeconds)
+        val headSide = forkBeatSpan(stream, headSpan)
+        val tailSide = if (tailSpan == null) headSide else forkBeatSpan(stream, tailSpan)
+        if (cancelled()) return null
         val head = headSide?.let(ForkAnalysisWindows::grid)
         val tail = tailSide?.let(ForkAnalysisWindows::grid)
         // The tail governs where the outgoing song is mixed out, so it leads; the head is what the
@@ -340,6 +354,59 @@ internal class DesktopTrackAnalyzer(
         )
     }
 
+    /**
+     * Fork: [song] measured on the copy [stream] that plays it, when that is an add-on's (ForkCopyAnalysis):
+     * kept under the copy's own key beside the song's YouTube analysis, which [request] still makes.
+     */
+    fun forkRequestCopy(song: Song, stream: DesktopStream?, durationSeconds: Double) {
+        if (!ForkCopyAnalysis.isCopy(song, stream)) return
+        val key = ForkCopyAnalysis.key(song, stream)
+        if (!ForkAnalysisLength.asks(durationSeconds) || durationSeconds <= 0) return
+        if (com.music.bitchord.playback.smart.ForkAnalysisProgress.tooLong(song.videoId, durationSeconds)) return
+        if (stopped() || released.get() || !DesktopAnalysisRuntime.available) return
+        if (results.containsKey(key) || restored(key) != null) return
+        failedAt[key]?.let { if (System.currentTimeMillis() - it < RETRY_AFTER_MS) return }
+        val job = Job(song, stream, durationSeconds, key)
+        synchronized(schedulerLock) {
+            if (key in running || !pending.offer(key, job)) return
+            if (!drainScheduled) {
+                drainScheduled = true
+                try {
+                    worker.execute(::drain)
+                } catch (_: java.util.concurrent.RejectedExecutionException) {
+                    drainScheduled = false
+                    pending.clear().forEach { com.music.bitchord.playback.smart.ForkAnalysisProgress.ended(it, null, stopped = true) }
+                }
+            }
+        }
+    }
+
+    /** Fork: the model's beats over [span], decoded on its own as the phone's analyser does ([com.music.bitchord.playback.smart.ForkBeatSpans]). */
+    private fun forkBeatSpan(stream: DesktopStream, span: Pair<Double, Double>): com.music.bitchord.playback.smart.BeatSide? {
+        if (cancelled() || span.second - span.first < 1.0) return null
+        val stereo = runCatching { ForkDesktopLoopMix.decodeRegion(stream, span.first, span.second, REGION_RATE) { !cancelled() } }
+            .onFailure { if (!cancelled()) DesktopTrackLog.log("automix: beat span ${"%.0f".format(span.first)}-${"%.0f".format(span.second)}s skipped: ${it.message}") }
+            .getOrNull() ?: return null
+        beatsUsed = true
+        return runCatching { com.music.bitchord.playback.smart.ForkBeatSpans.track(beats, stereo.left, stereo.right, REGION_RATE, stereo.start) }
+            .onFailure { DesktopTrackLog.log("automix: beat pass skipped: ${it.message}") }
+            .getOrNull()
+    }
+
+    /** Fork: the Spotify benchmark's evidence hook ([ForkSpotifyBench]); null: the app's store. */
+    @Volatile internal var forkEvidence: ((String, FloatArray) -> Unit)? = null
+
+    /** Fork: [file] (any format FFmpeg reads) analysed as a song is, for the Spotify benchmark ([ForkSpotifyBench]). */
+    internal fun forkAnalyseFile(trackId: String, file: java.io.File): TrackAnalysis? =
+        analyse(trackId, DesktopStream(url = file.absolutePath), 0.0)
+
+    /** Fork: [file] decoded as [analyse] decodes a song for its DSP pass and evidence, for the Spotify benchmark ([ForkSpotifyBench]). */
+    internal fun forkDecodeFile(file: java.io.File): FloatArray? =
+        decode(DesktopStream(url = file.absolutePath), TrackFeatures.sampleRate)
+
+    /** Fork: whether a pass would stop now ([cancelled]), for the Spotify benchmark's failure line. */
+    internal fun forkCancelled(): Boolean = cancelled()
+
     /** What a decoded window contributes, once its audio has been let go of. */
     private class Region(
         val grid: BeatTracker.Grid?,
@@ -357,14 +424,7 @@ internal class DesktopTrackAnalyzer(
             .getOrNull() ?: return null
         if (stereo.left.size < REGION_RATE || stereo.left.size != stereo.right.size) return null
         val seconds = stereo.left.size / REGION_RATE.toDouble()
-        val forModel = run {
-            val mono = FloatArray(stereo.left.size) { (stereo.left[it] + stereo.right[it]) * 0.5f }
-            MelSpectrogram.resample(mono, REGION_RATE.toDouble(), MelSpectrogram.sampleRate)
-        }
-        beatsUsed = true
-        val grid = runCatching { forModel?.let { beats.track(it, offsetSeconds = stereo.start) } }
-            .onFailure { DesktopTrackLog.log("automix: beat pass skipped: ${it.message}") }
-            .getOrNull()
+        val grid: BeatTracker.Grid? = null // fork: the beats run over ForkBeatSpans' 59 s spans (forkBeatSpan), not these windows
         if (cancelled()) return null
         val vocal = runCatching {
             if (!VocalSpectrogram.available) return@runCatching null

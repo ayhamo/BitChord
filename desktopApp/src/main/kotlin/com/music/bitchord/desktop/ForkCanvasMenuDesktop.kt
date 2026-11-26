@@ -39,8 +39,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Fork: one song's canvas in the PC player's song menu (canvas.md §15; after "Jump to the most
- * replayed part", [ForkMostReplayedRow]), as on the phone (`ForkCanvasMenuRows`), in the menu's own
+ * Fork: one song's canvas in the PC player's song menu (canvas.md §15), as on the phone
+ * (`ForkCanvasMenuRows`), in the menu's own
  * rows with the lists opening under their row:
  *
  * - a switch per source for this song ("Music video canvas", "Spotify canvas", "Animated cover");

@@ -29,10 +29,10 @@ import kotlin.math.min
  *   curve is RMS over 16-beat windows; TrackAnalyzer's is its own scale and spacing, so the Auto
  *   length's "calm" test (energy share under 0.7) is approximate.
  * - camelotNum / camelotLetter ← [ForkV2BeatGrid.camelot] of key; keyName ← key; keyConfidence ←
- *   keyConfidence. CAUTION: the phone only trusts KeyStrength's correlation (0.5-0.9) here and sets
+ *   keyConfidence. CAUTION: the phone only trusts the evidence's key correlation (0.5-0.9) here and sets
  *   0 for the native analyser's key (whose "confidence" is a 0-0.1 gap). If TrackAnalyzer's
  *   keyConfidence is the native gap, Automix v2's key rules (TRUSTED_KEY 0.65) simply never fire;
- *   run [ForkV2KeyStrength.detect] on the decoded mono to get the phone's value.
+ *   run [ForkKeyExtractor.detect] on the decoded mono to get the PC's value.
  * - vocals ← vocalWindows (the open-unmix output per window: startTime, frameRate, values), the
  *   same thing the phone keeps; levelWindows are not used.
  * - musicVideo ← the [musicVideo] argument (TrackAnalysis has no such field).
@@ -87,7 +87,7 @@ object ForkV2FromTrackAnalysis {
             a.vocals.add(v)
         }
         a.musicVideo = musicVideo
-        return a
+        return ForkV2BarPhase.apply(a) // the bars on the model's downbeats (analysis-cases.md "The bar")
     }
 
     private fun side(s: BeatSide): ForkV2Analysis.BeatSide {

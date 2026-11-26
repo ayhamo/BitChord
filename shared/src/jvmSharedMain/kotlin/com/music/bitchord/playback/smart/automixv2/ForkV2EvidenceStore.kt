@@ -8,7 +8,7 @@ import kotlin.math.roundToInt
  * Fork: Automix v2's whole-song evidence, kept per track beside each app's analyses. The ported
  * planner reads five things the fork's [com.music.bitchord.playback.smart.TrackAnalysis] has no
  * field for (the sub-bass ratio, the bass and loudness curves, the whole-song and per-0.5 s pitch
- * profiles) and a key strength it measures differently ([ForkV2KeyStrength]); the extension
+ * profiles) and the key the PC's way ([ForkKeyExtractor], analysis-cases.md "The key"); the extension
  * measures them from the decoded song while analysing it (host.js lowEnd, chromaEvidence,
  * loudnessCurve). Both apps already decode the whole song once for their DSP pass, so [measure] is
  * called right there (one line in the phone's `TrackAnalyzer.structure`, one in the PC's
@@ -33,7 +33,7 @@ import kotlin.math.roundToInt
 object ForkV2EvidenceStore {
 
     /** Bumped when what is measured changes: older files are ignored (measured again on the next analysis). */
-    private const val VERSION = "ev1"
+    private const val VERSION = "ev3" // ev2: the key the PC's way (ForkKeyExtractor), on its 0.77-0.93 scale; ev3: the power curve (ForkV2Sections)
 
     @Volatile
     private var dir: File? = null
@@ -81,16 +81,7 @@ object ForkV2EvidenceStore {
         if (id.isBlank() || mono.isEmpty() || !(rate > 0)) return
         try {
             install(base)
-            val a = ForkV2Analysis()
-            a.fileKey = id
-            a.durationSec = mono.size / rate
-            ForkV2Evidence.measure(mono, rate, a)
-            val pcm = ShortArray(mono.size) { (mono[it] * 32767f).roundToInt().coerceIn(-32768, 32767).toShort() }
-            ForkV2KeyStrength.detect(pcm, pcm.size, rate.roundToInt())?.let {
-                a.keyName = it.name
-                a.keyConfidence = it.strength
-            }
-            a.analysisVersion = VERSION
+            val a = evidence(id, mono, rate)
             val file = fileFor(id) ?: return
             val tmp = File(file.parentFile, file.name + ".tmp")
             tmp.writeText(ForkV2Json.write(a.toJson()))
@@ -103,6 +94,23 @@ object ForkV2EvidenceStore {
         } catch (_: Throwable) {
             // OutOfMemoryError included: the analysis itself goes on without evidence.
         }
+    }
+
+    /**
+     * [id]'s evidence measured from [mono] at [rate] Hz, kept nowhere ([measure] keeps it; the Spotify benchmark,
+     * spotify-benchmark.md rule 1, keeps its own outside the app's data).
+     */
+    fun evidence(id: String, mono: FloatArray, rate: Double): ForkV2Analysis {
+        val a = ForkV2Analysis()
+        a.fileKey = id
+        a.durationSec = mono.size / rate
+        ForkV2Evidence.measure(mono, rate, a)
+        ForkKeyExtractor.detect(mono, rate.roundToInt())?.let {
+            a.keyName = it.name
+            a.keyConfidence = it.strength
+        }
+        a.analysisVersion = VERSION
+        return a
     }
 
     /** Drops what is held in memory (tests). */

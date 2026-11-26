@@ -10,6 +10,8 @@ import com.music.bitchord.data.canvas.CommunityCanvas
 import com.music.bitchord.data.canvas.ForkAnonymousSpotifyCanvas
 import com.music.bitchord.data.canvas.ForkBestParts
 import com.music.bitchord.data.canvas.ForkCanvasChoices
+import com.music.bitchord.data.canvas.ForkCanvasLookup
+import com.music.bitchord.data.canvas.ForkSpotifyCanvasRules
 import com.music.bitchord.data.canvas.ForkCanvasRules
 import com.music.bitchord.data.canvas.ForkCanvasSettings
 import com.music.bitchord.data.canvas.ForkClipGate
@@ -54,9 +56,9 @@ import java.io.File
  * A downloaded song ([downloaded]) reads its clips saved by its id first, Spotify's canvas and then
  * its art clip (rules 1.5 and 2.5, [ForkDownloadedCanvas]), and a clip found for it is kept by its id.
  *
- * Spotify: with the listener's `sp_dc` cookie set, the signed-in route (`SpotifyCanvas`, upstream's)
- * as before; without one, the rulebook's anonymous route ([ForkAnonymousSpotifyCanvas]), where the
- * fork had none at all.
+ * Spotify (rule 4.0): the listener's own sign-in first (`SpotifyCanvas`, upstream's, its clip kept
+ * only on `scdn.co` over https, rule 4.6), then, with no sign-in or when it finds nothing or fails,
+ * the anonymous lookup ([ForkAnonymousSpotifyCanvas]), else no Spotify canvas.
  */
 object ForkCanvasSources {
 
@@ -144,7 +146,7 @@ object ForkCanvasSources {
         // A cover found is noted for the song's menu (its Animated cover switch and Use, §15).
         val had = { a: CanvasArtwork? -> a?.also { ForkCanvasChoices.noteHad(song.videoId, ForkCanvasRules.Source.APPLE_MUSIC) } }
         return listOf<suspend () -> CanvasArtwork?>(
-            { had(ForkDownloadedCanvas.through(idKey, accept) { ForkCanvasStore.cached(appleKey, saveMiss = album != null) { AppleMusicCanvas.search(title, artist, album)?.let(ForkCanvasSources::rendition) } }) },
+            { had(ForkDownloadedCanvas.through(idKey, accept) { ForkCanvasStore.cached(appleKey, saveMiss = album != null) { AppleMusicCanvas.search(title, artist, album)?.let { rendition(it) } } }) },
             { had(ForkDownloadedCanvas.through(idKey, accept) { TidalCanvas.search(title, artist, album) }) },
             { had(ForkDownloadedCanvas.through(idKey, accept) { CommunityCanvas.search(title, artist, album) }) },
         )
@@ -152,13 +154,15 @@ object ForkCanvasSources {
 
     /**
      * Apple's clip as the rendition rule 13.5 picks from its HLS master list (the master itself when
-     * the list can't be read; the player then picks). Each of the clip's URLs is resolved.
+     * the list can't be read; the player then picks). Each of the clip's URLs is resolved, the tall
+     * one too: it is a master list of its own (`AppleMusicCanvas.tallUrl`), played full screen on the
+     * phone and in a lyrics story, and left unresolved it ignored "Animated cover quality" there.
+     * [read]: the list's text (the network; a test passes its own).
      */
-    internal fun rendition(art: CanvasArtwork): CanvasArtwork {
+    internal fun rendition(art: CanvasArtwork, read: (String) -> String? = { url -> canvasGet(url) }): CanvasArtwork {
         val cap = ForkCanvasSettings.coverQuality.value.cap
-        val read = { url: String -> canvasGet(url) }
         fun pick(url: String?) = url?.let { ForkCanvasSettings.variantUrl(it, cap, read) }
-        return art.copy(url = pick(art.url) ?: art.url, fallbackUrl = pick(art.fallbackUrl))
+        return art.copy(url = pick(art.url) ?: art.url, fallbackUrl = pick(art.fallbackUrl), portraitUrl = pick(art.portraitUrl))
     }
 
     /**
@@ -248,23 +252,43 @@ object ForkCanvasSources {
         ) { spotifySearch(song, title, artist, album) }
             ?.also { ForkCanvasChoices.noteHad(song.videoId, ForkCanvasRules.Source.SPOTIFY) } // for the song's menu (§15)
 
-    private suspend fun spotifySearch(song: Song, title: String, artist: String, album: String?): CanvasArtwork? {
-        if (AppSettings.spotifySpdcToken.value.isBlank()) {
-            val songMs = ForkMusicVideoMatch.lengthOf(song.durationText) * 1000
-            return ForkCanvasStore.cached(ForkCanvasRules.spotifyKey(title, artist)) {
+    private suspend fun spotifySearch(song: Song, title: String, artist: String, album: String?): CanvasArtwork? =
+        ForkCanvasStore.cached(ForkCanvasRules.spotifyKey(title, artist)) {
+            signedInSpotify(title, artist, album) ?: run {
+                val songMs = ForkMusicVideoMatch.lengthOf(song.durationText) * 1000
                 ForkAnonymousSpotifyCanvas.search(title, artist, album, songMs.takeIf { it > 0 })
             }
         }
+
+    /**
+     * Rule 4.0's first step: the listener's own sign-in, or null to go on to the anonymous lookup
+     * (no sign-in, nothing found, an untrusted clip, or a failure; a failure is reported, so the
+     * song isn't saved as a miss while the sign-in could not be asked).
+     */
+    private suspend fun signedInSpotify(title: String, artist: String, album: String?): CanvasArtwork? {
+        if (AppSettings.spotifySpdcToken.value.isBlank()) return null
         // A sign-in whose token can't be minted (no network, offline mode, a harvest timing out) is
         // left alone for ForkCanvas.MISS_MS: the WebView harvest waits up to 20 s
         // (SpotifyToken.HARVEST_TIMEOUT_MS), and asked for each song in turn a dead sign-in held one
-        // open for every song of a session. Not a miss for the song: nothing is saved.
-        if (System.currentTimeMillis() - tokenMissedAt < ForkCanvas.MISS_MS) return null
+        // open for every song of a session.
+        val retryAt = tokenMissedAt + ForkCanvas.MISS_MS
+        if (System.currentTimeMillis() < retryAt) return ForkCanvasLookup.coolingDown("Spotify: the sign-in has no token", retryAt)
         if (SpotifyToken.accessToken() == null) {
             tokenMissedAt = System.currentTimeMillis()
             Log.d(TAG, "Spotify sign-in has no token; not asked for a while")
+            return ForkCanvasLookup.coolingDown("Spotify: the sign-in has no token", tokenMissedAt + ForkCanvas.MISS_MS)
+        }
+        val found = try {
+            SpotifyCanvas.search(title, artist, album)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return ForkCanvasLookup.failed("Spotify (signed in): ${e.message}")
+        }
+        if (found != null && !ForkSpotifyCanvasRules.trusted(found.url)) {
+            Log.d(TAG, "Spotify (signed in): the clip is not on scdn.co; not taken")
             return null
         }
-        return ForkCanvasStore.cached(ForkCanvasRules.spotifyKey(title, artist)) { SpotifyCanvas.search(title, artist, album) }
+        return found
     }
 }

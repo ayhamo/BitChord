@@ -154,4 +154,37 @@ class ForkMixShelfTest {
         val change = rmsDb(x, 0) - rmsDb(copy, 0)
         assertEquals(0.0, change, 0.5)
     }
+
+    /** A NaN aim is flat and open: it used to walk the dB glide down for good, or (snapped) make the 16-bit path throw. */
+    @Test
+    fun aNanAimIsFlatAndOpenAndTheNextAimStillCuts() {
+        val shelf = ForkMixShelf()
+        shelf.snap(Float.NaN, Float.NaN, Float.NaN, Float.NaN)
+        val pcm = java.nio.ByteBuffer.allocate(9_600 * 2).order(java.nio.ByteOrder.nativeOrder())
+        for (i in 0 until 9_600) pcm.putShort(i * 2, (10_000 * sin(2 * PI * 40.0 * (i / 2) / rate)).toInt().toShort())
+        shelf.process16(pcm, 2, rate) // threw "Cannot round NaN value" before
+        val x = tone(40.0, 4_800)
+        shelf.process(x, x.size, 2, rate)
+        kotlin.test.assertTrue(x.all { it.isFinite() })
+        assertFalse(shelf.isShaping)
+        shelf.set(0f, 0f, lowPassHz = 500f)
+        val high = tone(10_000.0, 48_000)
+        val dry = rmsDb(high.copyOf(), 24_000)
+        shelf.process(high, high.size, 2, rate)
+        kotlin.test.assertTrue(rmsDb(high, 24_000) - dry < -20.0, "the low-pass engages after a NaN aim")
+    }
+
+    /** A shelf back at flat while a cut still runs keeps no biquad history, so a later re-engage starts clean. */
+    @Test
+    fun aShelfBackAtFlatUnderACutDropsItsHistory() {
+        val shelf = ForkMixShelf().apply { snap(-12f, -8f, lowPassHz = 5_000f) }
+        shelf.process(tone(40.0, 4_800), 9_600, 2, rate)
+        shelf.set(0f, 0f, lowPassHz = 5_000f)
+        shelf.process(tone(40.0, 48_000), 96_000, 2, rate) // 0.5 dB a block: flat long before the end
+        kotlin.test.assertTrue(shelf.isShaping) // the cut still runs
+        for (name in listOf("lowState", "highState")) {
+            val f = ForkMixShelf::class.java.getDeclaredField(name).apply { isAccessible = true }
+            kotlin.test.assertTrue((f.get(shelf) as FloatArray).all { it == 0f }, "$name cleared")
+        }
+    }
 }

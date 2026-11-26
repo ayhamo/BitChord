@@ -69,4 +69,28 @@ class ForkCanvasSourcesTest {
         )
         assertEquals("good", pick?.first)
     }
+
+    /** Rule 3.1 across bundles: a later bundle's web player token beats an earlier bundle's unlabelled one, and stops the read. */
+    @Test
+    fun `the web player's token in a later bundle wins over an earlier unlabelled one`() {
+        var read = 0
+        val bundles = sequenceOf(listOf("good"), listOf("labelled"), listOf("never")).map { read++; it }
+        val ex = expiries + ("labelled" to now + 50_000) + ("never" to now + 50_000)
+        val pick = DesktopAppleMusicCanvas.forkPickToken(bundles.flatMap { it.asSequence() }, emptySet(), now, { ex[it] }, { it == "labelled" })
+        assertEquals("labelled" to now + 50_000, pick)
+        assertEquals(2, read, "the bundle after the web player's token is never fetched")
+        val none = DesktopAppleMusicCanvas.forkPickToken(sequenceOf("old", "good", "refused"), emptySet(), now, { expiries[it] }, { false })
+        assertEquals("good", none?.first, "no labelled token anywhere: the first unexpired one")
+    }
+
+    @Test
+    fun `Spotify first asks the song's sources in the rulebook's order, saved clips first`() {
+        // saved by id, Spotify (first backdrop), the video, the covers: what the client must ask in
+        val asked = listOf("saved", "spotify", "video", "apple", "tidal", "community")
+        assertEquals(asked, ForkSpotifyCanvasFirst.ordered(ForkSpotifyCanvasFirst.forOrdered(asked, true), spotifyFirst = true))
+        // Spotify off: no Spotify in the list, and the community index is not moved to the front
+        val noSpotify = listOf("saved", "video", "apple", "tidal", "community")
+        assertEquals(noSpotify, ForkSpotifyCanvasFirst.ordered(ForkSpotifyCanvasFirst.forOrdered(noSpotify, true), spotifyFirst = true))
+        assertEquals(asked, ForkSpotifyCanvasFirst.forOrdered(asked, spotifyFirst = false))
+    }
 }

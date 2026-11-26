@@ -73,6 +73,17 @@ internal class DesktopDecodeAhead(
     private var failed: Throwable? = null
     /** Fork (Revived 418d328d): when the audio thread first found the queue empty with the worker live, else 0. */
     private var underrunSinceNanos = 0L
+    /**
+     * Fork: when the audio thread last found the queue empty. An underrun is the audio thread waiting
+     * on the decoder, polling every 100 ms (the engine's timed read): a gap of more than [FORK_HOLD_GAP_NS]
+     * with no read at all is a deck nobody read (a pause, a loop mix or a held upgrade holding it, a
+     * next deck that ran empty during a called-off blend and was promoted minutes later), not a
+     * stall. Before, that time counted toward the stall watchdog's 22 s and the first empty read
+     * after it reopened the deck at once.
+     */
+    private var lastEmptyNanos = 0L
+    /** Fork: the clock the underrun is timed on; a test's own. */
+    internal var forkNow: () -> Long = System::nanoTime
     private var pendingSeekUs: Long? = null
     /** Bumped by every seek, so a block decoded before it is never played after it. */
     private var generation = 0
@@ -124,7 +135,9 @@ internal class DesktopDecodeAhead(
             sampleCount = 0
             // fork: an empty queue with the worker live is an underrun, timed for the stall check
             if (!ended && !closed && failed == null) {
-                if (underrunSinceNanos == 0L) underrunSinceNanos = System.nanoTime()
+                val now = forkNow() // fork: a read after a hold starts the timing again (lastEmptyNanos)
+                if (underrunSinceNanos == 0L || now - lastEmptyNanos > FORK_HOLD_GAP_NS) underrunSinceNanos = now
+                lastEmptyNanos = now
             } else {
                 underrunSinceNanos = 0L
             }
@@ -165,7 +178,8 @@ internal class DesktopDecodeAhead(
     /** Fork (Revived 418d328d): how long the queue has been empty while the worker is live, 0 when it isn't. */
     val forkUnderrunMs: Long
         get() = lock.withLock {
-            if (underrunSinceNanos == 0L) 0L else (System.nanoTime() - underrunSinceNanos).coerceAtLeast(0L) / 1_000_000
+            val now = forkNow() // fork: nobody reading for longer than the hold gap is not a stall (lastEmptyNanos)
+            if (underrunSinceNanos == 0L || now - lastEmptyNanos > FORK_HOLD_GAP_NS) 0L else (now - underrunSinceNanos).coerceAtLeast(0L) / 1_000_000
         }
 
     /** Moves to [micros]; whatever was decoded ahead of the old position is thrown away. */
@@ -272,5 +286,8 @@ internal class DesktopDecodeAhead(
 
         /** Waits shorter than this are ordinary scheduling, not a network stall worth logging. */
         const val STARVED_LOG_MS = 20L
+
+        /** Fork: a gap between empty reads longer than this is a hold, not a stall (see lastEmptyNanos). */
+        const val FORK_HOLD_GAP_NS = 1_000_000_000L
     }
 }

@@ -68,6 +68,7 @@ internal object SpotifyToken {
     }
 
     fun invalidate() {
+        forkGeneration.bump() // fork: first, so a mint in flight stores nothing (ForkTokenGeneration)
         cachedAccessToken = null
         accessTokenExpiresAtMs = 0L
         cachedClientId = null
@@ -90,6 +91,7 @@ internal object SpotifyToken {
      * enough.
      */
     suspend fun accessToken(): String? {
+        val forkGen = forkGeneration.start() // fork: before the cookie, so a sign-out after this read voids the mint
         val cookie = AppSettings.spotifySpdcToken.value
         if (cookie.isBlank()) return null
 
@@ -106,17 +108,18 @@ internal object SpotifyToken {
                 return@withLock ForkCanvasLookup.failed("Spotify: no context for the token harvest") // fork: was null
             }
 
-            if (forkHarvest.backingOff(cookie, stillNow)) return@withLock forkSignedToken(cookie) // fork: no 20 s harvest again within 5 min of a failed one
+            if (forkHarvest.backingOff(cookie, stillNow)) return@withLock forkSignedToken(cookie, forkGen) // fork: no 20 s harvest again within 5 min of a failed one
             val harvested = withContext(Dispatchers.Main) { harvestViaWebView(context, cookie) }
             if (harvested == null) {
                 Log.w(TAG, "token harvest failed or timed out")
                 forkHarvest.failed(cookie) // fork
-                return@withLock forkSignedToken(cookie) // fork: the signed route when the page gives none; was null
+                return@withLock forkSignedToken(cookie, forkGen) // fork: the signed route when the page gives none; was null
             }
 
             cachedAccessToken = harvested.token
             accessTokenExpiresAtMs = harvested.expiresAt
             harvested.clientId?.let { cachedClientId = it }
+            if (!forkGeneration.current(forkGen)) return@withLock forkDropMinted() // fork: signed out (or into another account) while the page minted
             Log.d(TAG, "harvested access token, good until ${java.util.Date(harvested.expiresAt)}")
             harvested.token
         }
@@ -129,7 +132,7 @@ internal object SpotifyToken {
      * downstream is why this is only the fallback. Null, reported to the lookup as a failure (not
      * "no clip"), when both routes fail; the signed route backs off on its own for 10 minutes.
      */
-    private suspend fun forkSignedToken(cookie: String): String? {
+    private suspend fun forkSignedToken(cookie: String, gen: Int): String? {
         val signed = withContext(Dispatchers.IO) { ForkSpotifyTotpToken.mint(cookie) }
             ?: return ForkCanvasLookup.coolingDown( // both routes back off; the harvest's ends first
                 "Spotify: no token (page harvest and signed request both failed)",
@@ -138,8 +141,21 @@ internal object SpotifyToken {
         cachedAccessToken = signed.accessToken
         accessTokenExpiresAtMs = signed.expiresAtMs
         signed.clientId?.let { cachedClientId = it }
+        if (!forkGeneration.current(gen)) return forkDropMinted() // signed out (or into another account) while it minted
         Log.d(TAG, "signed access token (fallback), good until ${java.util.Date(signed.expiresAtMs)}")
         return signed.accessToken
+    }
+
+    /** Fork: the sign-in a mint was started under ([invalidate] bumps it), see [ForkTokenGeneration]. */
+    private val forkGeneration = ForkTokenGeneration()
+
+    /** Fork: a token minted for a sign-in that has since ended, undone; null to the caller. */
+    private fun forkDropMinted(): String? {
+        cachedAccessToken = null
+        accessTokenExpiresAtMs = 0L
+        cachedClientId = null
+        Log.d(TAG, "a token minted before the sign-in changed was dropped")
+        return null
     }
 
     /** Fork: the harvest's 5 min backoff after a failed one, see [ForkSpotifyHarvestBackoff]. */

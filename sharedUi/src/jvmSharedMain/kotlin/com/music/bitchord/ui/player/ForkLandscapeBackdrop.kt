@@ -52,7 +52,8 @@ internal fun ForkLandscapeBackdrop(
 ) {
     var rendered by remember(clip.url) { mutableStateOf(false) }
     val shown by animateFloatAsState(if (rendered) 1f else 0f, tween(FORK_BACKDROP_FADE_MS), label = "forkLandscapeBackdrop")
-    val scrim by animateFloatAsState(if (dimmed) 0.55f else 0.18f, tween(300), label = "forkLandscapeScrim")
+    val brightTenth = remember(blurred) { ForkBrightTenth.p90Of(blurred) } // a near-white cover gets more shade (ForkBrightTenth)
+    val scrim by animateFloatAsState(ForkBrightTenth.alpha(if (dimmed) 0.55f else 0.18f, brightTenth), tween(300), label = "forkLandscapeScrim")
     val intro = rememberForkBackdropIntro(clip.url, true)
 
     Box(modifier.fillMaxSize()) {
@@ -91,7 +92,7 @@ internal fun ForkLandscapeBackdrop(
                     },
             )
         }
-        // Enough shade for white text on a bright clip; more under the lyrics and queue.
+        // Enough shade for white text on a bright clip, more on a near-white cover; more under the lyrics and queue.
         Box(Modifier.fillMaxSize().drawWithContent { drawRect(Color.Black.copy(alpha = scrim)) })
     }
 }

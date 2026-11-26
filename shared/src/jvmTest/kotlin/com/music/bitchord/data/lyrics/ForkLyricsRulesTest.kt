@@ -118,4 +118,38 @@ class ForkLyricsRulesTest {
         assertEquals(listOf(LyricLine(1_000, "hello there", sungUntilMs = 3_000)), lines)
         assertNull(ForkYouTubeCaptions.parseJson3("{}"))
     }
+
+    // ---- spec 0836435 ----
+
+    @Test
+    fun drawnTwoRefreshIntervalsAheadWhilePlaying() {
+        assertEquals(33L, ForkLyricsRules.displayLeadMs(1000.0 / 60.0, 1.0, playing = true))
+        assertEquals(17L, ForkLyricsRules.displayLeadMs(1000.0 / 120.0, 1.0, playing = true))
+        assertEquals(8L, ForkLyricsRules.displayLeadMs(1000.0 / 240.0, 1.0, playing = true))
+        assertEquals(40L, ForkLyricsRules.displayLeadMs(1000.0 / 24.0, 1.0, playing = true))
+        assertEquals(50L, ForkLyricsRules.displayLeadMs(1000.0 / 60.0, 1.5, playing = true))
+        assertEquals(0L, ForkLyricsRules.displayLeadMs(1000.0 / 60.0, 1.0, playing = false))
+        assertEquals(33L, ForkLyricsRules.displayLeadMs(Double.NaN, 1.0, playing = true))
+    }
+
+    @Test
+    fun aLineLightsWithItsFirstWordWhenThatIsBeforeItsTag() {
+        val words = listOf(LyricWord(4_000, 4_500, "a"), LyricWord(4_500, 5_000, "b"))
+        val lines = listOf(line(1_000, until = 3_000), LyricLine(5_000, "a b", words = words))
+        assertEquals(4_000L, ForkLyricsRules.timelineStart(lines[1]))
+        assertEquals(listOf(1), ForkLyricsRules.activeRows(lines, 3_340))
+    }
+
+    @Test
+    fun aLineDueByItsFirstWordIsFoundAndEveryRuleReadsTheSameStart() {
+        // A negative word is not a timed word: the line starts at its stamp, not before the song.
+        assertEquals(1_000L, ForkLyricsRules.timelineStart(LyricLine(1_000, "a b", words = listOf(LyricWord(-500, 100, "a"), LyricWord(1_000, 1_400, "b")))))
+        // The second line's first word (9.5 s) comes before the first line's stamp (10 s): it is
+        // due at 9.0 s + 660 ms, and the walk no longer stops at the first line.
+        val early = listOf(LyricLine(10_000, "x"), LyricLine(10_200, "a b", words = listOf(LyricWord(9_500, 9_900, "a"), LyricWord(9_900, 10_400, "b"))))
+        assertEquals(listOf(1), ForkLyricsRules.activeRows(early, 9_000))
+        // A line ending a hair after the next line's first word is cut there, as activeRows hands over there.
+        val trim = listOf(line(1_000, until = 4_100), LyricLine(5_000, "a b", words = listOf(LyricWord(4_000, 4_500, "a"), LyricWord(4_500, 5_000, "b"))))
+        assertEquals(4_000L, ForkLyricsRules.lineEnd(trim, 0))
+    }
 }

@@ -300,6 +300,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      */
     fun request(trackId: String, uri: Uri, durationSeconds: Double) {
         if (trackId.isBlank()) return
+        if (ForkAnalysisProgress.tooLong(trackId, durationSeconds)) return // fork: over 8 minutes isn't analysed, a saved one isn't restored (versions.md "Analysis length")
         // Before anything else this would spend: [analysisUriFor] alone can put
         // a catalogue match on the network for a track the party will never
         // mix. See [stopped].
@@ -404,10 +405,12 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         }
         if (usableComplete && !oomRetry.mayRun(trackId)) return // fork: waiting after an OOM (ForkOomRetry)
         if (!running.add(trackId)) return
+        ForkAnalysisProgress.queued(trackId) // fork: the editor's progress row
 
         executor.execute {
             try {
                 ForkAnalysisFocus.enter(trackId, triedRenditions) // fork: so [stopped] can abandon this pass once the song is moved past
+                ForkAnalysisProgress.stage(trackId, if (usableComplete) ForkAnalysisProgress.Stage.AUDIO else ForkAnalysisProgress.Stage.OPENING, refining = usableComplete && trackId in provisional) // fork
                 // Efficient mode yields to decoding and playback rather than
                 // competing for a core. Thread count remains the speed knob.
                 Process.setThreadPriority(
@@ -444,6 +447,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                         // mix-out anchor, the energy curve — and storing one
                         // would freeze a deliberately partial answer in place of
                         // the complete one that supersedes it minutes later.
+                        ForkAnalysisProgress.stage(trackId, ForkAnalysisProgress.Stage.SAVING) // fork
                         store.save(trackId, whole)
                         com.music.bitchord.fork.ForkAnalysisRedo.measured(context.filesDir, trackId) // fork: a skipped weak restore counts as measured again only now
                         restoreAttempted.add(trackId)
@@ -488,7 +492,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 // and the next request after ForkOomRetry's wait tries again. At the cap it is
                 // written off as before.
                 val oomRetrying = usableComplete && ForkOomRetry.isOom(error) && oomRetry.retryLater(trackId) // fork
-                if (usableComplete && !oomRetrying) { // fork: `&& !oomRetrying`
+                val forkCalledOff = stopped // fork: a pass the listener moved past (or a party) is an abort, not the song's failure
+                ForkAnalysisProgress.failed(trackId, error, retrying = forkCalledOff || oomRetrying || !usableComplete) // fork: the row's reason (a head pass's failure isn't the song's)
+                if (usableComplete && !oomRetrying && !forkCalledOff) { // fork: `&& !oomRetrying && !forkCalledOff`
                     // Recorded as ready-but-empty so a track that cannot be
                     // analysed is not retried on every tick for the rest of the
                     // session.
@@ -506,7 +512,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     headRendition?.let { headAttempts.remove(it.key) }
                     ForkAnalysisFocus.untry(triedRenditions) // and the copies it marked as read: none of them was
                 }
+                val forkCalledOff = ForkAnalysisFocus.abandoned() || ListenTogether.state.value.inParty // fork: read before leave(), which forgets the pass
                 ForkAnalysisFocus.leave() // fork
+                ForkAnalysisProgress.ended(trackId, results[trackId]?.takeIf { trackId !in provisional || !usableComplete }?.isUsable, forkCalledOff, shortDecodes.containsKey(trackId)) // fork
                 running.remove(trackId)
                 // The session holds the model's arena and a parsed ONNX graph in native heap for
                 // as long as it is open, which a backgrounded music player cannot justify between
@@ -1086,6 +1094,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // held while the models ran, in a process that was reaching a 256 MB heap limit and had
         // died on it. Returning is what releases them — a `val` cannot be nulled, and a narrower
         // scope alone does not make ART treat one as dead.
+        if (ForkAnalysisProgress.tooLong(trackId, effectiveDuration)) return WholeTrack(null) // fork: the file's own length, before anything is decoded
+        ForkAnalysisProgress.stage(trackId, ForkAnalysisProgress.Stage.DECODING) // fork
         val structural = structure(trackId, uri, copy, effectiveDuration)
         // A party started while Pass 1 was decoding. Dropped as "no result"
         // rather than as a failure — the track was never measured, so nothing
@@ -1105,6 +1115,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // moments, so the middle is never decoded for this. Both models read the same decoded
         // window, so its stereo buffer is paid for once. The spans match the loop mix's searches:
         // its incoming loop is looked for in the first 45 s, its outgoing one in the last 60.
+        ForkAnalysisProgress.stage(trackId, ForkAnalysisProgress.Stage.MODELS) // fork
         val span = modelWindowSeconds()
         // Spans that the windows tile exactly, overlaps included: one window more
         // here is a whole extra pass of both models.
@@ -1118,13 +1129,15 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             // standing in. A result assembled out of a half-finished analysis
             // is worse than none.
             if (stopped) return WholeTrack(null)
-            region(openSource, from, to, features)?.let(regions::add)
+            region(openSource, from, to, features, withBeats = false)?.let(regions::add) // fork: withBeats = false (the beats run over ForkBeatSpans' spans below)
         }
         if (stopped) return WholeTrack(null)
 
-        val beats = seamBeats(regions)
-        val headSide = beatSide(beats, 0.0, headEnd)
-        val tailSide = beatSide(beats, tailStart, effectiveDuration)
+        // fork: Beat This! over one 59 s span at each end, as the Morphe phone's analyser (ForkBeatSpans); was seamBeats(regions)
+        val (headSpan, tailSpan) = ForkBeatSpans.spans(effectiveDuration)
+        val headSide = forkBeatSpan(openSource, headSpan)
+        val tailSide = if (tailSpan == null) headSide else forkBeatSpan(openSource, tailSpan)
+        if (stopped) return WholeTrack(null)
         val headGrid = headSide?.toGrid()
         val tailGrid = tailSide?.toGrid()
 
@@ -1249,6 +1262,16 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         return windows
     }
 
+    /** Fork: the model's beats over [span], decoded on its own as the Morphe phone's analyser does ([ForkBeatSpans]). */
+    private fun forkBeatSpan(openSource: () -> MediaDataSource?, span: Pair<Double, Double>): BeatSide? {
+        if (stopped || span.second - span.first < 1.0) return null
+        val (stereo, actualStart) = openSource()?.use { AudioDecoder.decodeRegionStereo(it, span.first, span.second) { stopped } } ?: return null
+        if (stereo.left.size < stereo.sampleRate) return null
+        return runCatching { ForkBeatSpans.track(tracker, stereo.left, stereo.right, kotlin.math.round(stereo.sampleRate).toInt(), actualStart) }
+            .onFailure { Log.w(TAG, "Beat span [${span.first}, ${span.second}) failed", it) }
+            .getOrNull()
+    }
+
     /** One beat list across the windows: at each overlap, the earlier window's beats before its midpoint, the later's after. */
     private class Beats(val beats: List<Double>, val downbeats: List<Double>, val confidence: Double)
 
@@ -1318,6 +1341,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         endSeconds: Double,
         features: TrackFeatures.Features?,
         deriveFeatures: Boolean = false,
+        withBeats: Boolean = true, // fork
     ): Region? {
         val decoded = openSource()?.use { AudioDecoder.decodeRegionStereo(it, startSeconds, endSeconds) { stopped } }
             ?: run {
@@ -1348,7 +1372,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
 
         val vocalValues = if (features != null) vocalValues(stereo) else null
         return Region(
-            grid = inputs.forModel?.let { tracker.track(it, offsetSeconds = actualStart) },
+            grid = inputs.forModel?.takeIf { withBeats }?.let { tracker.track(it, offsetSeconds = actualStart) }, // fork: takeIf { withBeats }
             vocalMask = if (features != null && vocalValues != null) vocalMask(vocalValues, features, actualStart) else null,
             seconds = seconds,
             features = inputs.derived,

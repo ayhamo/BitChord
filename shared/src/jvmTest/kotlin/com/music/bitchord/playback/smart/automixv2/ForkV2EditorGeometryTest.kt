@@ -178,10 +178,10 @@ class ForkV2EditorGeometryTest {
 
     @Test
     fun theLanesAFirstChangeStartsFrom() {
-        assertEquals(listOf("smooth", "centerBassSwap", "none"), G.lanesNow(null).toList())
+        assertEquals(listOf("smooth", "centerBassSwap", "none", "none", "none"), G.lanesNow(null).toList())
         val rise = ForkV2MixOverride()
         rise.preset = "rise"
-        assertEquals(listOf("overlap", "endBassSwap", "lpInHpOut"), G.lanesNow(rise).toList())
+        assertEquals(listOf("overlap", "endBassSwap", "lpInHpOut", "none", "none"), G.lanesNow(rise).toList())
     }
 
     @Test

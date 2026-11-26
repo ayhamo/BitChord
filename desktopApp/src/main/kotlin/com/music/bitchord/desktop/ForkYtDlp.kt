@@ -316,14 +316,14 @@ internal object ForkYtDlp {
             }.getOrElse { if (it is kotlinx.coroutines.CancellationException) throw it; null }
             val url = ran?.takeIf { it.exit == 0 }?.out?.lineSequence()?.map(String::trim)?.firstOrNull { it.startsWith("https://") }
             if (url == null) {
-                failed[key] = System.currentTimeMillis() + FAILED_MS
+                failed.prunedPut(key, System.currentTimeMillis() + FAILED_MS) { it }
                 val why = ran?.err?.lineSequence()?.map(String::trim)?.lastOrNull { it.isNotEmpty() }?.take(160) ?: "did not run"
                 DesktopTrackLog.log("  yt-dlp: no stream for '${song.title}' ($why); the built-in resolver takes it")
                 return@withPermit null
             }
             val headers = mapOf("User-Agent" to USER_AGENT)
             if (!playable(url, headers)) {
-                failed[key] = System.currentTimeMillis() + FAILED_MS
+                failed.prunedPut(key, System.currentTimeMillis() + FAILED_MS) { it }
                 DesktopTrackLog.log("  yt-dlp: Google refused the stream for '${song.title}'; the built-in resolver takes it")
                 return@withPermit null
             }
@@ -336,7 +336,7 @@ internal object ForkYtDlp {
                 windowedReads = true,
             )
             val until = query(url, "expire")?.toLongOrNull()?.let { it * 1_000 - EXPIRY_MARGIN_MS } ?: (System.currentTimeMillis() + DEFAULT_LIFE_MS)
-            cache[key] = Resolved(stream, until)
+            cache.prunedPut(key, Resolved(stream, until)) { it.until }
             DesktopTrackLog.log("  youtube: resolved '${song.title}' through yt-dlp in ${System.currentTimeMillis() - started}ms")
             stream
         }
@@ -357,6 +357,17 @@ internal object ForkYtDlp {
 
     /** For tests: what [resolve] would answer from the cache for [key], and a way to seed it. */
     internal fun cachedFor(key: String): DesktopStream? = fresh(key)
+
+    /**
+     * Fork: puts [value], first dropping the entries whose deadline ([until]) has passed. [cache]
+     * and [failed] were only ever emptied by a new yt-dlp or a failed open, so every id asked
+     * stayed for the run; an entry past its deadline is already ignored by every read.
+     */
+    private fun <V : Any> ConcurrentHashMap<String, V>.prunedPut(key: String, value: V, until: (V) -> Long) {
+        val now = System.currentTimeMillis()
+        entries.removeIf { until(it.value) <= now }
+        this[key] = value
+    }
 
     internal fun cacheForTest(key: String, stream: DesktopStream, until: Long) {
         cache[key] = Resolved(stream, until)

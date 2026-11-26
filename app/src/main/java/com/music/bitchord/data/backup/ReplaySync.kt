@@ -57,6 +57,7 @@ data class DeviceManifest(
     val months: Map<String, String> = emptyMap(),
     /** That device's settings, restored only by restoring as it. */
     val settings: Map<String, Backup.PrefValue> = emptyMap(),
+    val fork: kotlinx.serialization.json.JsonElement? = null, // fork: ForkBackup's section, as Backup.BackupFile.fork; upstream peers ignore it (ignoreUnknownKeys)
 ) {
     companion object {
         const val SCHEMA = 1
@@ -268,6 +269,7 @@ object ReplaySync {
                 versionName = BuildConfig.VERSION_NAME,
                 months = hashes,
                 settings = AppSettings.exportPrefs().mapNotNull { (k, v) -> Backup.PrefValue.of(v)?.let { k to it } }.toMap(),
+                fork = com.music.bitchord.fork.ForkBackup.export(), // fork: the fork's switches and saved queues in the Drive backup too
             )
             val written = DriveApi.put(
                 token = token,
@@ -383,6 +385,7 @@ object ReplaySync {
         ListeningStats.importAll(combined)
         AppSettings.importPrefs(manifest.settings.mapValues { it.value.decoded() })
         SearchHistory.reload()
+        com.music.bitchord.fork.ForkBackup.import(manifest.fork) // fork: the fork's section, or with none the Spotify switch joined again (as Backup.readFrom)
 
         // What is in Drive for this partition is exactly what came down, so
         // the next sync uploads only what this phone adds to it.

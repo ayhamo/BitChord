@@ -43,6 +43,14 @@ internal object ForkSpotifyCanvasFirst {
      */
     fun <T> ordered(sources: List<T>, spotifyFirst: Boolean = prioritized.value): List<T> =
         if (!spotifyFirst || sources.size < 2) sources else listOf(sources.last()) + sources.dropLast(1)
+
+    /**
+     * [asked], already in the order it should be asked in, handed to a caller that runs it through
+     * [ordered] ([ordered] of this is [asked]). For the song lookup, whose list (`ForkDesktopCanvasSources.song`)
+     * is the rulebook's own order and not "Spotify last".
+     */
+    fun <T> forOrdered(asked: List<T>, spotifyFirst: Boolean): List<T> =
+        if (!spotifyFirst || asked.size < 2) asked else asked.drop(1) + asked.first()
 }
 
 /**

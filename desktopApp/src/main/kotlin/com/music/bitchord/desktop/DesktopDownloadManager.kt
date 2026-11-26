@@ -96,7 +96,7 @@ object DesktopDownloadManager {
                 check(Files.size(part) > 0L) { "Download failed: nothing was sent" }
                 ForkDownloadTags.write(forkTags, part, song) // fork: the phone's tags
                 currentCoroutineContext().ensureActive() // fork: a cancel during tagging doesn't still land the file
-                Files.move(part, target, StandardCopyOption.REPLACE_EXISTING)
+                forkLand(part, target) // fork: was Files.move(part, target, REPLACE_EXISTING); a cancel that lands with it takes the file too (forkLand)
                 return Result.success(song.copy(localUri = target.toUri().toString(), localPath = target.toString()))
             }
 
@@ -131,7 +131,7 @@ object DesktopDownloadManager {
             if (!alreadyWhole) opened.use { response ->
                 check(response.isSuccessful) { "Download failed (HTTP ${response.code})" }
                 val body = response.body
-                val append = existing > 0L && response.code == HTTP_PARTIAL
+                val append = forkResumeAppends(response.code, response.header("Content-Range"), existing) ?: run { Files.deleteIfExists(part); throw java.io.IOException("The server sent another part of the file; try again") } // fork: was existing > 0L && response.code == HTTP_PARTIAL; a 206 from another offset is not appended (forkResumeAppends)
                 val offset = if (append) existing else 0L
                 val total = response.header("Content-Range")
                     ?.substringAfterLast('/')
@@ -171,11 +171,7 @@ object DesktopDownloadManager {
             check(Files.size(part) > 0L) { "Download failed: nothing was sent" }
             ForkDownloadTags.write(forkTags, part, song) // fork: the phone's tags
             currentCoroutineContext().ensureActive() // fork: a cancel during tagging doesn't still land the file
-            runCatching {
-                Files.move(part, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
-            }.getOrElse {
-                Files.move(part, target, StandardCopyOption.REPLACE_EXISTING)
-            }
+            forkLand(part, target) // fork: was the move (atomic, else plain) alone; a cancel that lands with it takes the file too (forkLand)
             Files.deleteIfExists(src)
             Result.success(song.copy(localUri = target.toUri().toString(), localPath = target.toString()))
         } catch (cancelled: CancellationException) {
@@ -300,3 +296,38 @@ internal fun forkDownloadTarget(directory: Path, base: String, extension: String
  */
 internal fun forkMayPruneDownloads(recorded: List<Song>, onDisk: List<Song>, folderThere: Boolean): Boolean =
     folderThere && (onDisk.isNotEmpty() || recorded.isEmpty())
+
+/**
+ * Fork: whether a resumed download's answer is appended to the [existing] bytes of its .part: true
+ * for a 206 that starts at [existing] (its `Content-Range`), false for a fresh whole file (a 200, or
+ * a 206 from byte 0 when nothing was kept), null for a 206 that starts anywhere else, which must
+ * not be written at all. Before, any 206 to a resume was appended: a server (or proxy) that answered
+ * another range glued the wrong bytes on, and a 206 from 0 doubled the start of the file.
+ */
+internal fun forkResumeAppends(code: Int, contentRange: String?, existing: Long): Boolean? {
+    if (code != 206) return false
+    val start = contentRange?.trim()?.removePrefix("bytes")?.trim()?.substringBefore('-')?.trim()?.toLongOrNull()
+    return when {
+        existing > 0L && start == existing -> true
+        existing <= 0L && (start == null || start == 0L) -> false
+        else -> null
+    }
+}
+
+/**
+ * Fork: moves a finished download's [part] onto [target] (atomically where the drive can), then
+ * checks for a cancel once more and, when one came, deletes the landed file and rethrows. A cancel
+ * that reached the track's job while it moved made the queue drop the row and never record the
+ * download (a cancelling job's result is its cancellation), leaving a file on disk that no record
+ * named; the next download of the song then found it and took it as already downloaded.
+ */
+internal suspend fun forkLand(part: Path, target: Path) {
+    runCatching { Files.move(part, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE) }
+        .getOrElse { Files.move(part, target, StandardCopyOption.REPLACE_EXISTING) }
+    try {
+        currentCoroutineContext().ensureActive()
+    } catch (cancelled: CancellationException) {
+        runCatching { Files.deleteIfExists(target) }
+        throw cancelled
+    }
+}

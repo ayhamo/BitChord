@@ -91,7 +91,8 @@ object DesktopLyricsClient {
 
         // A downloaded or local file carries its own words; asking servers for a string already
         // on disk is a round trip, and it is why a download showed nothing offline.
-        if (only == null) ForkNavidrome.lyrics(song)?.let { return Result.success(DesktopLyrics("Navidrome", it)) } // fork
+        val forkServer = if (only == null) ForkNavidrome.lyrics(song) else null // fork: a Navidrome song's server lyrics
+        if (forkServer != null && !com.music.bitchord.data.navidrome.ForkNavidromeWordTimed.asksOnline(forkServer)) return Result.success(DesktopLyrics("Navidrome", forkServer)) // fork: was `?.let { return … }`; line-timed ones still ask the sources for word timing (ForkNavidromeWordTimed)
         val embedded = if (only == null) embedded(song) else null
         val result = if (embedded != null) {
             Result.success(DesktopLyrics("Downloaded", embedded))
@@ -110,8 +111,9 @@ object DesktopLyricsClient {
                 onSourceResult = { source, result -> onSourceResult?.invoke(source, result != null) },
             )
             val winner = found?.let { ForkNetEaseLyrics.LyricsWinner(it.source.label, it.lines.any(LyricLine::isWordSynced)) } // fork
-            val answer = ForkNetEaseLyrics.ahead(forkNames, winner, prioritize, song, durationMs) // fork: NetEase where it sits ahead
-                ?: found?.let { DesktopLyrics(it.source.label, it.lines) } // fork
+            val answer = (ForkNetEaseLyrics.ahead(forkNames, winner, prioritize, song, durationMs) // fork: NetEase where it sits ahead
+                ?: found?.let { DesktopLyrics(it.source.label, it.lines) }) // fork
+                .let { if (forkServer != null && !com.music.bitchord.data.navidrome.ForkNavidromeWordTimed.wins(it?.lines)) DesktopLyrics("Navidrome", forkServer) else it } // fork: only word-timed lines take the server's place
             if (answer == null) { // fork: was found == null
                 Result.failure(IllegalStateException("Lyrics unavailable"))
             } else {

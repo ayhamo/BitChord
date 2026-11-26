@@ -86,8 +86,16 @@ internal fun canvasGetWithStatus(url: String, headers: Map<String, String> = emp
         .timeout(Duration.ofSeconds(15))
         .header("User-Agent", CANVAS_UA)
     headers.forEach { (name, value) -> builder.header(name, value) }
-    val response = canvasClient.send(builder.GET().build(), HttpResponse.BodyHandlers.ofString())
-    response.statusCode() to response.body()?.takeIf { response.statusCode() in 200..299 }
+    // Read capped (ForkCappedHttp): an Apple catalog answer is tens of KB, 1 MB leaves room; past it,
+    // or empty, is -1 (a failed lookup, asked again), never a body or a cached miss. A non-2xx body
+    // isn't read at all, only its status is kept.
+    val response = canvasClient.send(builder.GET().build(), HttpResponse.BodyHandlers.ofInputStream())
+    val status = response.statusCode()
+    if (status !in 200..299) {
+        response.body().close()
+        return@runCatching status to null
+    }
+    status to com.music.bitchord.data.ForkCappedHttp.text(response, com.music.bitchord.data.ForkCappedBody.MB)
 }.getOrElse { -1 to null }
 
 internal fun canvasGet(url: String, headers: Map<String, String> = emptyMap()): String? = runCatching {
@@ -395,12 +403,10 @@ internal object DesktopAppleMusicCanvas {
                 .findAll(it).map(MatchResult::value).distinct().toList()
         }.orEmpty()
 
-        for (path in scripts) {
-            val script = canvasGet("https://music.apple.com$path") ?: continue
-            val (jwt, expiresAt) = forkPickToken( // fork: was the pick inline, without the refused tokens filtered out
-                Regex("""ey[A-Za-z0-9_-]+\.ey[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+""").findAll(script).map(MatchResult::value),
-                forkRejected, now, ::expiry, ::isWebPlayerToken,
-            ) ?: continue
+        // fork: one pick over every bundle's tokens (rule 3.1), the bundles fetched lazily; was a pick per bundle, which
+        // took the first bundle's unlabelled token before a later bundle's web player one was read
+        val forkBundles = scripts.asSequence().mapNotNull { canvasGet("https://music.apple.com$it") } // fork
+        forkPickToken(forkBundles.flatMap(com.music.bitchord.data.canvas.ForkAppleCanvasRules::jwtsIn), forkRejected, now, ::expiry, ::isWebPlayerToken)?.let { (jwt, expiresAt) -> // fork: was `for (path in scripts)` + the per-bundle pick
             cachedToken = jwt
             tokenExpiresAtMs = expiresAt
             com.music.bitchord.data.canvas.ForkAppleTokenBackup.save(jwt, expiresAt) // fork: kept on disk as the backup
@@ -432,8 +438,9 @@ internal object DesktopAppleMusicCanvas {
     private val forkRejected = mutableSetOf<String>()
 
     /**
-     * Fork: the token to use out of a bundle's JWTs: not refused, readable, unexpired, the web
-     * player's own first. Null when none is left, which the caller treats as a failed scrape.
+     * Fork: the token to use out of every bundle's JWTs (in page order, read lazily): not refused, readable,
+     * unexpired, the web player's own first wherever it is. Null when none is left, which the caller treats as a
+     * failed scrape. The shared rule ([com.music.bitchord.data.canvas.ForkAppleCanvasRules.pickAcross]).
      */
     internal fun forkPickToken(
         jwts: Sequence<String>,
@@ -441,14 +448,7 @@ internal object DesktopAppleMusicCanvas {
         now: Long,
         expiry: (String) -> Long?,
         isWebPlayer: (String) -> Boolean,
-    ): Pair<String, Long>? {
-        val candidates = jwts.distinct()
-            .filter { it !in rejected }
-            .mapNotNull { jwt -> expiry(jwt)?.let { jwt to it } }
-            .filter { it.second > now }
-            .toList()
-        return candidates.firstOrNull { isWebPlayer(it.first) } ?: candidates.firstOrNull()
-    }
+    ): Pair<String, Long>? = com.music.bitchord.data.canvas.ForkAppleCanvasRules.pickAcross(jwts, now, rejected, expiry, isWebPlayer)
 
     private fun payload(jwt: String): JsonObject? = runCatching {
         val body = jwt.split('.').getOrNull(1) ?: return null

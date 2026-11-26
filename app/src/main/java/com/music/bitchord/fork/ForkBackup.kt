@@ -36,13 +36,16 @@ object ForkBackup {
 
     /**
      * Applies a backup's fork section; a backup without one (upstream's, an older build's) changes
-     * nothing here. Runs after upstream's settings and listening are in, so a section this can't
+     * nothing here but the Spotify join ([ForkSettings.rejoinSpotifySwitch]). Also the Drive backup's
+     * (`ReplaySync`'s device manifest, `fork`). Runs after upstream's settings and listening are in, so a section this can't
      * read is logged and skipped rather than failing an import that has already been applied.
      * Anything but an object (an edited file) counts as no section, and leaves the parts carried
      * from the last section ([ForkSettings.carriedSections]) as they are, like the switches here.
      */
     fun import(section: JsonElement?) {
-        val fork = section as? JsonObject ?: return
+        // No section (an upstream backup, an older Drive copy): the switches stay, but upstream's
+        // settings were just replaced, and its Spotify flag is joined to the canvas list again.
+        val fork = section as? JsonObject ?: return ForkSettings.rejoinSpotifySwitch()
         runCatching { applySection(fork) }.onFailure { Log.w(TAG, "backup: fork section not read: ${it.message}") }
     }
 

@@ -1199,7 +1199,7 @@ object AudioCache {
 
             override fun open(dataSpec: DataSpec): Long {
                 val scheme = dataSpec.uri.scheme
-                activeDs = if (scheme == "file" || scheme == "content" || com.music.bitchord.data.navidrome.NavidromeRadio.isStream(dataSpec.uri.toString())) { // fork: a live radio stream isn't cached
+                activeDs = if (scheme == "file" || scheme == "content" || com.music.bitchord.data.navidrome.NavidromeRadio.isStream(dataSpec.uri.toString()) || com.music.bitchord.fork.ForkManifestOpen.skipsCache(dataSpec.uri.toString())) { // fork: a live radio stream isn't cached; nor a manifest reopen (ForkManifestOpen)
                     upstreamDs
                 } else {
                     com.music.bitchord.fork.ForkPreload.yieldTo(dataSpec.uri) // fork: a server song's pre-load lets go of its cache entry
@@ -1693,6 +1693,7 @@ object AudioCache {
     }
 
     suspend fun warmRange(uri: Uri, position: Long, length: Long) {
+        if (com.music.bitchord.fork.ForkManifestOpen.skipsCache(uri.toString())) return // fork: a manifest is never written to the audio cache (rulebook 8.1.6, ForkManifestOpen)
         val key = keyFactory.buildCacheKey(DataSpec(uri))
         fetch(key, uri, position, length)
     }

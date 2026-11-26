@@ -2,6 +2,9 @@ package com.music.bitchord.data.canvas
 
 import com.music.bitchord.data.lyrics.LyricLine
 import java.nio.file.Files
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -62,16 +65,7 @@ class ForkBestPartsTest {
     }
 
     @Test
-    fun theButtonShowsEarlyAndWhileThePartIsAhead() {
-        assertTrue(ForkBestParts.shows(5_000, 60_000, 0))
-        assertFalse(ForkBestParts.shows(31_000, 60_000, 0)) // past the first 30 s
-        assertTrue(ForkBestParts.shows(31_000, 60_000, 20_000)) // 15 s from when it was known
-        assertFalse(ForkBestParts.shows(46_000, 90_000, 40_000)) // never after 45 s
-        assertFalse(ForkBestParts.shows(10_000, 12_000, 0)) // under 3 s ahead
-    }
-
-    @Test
-    fun yourOwnIsKeptAndTheButtonFollows() {
+    fun yourOwnIsKeptAndThePlayingSongFollows() {
         ForkBestParts.resetForTest(dir)
         val id = "dQw4w9WgXcQ"
         ForkBestParts.setCurrent(ForkBestParts.Current(id, 40_000, 40_000, 0, mine = false))
@@ -96,10 +90,23 @@ class ForkBestPartsTest {
     }
 
     @Test
-    fun theMostReplayedJumpSnapsToALine() {
-        val curve = List(100) { i -> ForkBestPart.Marker(i * 2_000L, 2_000L, if (i in 50..55) 0.9 else 0.2) }
-        val jump = assertIs<ForkMostReplayed.Outcome.Jump>(ForkMostReplayed.outcomeOf(curve, lyrics(98_000L to "a line", 130_000L to "another")))
-        assertEquals(97_750L, jump.ms)
-        assertEquals(100_000L, assertIs<ForkMostReplayed.Outcome.Jump>(ForkMostReplayed.outcomeOf(curve)).ms)
+    fun thePillFollowsAPartFoundLaterAndYourOwn() = runBlocking {
+        ForkBestParts.resetForTest(dir)
+        val id = "dQw4w9WgXcQ"
+        val seen = mutableListOf<Long?>()
+        val job = launch { ForkBestParts.follow(id) { seen += it } }
+        yield()
+        ForkBestParts.setCurrent(ForkBestParts.Current(id, null, null, 0, mine = false)) // no curve, lyrics not in yet
+        yield()
+        ForkBestParts.setCurrent(ForkBestParts.Current("other", 1_000, 1_000, 0, mine = false)) // another song's: ignored
+        yield()
+        ForkBestParts.setCurrent(ForkBestParts.Current(id, 40_000, 40_000, 0, mine = false)) // the chorus, once synced lyrics came
+        yield()
+        ForkBestParts.setMine(id, 90_000)
+        yield()
+        job.cancel()
+        assertEquals(listOf(null, 40_000L, 90_000L), seen)
+        assertTrue(ForkBestParts.isSynced(song))
+        assertFalse(ForkBestParts.isSynced(lyrics(0L to "unsynced")))
     }
 }

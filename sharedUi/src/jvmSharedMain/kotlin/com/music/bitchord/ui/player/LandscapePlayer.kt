@@ -355,7 +355,7 @@ internal fun LandscapeArtwork(
                             transitionStill()?.let { drawCropped(it, if (artLoaded) transitionAlpha() else 1f) }
                         }
                     }
-                    .forkCoverFade(art.request, artLoaded).forkBassGlowAnchor(art.request), // fork: Cover fade (ForkCoverFade), the PC's Bass glow (ForkBassGlow); bare Modifiers while off
+                    .forkCoverFade(art.request, artLoaded, autoMixFrames != null).forkBassGlowAnchor(art.request), // fork: Cover fade (ForkCoverFade; stands down while AutoMixCover has frames), the PC's Bass glow (ForkBassGlow); bare Modifiers while off
             )
             CanvasPresentationHost(canvas, canvasPair?.incomingClip) { clip, standby ->
                 CanvasArtworkPlayer(

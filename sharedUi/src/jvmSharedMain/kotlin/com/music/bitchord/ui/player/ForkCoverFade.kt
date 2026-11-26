@@ -47,7 +47,8 @@ import kotlin.math.max
  * whether the still cover is drawn at all: put after the sleeve image's own draw rule, so wherever
  * a cover clip has taken the sleeve (the rule skips the still) the overlay is skipped with it and
  * the clip is never covered or delayed. A crossfade or Automix change hands the session over once,
- * mid-blend, which is one cover change like any other.
+ * mid-blend, which is one cover change like any other, unless v1.10's Automix art transition is on:
+ * then that change is left to it.
  *
  * The optional front Y-flip mentioned with the spec is not done: in place it needs a second layer
  * with its own camera distance and back-face handling, which is not free.
@@ -128,18 +129,35 @@ fun forkCropPlacement(box: Size, intrinsic: Size): Pair<Offset, Size>? {
 }
 
 /**
- * The fade over a sleeve image drawn from [request]; [loaded] is that request's own "on screen"
- * flag ([PlayerArtwork.loaded]). Goes last in the image's modifier chain (see [ForkCoverFade]).
+ * Whether v1.10's Automix art transition has this cover change, so the fade stands down:
+ * [autoMixFrames] (the sleeve has `AutoMixCover` frames for its song: a blend's pair, or the
+ * incoming cover it promoted at the end), or a mix running with the transition on ([gateOn],
+ * [mixing]) for the frame where the session's song moved before the frames did. Read only from
+ * the mix flag, the fade dissolved the old cover over the promoted one when the flag dropped before
+ * the sleeve recomposed with the new song (audit 2026-11-24).
  */
-fun Modifier.forkCoverFade(request: ImageRequest, loaded: Boolean): Modifier = composed {
+fun forkCoverFadeStandsDown(autoMixFrames: Boolean, gateOn: Boolean, mixing: Boolean): Boolean =
+    autoMixFrames || (gateOn && mixing)
+
+/**
+ * The fade over a sleeve image drawn from [request]; [loaded] is that request's own "on screen"
+ * flag ([PlayerArtwork.loaded]); [autoMix]: the sleeve draws `AutoMixCover` frames for this song
+ * ([forkCoverFadeStandsDown]). Goes last in the image's modifier chain (see [ForkCoverFade]).
+ */
+fun Modifier.forkCoverFade(request: ImageRequest, loaded: Boolean, autoMix: Boolean = false): Modifier = composed {
     val on by ForkCoverFade.enabled.collectAsState()
     val reduceAnimation by PlayerSettings.reduceAnimation.collectAsState()
     if (!on || reduceAnimation) return@composed Modifier
     val state = remember { ForkCoverFadeState<ImageRequest>() }
+    // v1.10's Automix art transition (AutoMixCover), when it is on, already carries the cover
+    // across a blend's hand-over: this fade stands down for that change, so the two don't draw
+    // over each other. Every other change still dissolves.
+    val mixing by PlayerSettings.smartMixInProgress.collectAsState()
+    val upstreamArt = forkCoverFadeStandsDown(autoMix, autoMixArtworkGate().enabled, mixing)
     // Taken in the composition where the request changes, so the first frame of the new song
     // already has the old cover over it: from an effect it would be one frame late, and that
     // frame is the blank sleeve this exists to hide.
-    val outgoing = remember(request) { state.outgoingFor(request) }
+    val outgoing = remember(request) { state.outgoingFor(request).takeUnless { upstreamArt } }
     val strength = remember(request) { Animatable(if (outgoing != null) 1f else 0f) }
     // Not the strength itself: read here, every frame of the fade would recompose the sleeve.
     var fading by remember(request) { mutableStateOf(outgoing != null) }

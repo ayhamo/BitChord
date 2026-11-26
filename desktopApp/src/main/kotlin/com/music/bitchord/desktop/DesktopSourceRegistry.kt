@@ -450,7 +450,7 @@ internal object DesktopSourceRegistry {
     ): DesktopStream? = coroutineScope {
         val running = sources
             .map { source ->
-                async { openBest(source, song, quality, forkDirect, forkMinRank = forkMinRank) } // fork: forkDirect, forkMinRank
+                async { ForkRaceLane.miss(source.descriptor.name, song.title) { openBest(source, song, quality, forkDirect, forkMinRank = forkMinRank) } } // fork: forkDirect, forkMinRank; a lane that throws is that source's miss (ForkRaceLane)
             }
             .toMutableList()
         // fork (PC-Continued 18b6b3ae): with Atmos wanted, a stereo copy that answers first is held for
@@ -533,6 +533,7 @@ internal object DesktopSourceRegistry {
         // This is an explicit second look. Empty catalogue answers and failed/expired stream URLs
         // from the first pass must not make the retry a cache hit.
         DesktopAddonSource.clearCompletedTrackCalls()
+        if (ForkNextRowPc.exhausted(song)) return null // fork: the song used up its next rows (8.1.4): what plays stays, no more searches
         val chasingAtmos = ForkAtmos.wanted() && playing?.format?.isDolbyAtmos != true // fork (PC-Continued 18b6b3ae)
         val playingRank = configs().firstOrNull { it.id == playing?.sourceId }?.kind?.rank
             ?: DesktopSourceKind.YOUTUBE.rank
@@ -577,8 +578,10 @@ internal object DesktopSourceRegistry {
         }
         val wantsLossless = ceiling(quality) == DesktopAudioQuality.LOSSLESS
         var settleFor: DesktopStream? = null
-        for (match in ForkDesktopAddonLimits.cachedFirst(source.config, preferred(matches, song, wantsLossless)).take(STREAM_ATTEMPTS)) { // fork: cached rows first within a tier
+        for (match in ForkDesktopAddonLimits.cachedFirst(source.config, ForkNextRowPc.left(song, source.config.id, preferred(matches, song, wantsLossless))).take(STREAM_ATTEMPTS)) { // fork: cached rows first within a tier; a row refused for the song passed over (rulebook 8.1.4)
             val stream = source.resolve(match, quality).getOrNull() ?: continue
+            ForkNextRowPc.opened(stream.url, source.config.id, match.videoId) // fork: which row this URL came from, for a refusal (rulebook 8.1.4)
+            if (ForkNextRowPc.refusesManifest(song, source.config, stream)) { if (ForkNextRowPc.exhausted(song)) break else continue } // fork: an addon's manifest is refused, the next row opens (rulebook 8.1.4 + 8.1.6)
             if (!playableHere(source, stream)) continue
             if (!ForkAddonFloorPc.admits(source.config, stream, forkMinRank, floor = forkNoteHandoff)) continue // fork: the rulebook's lossy floor inside the race, and the pass's rank (8.2.1); a download's legs keep their own rule
             if (forkDirect && ForkDirectSourceCheck.cutShort(source.descriptor.name, match, stream, song)) continue // fork: a preview or cut-off file is not the recording

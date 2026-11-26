@@ -177,6 +177,7 @@ class DesktopPlaybackEngine(
         var tempo: DesktopTempoBuffer? = null
         var tempoRate = 1.0
         var tempoEaseStep = 0.0
+        var forkEaseTo = 1.0 // fork: the rate an ease ends on, a song's playlist speed or x1 (ForkSongSpeed)
         var tempoEaseEveryFrames = 0L
         var tempoEaseNextFrame = Long.MAX_VALUE
         var tempoOutputFrames = 0L
@@ -227,6 +228,8 @@ class DesktopPlaybackEngine(
         /** fork: the song's other version (video / audio) taken over at the matching moment; see [forkSwitchVersion]. */
         class ForkVersion(val fromId: String, val track: Track, val map: (Long) -> Long, val ack: kotlinx.coroutines.CompletableDeferred<Boolean>) : Command
         data object ClearUpcoming : Command
+        /** fork: the listener paused during a mix; see [forkPauseMix]. */
+        data object ForkPauseMix : Command
         data object Reconfigure : Command
         data object Flush : Command
     }
@@ -356,7 +359,7 @@ class DesktopPlaybackEngine(
         forkInstantOnly: Boolean = false,
     ): Pair<DesktopLiveResolution, Result<Track>> {
         val opened = openTrack(song, live.stream, startAtMs, forkInstantOnly)
-        val track = opened.getOrNull() ?: return live to opened
+        val track = opened.getOrNull() ?: return forkOpenSubstitute(song, live, opened, startAtMs, forkInstantOnly)
         if (!ForkDirectSourceCheck.wrongLength(song, live.stream, track.decoder.durationUs)) return live to opened
         track.decoder.close()
         live.pendingSubstitute?.cancel()
@@ -367,6 +370,60 @@ class DesktopPlaybackEngine(
         }
         val fallback = DesktopLiveResolution(youtube)
         return fallback to openTrack(song, youtube, 0L, forkInstantOnly)
+    }
+
+    /**
+     * Fork: the stream that sound started on would not open, and the race's other sources are still out
+     * ([DesktopLiveResolution.pendingSubstitute]): their copy is waited for (at most
+     * [FORK_SUBSTITUTE_WAIT_MS]) and opened instead. Measured 2026-11-25: SI NO ES CONTIGO's YouTube stream
+     * (InnerTubeX VISIONOS, 166 kbps) failed every open with "Invalid data", the incoming deck gave up at
+     * arming and the add-on's FLAC, matched a second later, was never used: no blend, no loop mix.
+     */
+    private suspend fun forkOpenSubstitute(
+        song: Song,
+        live: DesktopLiveResolution,
+        opened: Result<Track>,
+        startAtMs: Long,
+        forkInstantOnly: Boolean,
+    ): Pair<DesktopLiveResolution, Result<Track>> {
+        val pending = live.pendingSubstitute ?: return live to opened
+        val copy = try {
+            kotlinx.coroutines.withTimeoutOrNull(FORK_SUBSTITUTE_WAIT_MS) { pending.await() }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            if (!pending.isCancelled) throw e // this open was taken over; only the search itself ending is "no copy"
+            null
+        } catch (e: Exception) {
+            null
+        }
+        if (copy == null || copy.url == live.stream.url) {
+            pending.cancel()
+            return live to opened
+        }
+        DesktopTrackLog.log(
+            "'${song.title}' would not open from ${DesktopMusicSources.sourceNameFor(live.stream)} " +
+                "(${opened.exceptionOrNull()?.message}); opening ${DesktopMusicSources.sourceNameFor(copy)}'s copy instead",
+        )
+        return DesktopLiveResolution(copy) to openTrack(song, copy, startAtMs, forkInstantOnly)
+    }
+
+    private var forkCopyAheadJob: Job? = null
+
+    /** Fork: [song]'s add-on copy found and queued for analysis while it is next ([ForkCopyAhead]). */
+    private fun forkCopyAhead(song: Song) {
+        forkCopyAheadJob?.cancel()
+        forkCopyAheadJob = scope.launch {
+            val copy = ForkCopyAhead.run(
+                song,
+                automix = automixEnabled,
+                stillNext = { nextSong?.videoId == song.videoId },
+                find = { DesktopMusicSources.upgradeFor(it, null) },
+                measure = { s, c ->
+                    DesktopTrackLog.log("'${s.title}' is next: measuring ${DesktopMusicSources.sourceNameFor(c)}'s copy before its transition")
+                    analyzer.forkRequestCopy(s, c, s.durationText.durationSeconds())
+                },
+            )
+            if (copy == null && nextSong?.videoId == song.videoId) DesktopTrackLog.log("'${song.title}' is next: no add-on copy to measure ahead")
+        }
     }
 
     /** Opens a decoder on [stream], off the audio thread. */
@@ -482,7 +539,7 @@ class DesktopPlaybackEngine(
             "upgrading '${song.title}' to ${better.format.summary.ifBlank { "another rendition" }}" +
                 " from ${DesktopMusicSources.sourceNameFor(better)}",
         )
-        if (!ForkWindowCheckPc.passes(song, forkPlayingStream(song.videoId), better, current.positionMs)) return false // fork: the rulebook's 12 s window check; no match stays on what plays
+        if (!ForkWindowCheckPc.passes(song, forkPlayingStream(song.videoId), better, current.positionMs)) return ForkNextRowPc.next(song, better, current = { _state.value.song?.videoId == song.videoId }) { DesktopMusicSources.upgradeFor(song, DesktopStream(url = "", format = current.streamFormat ?: DesktopStreamFormat(), sourceId = current.streamSourceId)) }?.let { take(song, it) } ?: false // fork: the rulebook's 12 s window check; no match stays on what plays, and the next row or source is asked, up to 4 (8.1.4), while the song still plays
         ForkUpgradeLength.expect(better) // fork: swapStream checks this copy's decoded length
         forkTaken = song.videoId to better // fork: see worthSwapping above
         swapStream(song, better, current.positionMs)
@@ -527,7 +584,7 @@ class DesktopPlaybackEngine(
     fun reloadCurrent(forceSourceRefresh: Boolean = false) {
         val current = _state.value
         val song = current.song ?: return
-        if (forceSourceRefresh) DesktopAddonSource.clearCompletedTrackCalls()
+        if (forceSourceRefresh) { DesktopAddonSource.clearCompletedTrackCalls(); ForkNextRowPc.forget(song) } // fork: was the clear alone; "Upgrade quality" gives the song its refused rows back (8.1.7)
         upgradeJob?.cancel()
         DesktopTrackLog.log(
             "re-opening '${song.title}' — pinned to the original: " +
@@ -561,6 +618,7 @@ class DesktopPlaybackEngine(
 
     fun pause() {
         paused = true
+        commands += Command.ForkPauseMix // fork: a pause during a mix calls it off (playback.md "The queue during a mix" rule 5)
         _state.update { it.copy(isPlaying = false) }
     }
 
@@ -667,6 +725,7 @@ class DesktopPlaybackEngine(
             // [armAddonUpcoming].
             DesktopTrackLog.log("'${song.title}' may come from an addon, so it is not read ahead")
             awaitingArm.set(song)
+            forkCopyAhead(song) // fork: its copy measured now, not at arming (ForkCopyAhead)
             return
         }
         resolveUpcoming(song, local)
@@ -1028,20 +1087,27 @@ class DesktopPlaybackEngine(
 
     /** Mixes the outgoing track with the one coming in, when a crossfade is running. */
     /** Mixes the outgoing track with the one coming in, filtering each side. */
+    private val forkMixLimiter = com.music.bitchord.playback.ForkMixLimiter() // fork: the blend sum's −1 dBFS limiter (ForkMixLimiter)
+
     private fun blend(track: Track, block: FloatArray, count: Int): Pair<FloatArray, Int> {
         val incoming = upcoming
         // Widened first, whether or not a mix is running, then equalised.
         widen(spatial, track, block, count)
         equalise(equalizer, block, count, track)
         forkLoudness.process(block, count, sink.format.channels, sink.format.sampleRate, track.song, track.stream.url) // fork
+        if (fadeRemaining <= 0 || incoming == null) ForkDesktopV2.listen(block, count, sink.format.channels, sink.format.sampleRate) // fork: the beat an Automix v2 echo out repeats
+        if (fadeRemaining <= 0 || incoming == null) ForkDesktopV2.tail(block, count, sink.format.channels, sink.format.sampleRate) // fork: an editor mix's effect tails ring on (editor.md §12)
+        if ((fadeRemaining <= 0 || incoming == null) && !forkMixLimiter.idle) forkMixLimiter.process(block, count, sink.format.channels, sink.format.sampleRate, active = 0) // fork: the limiter's release only, a single deck is never limited
         if (fadeRemaining <= 0 || incoming == null) return block to count
 
         if (mixed.size < count) mixed = FloatArray(count)
-        val other = readIncoming(incoming, count)
+        val forkHeld = ForkDesktopV2.heldSamples(activePlan, transitionTotal - fadeRemaining, fadeTotal, count, sink.format.channels.coerceAtLeast(1)) // fork: B's late entry (mix-file.md rule 2)
+        val other = forkReadIncomingLate(incoming, count, forkHeld) // fork: was readIncoming(incoming, count); B silent and unread until its late entry
         val otherCount = incomingReadCount
+        ForkDesktopV2.lateRise(other, forkHeld, otherCount, sink.format.channels.coerceAtLeast(1), sink.format.sampleRate) // fork: B rises to the curve over 10 ms once its late entry starts
         val incomingRate = deckRate(incoming)
-        if (incomingSourceFrames == 0.0 && otherCount > 0) forkCorrectCue(incoming) // fork: ForkCueCorrection
-        incomingSourceFrames += otherCount.toDouble() / sink.format.channels.coerceAtLeast(1) * incomingRate
+        if (incomingSourceFrames == 0.0 && otherCount > forkHeld) forkCorrectCue(incoming) // fork: ForkCueCorrection; > forkHeld, was > 0
+        incomingSourceFrames += (otherCount - forkHeld).coerceAtLeast(0).toDouble() / sink.format.channels.coerceAtLeast(1) * incomingRate // fork: - forkHeld
         if (other != null) {
             widen(spatialIncoming, incoming, other, otherCount)
             equalise(equalizerIncoming, other, otherCount, incoming)
@@ -1067,7 +1133,7 @@ class DesktopPlaybackEngine(
             // peaking together would be clipped hard by the sink. A smooth trim of
             // 1 / sqrt(out + into) holds that to 1.19 for at most 1.5 dB, and reshapes nothing:
             // the same trim Android's two players take.
-            val outgoingLevel = if (plan != null && plan.echoSeconds > 0.0) {
+            val outgoingLevel = ForkDesktopV2.echoLevel(plan, progress) ?: if (plan != null && plan.echoSeconds > 0.0) { // fork: Automix v2's echo out
                 DesktopTransitionRide.echoLevel(plan, progress)
             } else {
                 out
@@ -1124,6 +1190,7 @@ class DesktopPlaybackEngine(
                 // fork (PC-Continued 8498b497): the texture rides a bell fed the summed dry, and only the
                 // sends are trimmed for its headroom (ForkAutomixFx). Was: a rising ramp on `leaving` alone.
                 val forkDry = leaving * out + arriving * into
+                ForkDesktopV2.send(index, leaving * out, arriving * into) // fork: an editor mix's sends, after the faders (editor.md §12)
                 if (forkTextureRamp > 0f) {
                     val texture = transitionTexture
                     if (texture != null) fxSend += texture.process(channel, forkDry) * forkTextureRamp
@@ -1133,9 +1200,12 @@ class DesktopPlaybackEngine(
             }
             fadeRemaining -= span
         }
+        ForkDesktopV2.returns(mixed, count, channels) // fork: the effect returns and noise (editor.md §12)
+        forkMixLimiter.process(mixed, count, channels, sink.format.sampleRate) // fork: two decks summed, peaks held under −1 dBFS
         val progress = ((transitionTotal - fadeRemaining).toFloat() / fadeTotal.coerceAtLeast(1))
-        val handoffAt = plan?.let(DesktopTransitionRide::handoffAt) ?: DISPLAY_SWITCH_AT
+        val handoffAt = ForkDesktopV2.afterLateEntry(plan, plan?.let(DesktopTransitionRide::handoffAt) ?: DISPLAY_SWITCH_AT) // fork: not before B's late entry starts (mix-file.md rule 2)
         if (!displaySwitched && progress >= handoffAt && fadeRemaining > 0) switchDisplay(incoming)
+        if (fadeRemaining <= 0) ForkDesktopV2.ended(plan) // fork: its move counts at the blend's real end (ForkV2Moves)
         if (fadeRemaining <= 0) promoteUpcoming() else publishBlend(playing = true)
         return mixed to count
     }
@@ -1246,13 +1316,14 @@ class DesktopPlaybackEngine(
     private fun advanceTempoEase(track: Track, outputFrames: Int) {
         if (track.tempoEaseStep <= 0.0 || outputFrames <= 0) return
         track.tempoOutputFrames += outputFrames
-        while (track.tempoOutputFrames >= track.tempoEaseNextFrame && track.tempoRate != 1.0) { // fork: eases back from either side
+        val to = track.forkEaseTo // fork: a song's playlist speed, else x1
+        while (track.tempoOutputFrames >= track.tempoEaseNextFrame && track.tempoRate != to) { // fork: eases back from either side
             track.tempoRate =
-                if (track.tempoRate > 1.0) (track.tempoRate - track.tempoEaseStep).coerceAtLeast(1.0)
-                else (track.tempoRate + track.tempoEaseStep).coerceAtMost(1.0)
+                if (track.tempoRate > to) (track.tempoRate - track.tempoEaseStep).coerceAtLeast(to)
+                else (track.tempoRate + track.tempoEaseStep).coerceAtMost(to)
             track.tempoEaseNextFrame += track.tempoEaseEveryFrames
         }
-        if (kotlin.math.abs(track.tempoRate - 1.0) <= FORK_TEMPO_UNITY) track.tempoRate = 1.0 // fork
+        if (kotlin.math.abs(track.tempoRate - to) <= FORK_TEMPO_UNITY) track.tempoRate = to // fork
     }
 
     /** Widens one track's samples, unless the audio is Dolby Atmos. */
@@ -1309,11 +1380,13 @@ class DesktopPlaybackEngine(
         textureActive = false
         outgoingFilter.open()
         incomingFilter.open()
+        com.music.bitchord.playback.smart.automixv2.ForkSongSpeed.cameFrom = incoming.song.videoId to current?.song?.videoId // fork: the song a mix brought in, for its playlist speed
         current?.decoder?.close()
         current = incoming
         incoming.decoder.forkPrepareForPlayback() // fork
-        if (incoming.tempo != null && kotlin.math.abs(incoming.tempoRate - 1.0) > FORK_TEMPO_UNITY) { // fork: slowed too
-            val gap = kotlin.math.abs(incoming.tempoRate - 1.0)
+        incoming.forkEaseTo = forkEaseTarget(incoming) // fork: a song at its playlist speed eases back to it, not x1
+        if (incoming.tempo != null && kotlin.math.abs(incoming.tempoRate - incoming.forkEaseTo) > FORK_TEMPO_UNITY) { // fork: slowed too; forkEaseTo
+            val gap = kotlin.math.abs(incoming.tempoRate - incoming.forkEaseTo)
             val forkGlide = com.music.bitchord.playback.smart.automixv2.ForkV2Automix.easeBack(plan) // fork: an Automix v2 blend eases back 0.25% every 0.25 s
             val steps = forkGlide?.first ?: ceil(gap / TEMPO_STEP_PER_BEAT).toInt().coerceAtLeast(1) // fork: forkGlide
             incoming.tempoEaseStep = gap / steps
@@ -1487,6 +1560,7 @@ class DesktopPlaybackEngine(
                 is Command.ForkRecovered -> forkInstallRecovered(command)
                 is Command.ForkVersion -> forkStartVersion(command) // fork
                 Command.Reconfigure -> { forkLoopBail("the output was reopened", settle = true); reconfigureSink() } // fork
+                Command.ForkPauseMix -> forkPauseMix() // fork
                 Command.ClearUpcoming -> {
                     forkLoopBail("the next song changed", settle = true) // fork
                     // fork: past the switch the listener is on the incoming song (a skip's blend is from its first frame); a setting turned off mid-blend ends the blend there rather than dropping that song and playing on the old one under its title.
@@ -1512,6 +1586,8 @@ class DesktopPlaybackEngine(
                     fadeRemaining = 0
                     blendActive = false
                     sink.flush()
+                    ForkDesktopV2.flush() // fork: an echo's ring and tail are the old song's
+                    forkMixLimiter.reset() // fork: a limited blend's gain reduction is the old song's
                     framesWritten = sink.framesPlayed()
                     endBlend()
                     forkSkipMixInto.set(null) // fork: a skip-mix cut short leaves no mark on a later hand-off
@@ -1977,6 +2053,7 @@ class DesktopPlaybackEngine(
         val known = seconds.takeIf { it > 0 }
             ?: (track.song.durationText.durationSeconds())
         analyzer.request(track.song, track.stream, known)
+        analyzer.forkRequestCopy(track.song, track.stream, known) // fork: an add-on's copy is measured as itself (ForkCopyAnalysis)
     }
 
     /** Measures the pair around the playhead — the playing track first, then the one after it. */
@@ -2011,6 +2088,8 @@ class DesktopPlaybackEngine(
         // does on Android.
         track.dropTempo()
         sink.flush()
+        ForkDesktopV2.flush() // fork: an echo's ring and tail are from before the seek
+        forkMixLimiter.reset() // fork: so is a limited blend's gain reduction, which held the new position down
         framesWritten = sink.framesPlayed()
         speedProcessor?.reset()
         spatial?.reset()
@@ -2132,6 +2211,7 @@ class DesktopPlaybackEngine(
     )
 
     private fun maybeStartCrossfade(track: Track, positionMs: Long) {
+        forkSongSpeed(track) // fork: a song's playlist speed between mixes (spotify-mixes.md rule 10)
         val incoming = upcoming
         if (incoming == null) {
             // A next track not open yet — held back from read-ahead, or still resolving — is
@@ -2364,6 +2444,50 @@ class DesktopPlaybackEngine(
 
     // ---- fork: Automix v2's deck rates, see ForkDesktopV2 ----------------
 
+    /** The deck this put a song's playlist speed on, so only that one is ever put back to x1. */
+    private var forkSpeedDeck: Track? = null
+
+    /** The playlist speed [track]'s song plays at (1: none), with Automix on and the listener's speed x1. */
+    private fun forkSpeedOf(track: Track): Double {
+        com.music.bitchord.playback.smart.automixv2.ForkSongSpeed.on = automixEnabled && playbackSpeed == 1f
+        val id = track.song.videoId
+        val prev = com.music.bitchord.playback.smart.automixv2.ForkSongSpeed.cameFrom?.takeIf { it.first == id }?.second
+        val next = (if (track === current) upcoming?.song ?: nextSong else null)?.videoId
+        val s = com.music.bitchord.playback.smart.automixv2.ForkSongSpeed.of(id, prev, next)
+        // (the tempo buffer's range, as a blend's rates)
+        return if (com.music.bitchord.playback.smart.automixv2.ForkSongSpeed.off1(s)) s.coerceIn(MIN_INCOMING_RATE, MAX_INCOMING_RATE) else 1.0
+    }
+
+    /**
+     * What [incoming], promoted at the end of a blend, eases back to: its song's playlist speed (in the mix it played at
+     * A's played tempo, spotify-mixes.md rule 10), else x1.
+     */
+    private fun forkEaseTarget(incoming: Track): Double {
+        val want = forkSpeedOf(incoming)
+        if (!com.music.bitchord.playback.smart.automixv2.ForkSongSpeed.off1(want)) return 1.0
+        forkSpeedDeck = incoming
+        return want
+    }
+
+    /**
+     * Between mixes, the playing [track] at its song's playlist speed through its tempo buffer (pitch kept), as the
+     * extension's player does; a song with none goes back to x1 if this put it off it. A blend's own rates rule while
+     * it runs ([fadeRemaining]).
+     */
+    private fun forkSongSpeed(track: Track) {
+        if (fadeRemaining > 0) return
+        val want = forkSpeedOf(track)
+        if (com.music.bitchord.playback.smart.automixv2.ForkSongSpeed.off1(want)) {
+            val easing = track.tempoEaseStep > 0.0 && kotlin.math.abs(track.forkEaseTo - want) <= FORK_TEMPO_UNITY // (gliding there after a mix)
+            if (!easing && (kotlin.math.abs(track.tempoRate - want) > FORK_TEMPO_UNITY || track.tempo == null || track.tempoDrained)) forkRampOutgoing(track, want)
+            if (forkRampedDeck === track) forkRampedDeck = null // (the song's own speed, not a mix's ramp to ease back)
+            forkSpeedDeck = track
+        } else if (forkSpeedDeck === track) {
+            forkSpeedDeck = null
+            if (kotlin.math.abs(track.tempoRate - 1.0) > FORK_TEMPO_UNITY) forkRampOutgoing(track, null)
+        }
+    }
+
     /** The deck [forkRampOutgoing] last sped up, so only that one is ever eased back. */
     private var forkRampedDeck: Track? = null
 
@@ -2377,8 +2501,9 @@ class DesktopPlaybackEngine(
             if (forkRampedDeck !== track) return
             forkRampedDeck = null
             if (kotlin.math.abs(track.tempoRate - 1.0) > FORK_TEMPO_UNITY) {
-                val gap = track.tempoRate - 1.0
+                val gap = kotlin.math.abs(track.tempoRate - 1.0) // fork: abs (a slowed deck's step was negative and never ran)
                 val steps = ceil(gap / TEMPO_STEP_PER_BEAT).toInt().coerceAtLeast(1)
+                track.forkEaseTo = 1.0
                 track.tempoEaseStep = gap / steps
                 track.tempoEaseEveryFrames = (EASE_FALLBACK_SECONDS * sink.format.sampleRate).toLong().coerceAtLeast(1L)
                 track.tempoEaseNextFrame = track.tempoOutputFrames + track.tempoEaseEveryFrames
@@ -2549,6 +2674,7 @@ class DesktopPlaybackEngine(
 
     /** The loop mix being run, from arming to the incoming song's takeover, and its two decks. */
     private var forkLoopRun: ForkLoopMixSession? = null
+    private val forkLoopChannels = ForkLoopChannels() // fork: the stereo loop mix on a multichannel output
     private var forkLoopOut: Track? = null
     private var forkLoopIn: Track? = null
 
@@ -2558,21 +2684,26 @@ class DesktopPlaybackEngine(
             forkLoopMarker(run.plan.out.loopStart, run.plan.out.loopStart + run.clock.releaseAt, durationMs)
             return true
         }
+        val (outKey, outCopy) = ForkCopyAnalysis.planKey(track.song, track.stream) { analyzer.analysisFor(it).isUsable } // fork: the copy that plays, once measured
+        val (inKey, inCopy) = ForkCopyAnalysis.planKey(incoming.song, incoming.stream) { analyzer.analysisFor(it).isUsable } // fork
         val hold = forkLoop.consider(
             ForkLoopPair(
                 outSong = track.song,
                 inSong = incoming.song,
                 outStream = track.stream,
                 inStream = incoming.stream,
-                outAnalysis = analyzer.analysisFor(track.song.videoId),
-                inAnalysis = analyzer.analysisFor(incoming.song.videoId),
-                outState = analyzer.stateFor(track.song.videoId),
-                inState = analyzer.stateFor(incoming.song.videoId),
+                outAnalysis = analyzer.analysisFor(outKey), // fork: was track.song.videoId
+                inAnalysis = analyzer.analysisFor(inKey), // fork: was incoming.song.videoId
+                outState = analyzer.stateFor(outKey), // fork: was track.song.videoId
+                inState = analyzer.stateFor(inKey), // fork: was incoming.song.videoId
+                outCopy = outCopy, // fork
+                inCopy = inCopy, // fork
                 outDurationSec = durationMs / 1000.0,
                 inDurationSec = (incoming.decoder.durationUs ?: 0L) / 1e6,
                 positionSec = positionMs / 1000.0,
                 sampleRate = sink.format.sampleRate,
                 channels = sink.format.channels,
+                channelMask = sink.format.forkChannelMask, // fork: ForkLoopChannels.frontPair
                 automix = automixEnabled,
                 inParty = DesktopListenTogether.state.value.inParty,
                 speed = playbackSpeed,
@@ -2640,7 +2771,7 @@ class DesktopPlaybackEngine(
                 skipSilenceEnabled -> "skip silence is on"
                 deckRate(track) != 1.0 -> "the song is still easing out of its own mix"
                 forkSwap != null || forkArmedSwap != null || forkWaitingSwap != null -> "a better copy is crossing in"
-                sink.format.channels != 2 || sink.format.sampleRate != run.sampleRate -> "the output changed"
+                !ForkLoopChannels.frontPair(sink.format.channels, sink.format.forkChannelMask) || sink.format.sampleRate != run.sampleRate -> "the output changed" // fork: was channels != 2 (ForkLoopChannels)
                 else -> null
             }
             if (why != null) {
@@ -2666,7 +2797,8 @@ class DesktopPlaybackEngine(
             val count = currentReadCount
             if (count == 0) return true
             val wasEngaged = run.engaged
-            run.splice(song, count, writeUs, framesWritten)
+            val stereo = forkLoopChannels.fold(song, count, sink.format) // fork: the renderer is stereo (ForkLoopChannels)
+            run.splice(stereo, forkLoopChannels.count, writeUs, framesWritten)
             if (!wasEngaged && run.engaged) {
                 val lag = run.spliceLag
                 DesktopTrackLog.log(
@@ -2675,7 +2807,13 @@ class DesktopPlaybackEngine(
                         " against its song",
                 )
             }
-            forkLoopWrite(track, song, count)
+            if (stereo === song || !run.engaged) {
+                forkLoopWrite(track, song, count)
+            } else {
+                // fork: crossed into the renderer: its stereo back onto the output's front pair (ForkLoopChannels)
+                val out = forkLoopChannels.spread(stereo, forkLoopChannels.count, sink.format)
+                forkLoopWrite(track, out, forkLoopChannels.count)
+            }
             publishPosition(track)
             return true
         }
@@ -2692,9 +2830,10 @@ class DesktopPlaybackEngine(
         val block = run.render(mf, frames)
         if (mf >= run.handoverFrame) {
             if (!run.inAligned && !forkLoopLineUp(run, incoming)) return true
-            val other = readIncoming(incoming, frames * 2)
+            val raw = readIncoming(incoming, frames * sink.format.channels.coerceAtLeast(1)) // fork: was frames * 2, in the output's layout
+            val other = raw?.let { forkLoopChannels.fold(it, incomingReadCount, sink.format) } // fork: folded for the stereo renderer (ForkLoopChannels)
             if (other != null) {
-                val got = incomingReadCount
+                val got = forkLoopChannels.count // fork: was incomingReadCount
                 for (i in 0 until frames) {
                     val gain = run.inGain(mf + i) * run.inLevel // fork: * inLevel (ForkLoudness)
                     val l = 2 * i
@@ -2703,16 +2842,19 @@ class DesktopPlaybackEngine(
                 }
             }
         }
-        forkLoopWrite(track, block, frames * 2)
+        val out = forkLoopChannels.spread(block, frames * 2, sink.format) // fork: onto the output's front pair (ForkLoopChannels)
+        forkLoopWrite(track, out, forkLoopChannels.count, summing = run.summing(mf)) // fork: every deck block up to the take-over, a clip guard (ForkLoopMixSession.summing); was block, frames * 2
         forkLoopPublish(run, incoming)
         return true
     }
 
     /** A loop-mix block goes out as the song's own would: widened, equalised, played. */
-    private fun forkLoopWrite(track: Track, block: FloatArray, count: Int) {
+    private fun forkLoopWrite(track: Track, block: FloatArray, count: Int, summing: Boolean = false) {
         widen(spatial, track, block, count)
         equalise(equalizer, block, count, track)
         forkLoudness.process(block, count, sink.format.channels, sink.format.sampleRate, track.song, track.stream.url) // fork: ForkLoudness
+        // the mix limiter last, while the incoming deck is added (versions.md "The mix's ceiling"); its release after
+        if (summing || !forkMixLimiter.idle) forkMixLimiter.process(block, count, sink.format.channels, sink.format.sampleRate, active = if (summing) Int.MAX_VALUE else 0)
         play(track, block, count)
     }
 
@@ -2800,6 +2942,7 @@ class DesktopPlaybackEngine(
 
     /** The mix played out: the incoming deck is the song, read from its decoder at the very sample its deck left off. */
     private fun forkLoopPromote(run: ForkLoopMixSession, track: Track, incoming: Track) {
+        com.music.bitchord.playback.smart.automixv2.ForkV2Moves.heardLoop() // fork: the loop mix played out (versions.md "No effect three times in a row")
         if (!run.handedOff) forkLoopHandOff(run, incoming, sink.framesPlayed() - run.originFrame)
         forkLoopRun = null
         forkLoopOut = null
@@ -2842,6 +2985,55 @@ class DesktopPlaybackEngine(
         DesktopPlayerSettings.smartMixBlend.value = null
         // Past the move to the incoming song, [performSeek] promotes it first.
         if (target != null) performSeek(target)
+    }
+
+    /**
+     * The listener's pause during a mix (playback.md "The queue during a mix" rule 5, the extension's e9697cc7):
+     * from the hand-over to the take-over a pause calls the mix off at once, unmarked, and leaves the player
+     * paused at the song and spot the mix had reached, so play resumes that song alone. A loop mix heard so far
+     * settles as for a seek; a blend past its midpoint (the incoming song shown) promotes the incoming song at its
+     * heard spot; one before it stays on the outgoing song at its heard spot, the incoming deck back at its start
+     * for the next plan. The sink is flushed either way: the mix written ahead is never played on resume. The
+     * device stops at once, as any pause here (one sink, so no deck plays on past it). An armed loop not yet
+     * heard, or no mix at all, is left as it is.
+     */
+    private fun forkPauseMix() {
+        val run = forkLoopRun
+        if (run != null) {
+            if (com.music.bitchord.playback.smart.automixv2.ForkMixPause.keep(run.engaged, run.handedOff) != com.music.bitchord.playback.smart.automixv2.ForkMixPause.Keep.AS_IS) forkLoopBail("paused by the listener", settle = true)
+            return
+        }
+        if (current == null) return
+        val incoming = upcoming ?: return
+        val keep = com.music.bitchord.playback.smart.automixv2.ForkMixPause.keep(heard = fadeRemaining > 0, switched = displaySwitched)
+        if (keep == com.music.bitchord.playback.smart.automixv2.ForkMixPause.Keep.AS_IS) return
+        DesktopTrackLog.log("blend stops: paused by the listener, on the ${keep.name.lowercase()} song")
+        if (keep == com.music.bitchord.playback.smart.automixv2.ForkMixPause.Keep.INCOMING) {
+            performSeek(incomingHeardUs(incoming) / 1_000) // (promotes the incoming song first)
+            return
+        }
+        val heardMs = playhead.peek(sink.framesPlayed()) / 1_000
+        activePlan = null
+        transitionEcho = null
+        transitionBeatRepeat = null
+        transitionReverb = null
+        transitionTexture = null
+        beatRepeatActive = false
+        beatRepeatLatched = false
+        reverbActive = false
+        textureActive = false
+        outgoingFilter.open()
+        incomingFilter.open()
+        fadeRemaining = 0
+        blendActive = false
+        incomingSourceFrames = 0.0
+        incoming.dropTempo()
+        incoming.decoder.seek(0L)
+        incoming.startUs = 0L
+        equalizerIncoming.reset()
+        forkLoudnessIncoming.reset()
+        endBlend()
+        performSeek(heardMs)
     }
 
     private fun forkLoopEnd() {
@@ -3007,6 +3199,7 @@ class DesktopPlaybackEngine(
         val resumeMs = atMs ?: (playhead.at(sink.framesPlayed()) / 1_000).coerceAtLeast(0L)
         val song = track.song
         if (track.stream.sourceId == "youtube") ForkYtDlp.forget(track.stream.url) // fork: resolve afresh, not the cached URL that just failed
+        if (track.stream.sourceId != null && track.stream.sourceId != "youtube") DesktopAddonSource.clearCompletedTrackCalls() // fork: an addon's cached /stream answer (5 min) is the URL that just failed; ask afresh
         DesktopTrackLog.log("decoder recovery $attempt/$FORK_RECOVERY_ATTEMPTS for '${song.title}' at ${resumeMs}ms: $reason")
         _state.update { if (it.song?.videoId == song.videoId) it.copy(awaitingAudio = true) else it }
         // Never cancelled: a decoder that finished opening under a cancel would be lost with its
@@ -3161,7 +3354,7 @@ class DesktopPlaybackEngine(
                 it.decoder.forkState.let { state -> state == ForkDecodeState.RUNNING || state == ForkDecodeState.EOF } &&
                 fadeRemaining <= 0 && !displaySwitched && forkLoopRun == null &&
                 ForkInstantDeck.fresh(it.stream, it.forkOpenedAtNs, System.nanoTime(), System.currentTimeMillis())
-        }
+        } ?: forkLateSkipDeck(command.song) // fork: a skip during B's late entry's wait plays B from its mix-in
         // What Flush does, keeping the prepared deck.
         forkLoopBail("a new song", settle = false)
         forkLoop.forget()
@@ -3387,6 +3580,39 @@ class DesktopPlaybackEngine(
     }
 
     /** The incoming deck's first block in a blend: its cue is where its stream landed, not where it was asked. */
+    /**
+     * Fork: a skip onto B while its late entry still waits (mix-file.md rule 2: "a skip during the wait puts B at its
+     * mix-in"): B's deck, cued at its mix-in and not read yet, plays from there at its own speed; null otherwise.
+     */
+    private fun forkLateSkipDeck(song: Song): Track? {
+        val b = upcoming ?: return null
+        if (b.song.videoId != song.videoId || fadeRemaining <= 0 || displaySwitched || forkLoopRun != null) return null
+        if (!ForkDesktopV2.waiting(activePlan, transitionTotal - fadeRemaining, fadeTotal, sink.format.channels.coerceAtLeast(1))) return null
+        if (b.decoder.forkState.let { it != ForkDecodeState.RUNNING && it != ForkDecodeState.EOF }) return null
+        DesktopTrackLog.log("skipped during '${b.song.title}''s late entry: it starts at its mix-in, ${"%.1f".format(b.startUs / 1e6)}s")
+        b.tempo = null // (nothing was read through it: the wait reads none of B)
+        b.tempoRate = 1.0
+        return b
+    }
+
+    /** Fork: [readIncoming] with this block's first [held] samples silent and not read (B's late entry, [ForkDesktopV2.heldSamples]). */
+    private var forkLateBlock = FloatArray(0)
+
+    private fun forkReadIncomingLate(incoming: Track, count: Int, held: Int): FloatArray? {
+        if (held <= 0) return readIncoming(incoming, count)
+        if (held >= count) {
+            incomingReadCount = 0
+            return null
+        }
+        val read = readIncoming(incoming, count - held)
+        val got = if (read == null) 0 else incomingReadCount
+        if (forkLateBlock.size < count) forkLateBlock = FloatArray(count)
+        java.util.Arrays.fill(forkLateBlock, 0, held, 0f)
+        if (read != null) System.arraycopy(read, 0, forkLateBlock, held, got)
+        incomingReadCount = held + got
+        return forkLateBlock
+    }
+
     private fun forkCorrectCue(incoming: Track) {
         val start = ForkCueCorrection.correctedStart(incoming.startUs, incoming.decoder.forkLandedUs) ?: return
         DesktopTrackLog.log(
@@ -3537,6 +3763,8 @@ class DesktopPlaybackEngine(
 
         /** Fork (Desktop Revived 88dcc5d0): how long after the playing song is heard an instant-only next deck opens. */
         private const val FORK_INSTANT_PREPARE_DELAY_MS = 1_000L
+        /** Fork: how long a deck whose stream would not open waits for the race's other copy (forkOpenSubstitute). */
+        private const val FORK_SUBSTITUTE_WAIT_MS = 15_000L
 
         /** Fork: a deck rate this close to 1 is 1 (from PC-Continued be257dad). */
         private const val FORK_TEMPO_UNITY = 0.0001

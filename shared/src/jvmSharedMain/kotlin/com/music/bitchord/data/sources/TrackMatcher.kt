@@ -210,6 +210,7 @@ object TrackMatcher {
         val wanted = parseTitle(target.title, target.artist)
         val got = parseTitle(candidate.title, candidate.artist)
         if (wanted.core.isBlank() || got.core.isBlank()) return null
+        val forkMashup = ForkMashup.isMashup(target.title, target.artist) || ForkMashup.isMashup(candidate.title, candidate.artist) // fork: a mashup's title holds other songs' titles, on either side (ForkMashup)
         // Same word, different script: katakana vs romaji is bridged by
         // Hepburn transliteration; kanji has no algorithmic reading and stays
         // exact-only. Past that, a guarded containment absorbs minor
@@ -223,6 +224,7 @@ object TrackMatcher {
             romajiOf(wanted.core) == romajiOf(got.core) -> true
             isTranslationMatch(wanted, got) -> true
             wanted.core.length <= 3 || got.core.length <= 3 -> false
+            forkMashup -> false // fork: no "one contains the other" for a mashup (ForkMashup)
             else -> wanted.core.contains(got.core) || got.core.contains(wanted.core)
         }
         if (!isTitleMatch) return null
@@ -284,7 +286,7 @@ object TrackMatcher {
         // people. This exact exception is what admitted the 3:30 Lovely
         // track for Yo Yo Honey Singh's 3:31 "Brown Rang" video.
             ?: CREDITS_DISAGREE.takeIf {
-                !target.isVideo && withinSeconds(candidate, target, CREDIT_OVERRIDE_SEC)
+                !target.isVideo && !forkMashup && withinSeconds(candidate, target, CREDIT_OVERRIDE_SEC) // fork: + !forkMashup
             }
             ?: return null
         val explicit = explicitScore(target.isExplicit, candidate.isExplicit) ?: return null

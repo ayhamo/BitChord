@@ -191,27 +191,13 @@ class LoopMixSession private constructor(
             // Gains: the outgoing deck takes over from its song, the incoming loop
             // rises over the entry and the ramp, the outgoing one falls away.
             val h = LoopMix.HANDOVER_SEC
-            // fork: both curves trimmed where they overlap past full scale (ForkAutomix.trimmedGains)
-            val gains = com.music.bitchord.playback.smart.ForkAutomix.trimmedGains(
-                outTimes = doubleArrayOf(-h, 0.0, clock.enterEnd, clock.rampEnd, clock.releaseAt),
-                outGains = floatArrayOf(0f, 1f, 1f, 0.6f, 0f),
-                inTimes = doubleArrayOf(0.0, clock.enterEnd, clock.rampEnd),
-                inGains = floatArrayOf(0f, 0.55f, 1f),
-            )
+            val gains = com.music.bitchord.playback.smart.ForkAutomix.loopGains(clock.enterEnd, clock.rampEnd, clock.releaseAt, h) // fork: the baseline's curves, no trim (ForkAutomix.loopGains)
             renderer.setEnvelope(LoopMixRenderer.OUT, LoopMixRenderer.KIND_GAIN, gains.outTimes, gains.outGains)
             renderer.setEnvelope(LoopMixRenderer.IN, LoopMixRenderer.KIND_GAIN, gains.inTimes, gains.inGains)
             // Bass: the incoming loop comes in without it; they swap over one bar mid-ramp.
-            val swapFrom = clock.handoffAt - clock.swapBar / 2
-            val swapTo = clock.handoffAt + clock.swapBar / 2
-            val cut = LoopMix.BASS_CUT_DB.toFloat()
-            renderer.setEnvelope(
-                LoopMixRenderer.OUT, LoopMixRenderer.KIND_LOW_DB,
-                doubleArrayOf(swapFrom, swapTo), floatArrayOf(0f, cut),
-            )
-            renderer.setEnvelope(
-                LoopMixRenderer.IN, LoopMixRenderer.KIND_LOW_DB,
-                doubleArrayOf(swapFrom, swapTo), floatArrayOf(cut, 0f),
-            )
+            val swap = com.music.bitchord.playback.smart.ForkAutomix.loopBassSwap(clock.handoffAt, clock.swapBar) // fork: the same swap as the PC's, tested (ForkAutomix.loopBassSwap)
+            renderer.setEnvelope(LoopMixRenderer.OUT, LoopMixRenderer.KIND_LOW_DB, swap.times, swap.outDb)
+            renderer.setEnvelope(LoopMixRenderer.IN, LoopMixRenderer.KIND_LOW_DB, swap.times.copyOf(), swap.inDb)
             // The outgoing loop drains away through a rising high-pass once the tempo has arrived.
             renderer.setEnvelope(
                 LoopMixRenderer.OUT, LoopMixRenderer.KIND_HIGH_PASS_HZ,

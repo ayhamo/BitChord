@@ -304,6 +304,51 @@ class DesktopAddonServerTest {
         }
     }
 
+    /**
+     * Fork: protocol.md §4/§6, an `error` is a miss even beside a `url`, and a miss is never cached
+     * (ForkAddonStream.missOf); and a decoder recovery's clear (`forkRequestRecovery`) makes a cached
+     * `/stream` answer be asked again instead of handing back the URL that just failed for 5 minutes.
+     */
+    @Test
+    fun `fork an error is an uncached miss and a recovery asks a cached stream again`() = runBlocking {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.start()
+        val asked = java.util.concurrent.atomic.AtomicInteger()
+        val answer = AtomicReference("""{"url":"http://127.0.0.1/err.mp3","error":"region locked"}""")
+        try {
+            val port = server.address.port
+            val base = "http://127.0.0.1:$port"
+            server.json("/manifest.json", """{"id":"forkmiss","name":"Fork Miss","resources":["search","stream"]}""")
+            server.json(
+                "/search",
+                """{"tracks":[{"id":"m1","title":"Miss Track","artist":"A","format":"mp3","streamURL":"$base/row.mp3"}]}""",
+            )
+            server.createContext("/stream") { exchange ->
+                asked.incrementAndGet()
+                val bytes = answer.get().replace("http://127.0.0.1/", "$base/").toByteArray()
+                exchange.sendResponseHeaders(200, bytes.size.toLong())
+                exchange.responseBody.use { it.write(bytes) }
+            }
+            val config = DesktopSourceConfig("addon-forkmiss", DesktopSourceKind.ADDON, baseUrl = base)
+            val song = (DesktopAddonSource.search(config, "miss", 10).getOrThrow().single() as SearchResult.Track).song
+
+            assertEquals("$base/row.mp3", DesktopAddonSource.stream(config, song, "HIGH").getOrThrow()?.url, "the error's url is not played")
+            DesktopAddonSource.stream(config, song, "HIGH")
+            assertEquals(2, asked.get(), "the miss was not cached")
+
+            answer.set("""{"url":"http://127.0.0.1/good.mp3"}""")
+            assertEquals("$base/good.mp3", DesktopAddonSource.stream(config, song, "HIGH").getOrThrow()?.url)
+            DesktopAddonSource.stream(config, song, "HIGH")
+            assertEquals(3, asked.get(), "a hit is cached")
+            DesktopAddonSource.clearCompletedTrackCalls()
+            DesktopAddonSource.stream(config, song, "HIGH")
+            assertEquals(4, asked.get(), "after the recovery's clear the stream is asked again")
+        } finally {
+            DesktopAddonSource.forget("addon-forkmiss")
+            server.stop(0)
+        }
+    }
+
     private fun HttpServer.json(path: String, body: String) {
         createContext(path) { exchange ->
             val bytes = body.toByteArray()

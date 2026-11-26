@@ -1481,7 +1481,7 @@ class PlaybackService : MediaLibraryService() {
                 .collectLatest { enabled ->
                     refreshCustomLayouts()
                     publishWidgetState()
-                    (mediaSession?.player as? SessionPlayer)?.onShuffleChanged(enabled)
+                    mediaSession?.player.forkUnmasked<SessionPlayer>()?.onShuffleChanged(enabled) // fork: was (mediaSession?.player as? SessionPlayer), always null behind forkMasked
                 }
         }
         // While the watch is the speaker this process serves its audio, and a
@@ -2196,9 +2196,11 @@ class PlaybackService : MediaLibraryService() {
                 override fun parkEchoes() {
                     transitionFilterA.parkEcho()
                     transitionFilterB.parkEcho()
+                    transitionFilterA.forkShelf.echoPark(); transitionFilterB.forkShelf.echoPark(); transitionFilterA.forkShelf.fxRest(); transitionFilterB.forkShelf.fxRest() // fork: Automix v2's echo out; an editor mix's in-sink fader, loop and sends (ForkV2Ride)
                 }
 
                 override fun forkShelves(incoming: Boolean, lowDb: Float, highDb: Float, lowPassHz: Float, highPassHz: Float) = (if (incoming) activeFilter else spareFilter).forkShelf.set(lowDb, highDb, lowPassHz, highPassHz) // fork
+                override fun forkEcho(incoming: Boolean, aim: (ForkMixShelf) -> Unit) = aim((if (incoming) activeFilter else spareFilter).forkShelf) // fork
             },
             analysisRunningFor = { item -> trackAnalyzer.isAnalysing(item.mediaId) },
             // The standby is still the spare when this runs — it only becomes
@@ -3324,7 +3326,7 @@ class PlaybackService : MediaLibraryService() {
         if (!settleQueueUndoEdit() || ListenTogether.state.value.controlsLocked ||
             ListenTogether.state.value.inParty || boundedEditState.contextGeneration != contextGeneration
         ) return false
-        val activePlayer = mediaSession?.player as? SessionPlayer ?: return false
+        val activePlayer = mediaSession?.player.forkUnmasked<SessionPlayer>() ?: return false // fork: was mediaSession?.player as? SessionPlayer, always null behind forkMasked
         val from = (0 until activePlayer.mediaItemCount)
             .filter { activePlayer.getMediaItemAt(it) === original }.singleOrNull() ?: return false
         if (!activePlayer.replayFromHistory(from)) return false
@@ -5607,6 +5609,7 @@ class PlaybackService : MediaLibraryService() {
             // to prove itself.
             QualityUpgrade.forget(mediaId)
             withContext(Dispatchers.IO) { AudioCache.discardRendition(Uri.parse(upgradedUri)) }
+            if (withContext(Dispatchers.Main) { swapPointFor(mediaId) } != null) withContext(Dispatchers.IO) { com.music.bitchord.fork.ForkNextRowPhone.next(mediaId, at.uri, stream) }?.let { swapIn(mediaId, it) } // fork: a copy the window check refused passes to the next row or source, up to 4 (rulebook 8.1.4); not for a song no longer playing (the audition took seconds)
             return
         }
 
@@ -9197,6 +9200,7 @@ class PlaybackService : MediaLibraryService() {
             // this device rejoins it wherever it has got to. See
             // [PartySync.onLockedTransport], which owns that catch-up.
             if (lockedTransport(true)) return
+            if (crossfade.forkListenerPause(play = true, playerPlaying = super.getPlayWhenReady())) { onAutoMixInterruptingIntent(); return } // fork: play pressed on a mix's hold is a pause (playback.md "The queue during a mix" rule 5)
             onUserIntent()
             // Held back only when a party will schedule the start for everyone
             // at once — see [PartySync.shouldDeferPlay], which starts the player
@@ -9212,6 +9216,7 @@ class PlaybackService : MediaLibraryService() {
 
         override fun pause() {
             if (lockedTransport(false)) return
+            crossfade.forkListenerPause() // fork: a pause during a mix calls it off (playback.md "The queue during a mix" rule 5)
             onAutoMixInterruptingIntent()
             if (cast.active) {
                 cast.pause()
@@ -9259,6 +9264,7 @@ class PlaybackService : MediaLibraryService() {
 
         override fun setPlayWhenReady(playWhenReady: Boolean) {
             if (lockedTransport(playWhenReady)) return
+            if (crossfade.forkListenerPause(play = playWhenReady, playerPlaying = super.getPlayWhenReady()) && playWhenReady) { onAutoMixInterruptingIntent(); return } // fork: a pause during a mix calls it off, a play on its hold is a pause (rule 5)
             if (playWhenReady) onUserIntent() else onAutoMixInterruptingIntent()
             if (playWhenReady && deferPlayToParty()) return
             if (cast.active) {
@@ -9479,16 +9485,18 @@ class PlaybackService : MediaLibraryService() {
             if (locked()) return
             onUserIntent()
             if (!cast.active && crossfade.forkSkip.crossfadeSkip(wrappedPlayer.nextMediaItemIndex)) return // fork
+            val forkLateAt = crossfade.forkLateSkipMs() // fork: B's mix-in, for a skip during its late entry's wait
             crossfade.onSkipRequested()
-            wrappedPlayer.seekToNextMediaItem()
+            if (forkLateAt != null) wrappedPlayer.seekTo(wrappedPlayer.nextMediaItemIndex, forkLateAt) else wrappedPlayer.seekToNextMediaItem() // fork: was seekToNextMediaItem()
         }
 
         override fun seekToNext() {
             if (locked()) return
             onUserIntent()
             if (!cast.active && crossfade.forkSkip.crossfadeSkip(wrappedPlayer.nextMediaItemIndex)) return // fork
+            val forkLateAt = crossfade.forkLateSkipMs() // fork: B's mix-in, for a skip during its late entry's wait
             crossfade.onSkipRequested()
-            wrappedPlayer.seekToNext()
+            if (forkLateAt != null) wrappedPlayer.seekTo(wrappedPlayer.nextMediaItemIndex, forkLateAt) else wrappedPlayer.seekToNext() // fork: was seekToNext()
         }
     }
 

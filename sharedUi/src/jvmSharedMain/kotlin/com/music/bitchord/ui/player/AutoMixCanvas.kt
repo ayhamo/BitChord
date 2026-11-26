@@ -202,17 +202,18 @@ internal fun rememberAutoMixCanvasPair(
     val cellular by PlayerSettings.canvasOverCellular.collectAsStateWithLifecycle()
     val spotifyDisabled by PlayerSettings.disableSpotifyCanvas.collectAsStateWithLifecycle()
     val spotifyFirst by PlayerSettings.prioritizeSpotifyCanvas.collectAsStateWithLifecycle()
+    val forkKey = rememberForkAutoMixCanvasKey() // fork: "Animated covers" and the canvas settings' generation (ForkAutoMixCanvas.kt)
     val foreground = rememberIsForeground()
     val allowed = enabled && (metered != true || cellular) && foreground && isPlaying
     val currentEntry by rememberUpdatedState(entry)
     val currentQueue by rememberUpdatedState(queue)
     val pair = remember(feed) { AutoMixCanvasPair() }
     val canvasAllowed = enabled && (metered != true || cellular)
-    LaunchedEffect(canvasAllowed, spotifyDisabled, spotifyFirst, landscape, fullWindow, fullBleed) {
+    LaunchedEffect(canvasAllowed, spotifyDisabled, spotifyFirst, landscape, fullWindow, fullBleed, forkKey) { // fork: forkKey
         pair.invalidatePromotion()
     }
     // Rotation and layout changes cancel the effect, but cannot prepare the same generation again.
-    LaunchedEffect(feed, allowed, spotifyDisabled, spotifyFirst, landscape, fullWindow, fullBleed, artworkGate) {
+    LaunchedEffect(feed, allowed, spotifyDisabled, spotifyFirst, landscape, fullWindow, fullBleed, artworkGate, forkKey) { // fork: forkKey
         if (feed == null || !host.supportsAutoMixCanvas || !allowed || !artworkGate.enabled) return@LaunchedEffect
         var active: AutoMixCanvasTracks? = null
         var resolve: Job? = null
@@ -272,6 +273,7 @@ internal fun rememberAutoMixCanvasPair(
                         } catch (_: Exception) {
                             null
                         }?.takeUnless { spotifyDisabled && it.source == CanvasSource.SPOTIFY }
+                            ?.takeIf(forkKey::allows) // fork: no cover clip with "Animated covers" off
                             // An incoming Spotify Canvas reveals as its cover; the ordinary
                             // selected-track path brings the clip in once the mix has promoted.
                             ?.takeUnless { it.retiresBeforeAutoMix }

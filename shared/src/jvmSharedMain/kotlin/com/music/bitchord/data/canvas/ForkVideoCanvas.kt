@@ -847,7 +847,8 @@ object ForkVideoCanvas {
 
     private fun send(request: Request): JsonObject = client.newCall(request).execute().use { response ->
         if (response.code >= 400) throw IOException("HTTP ${response.code}")
-        json.parseToJsonElement(response.body?.string().orEmpty()) as? JsonObject ?: throw IOException("not JSON")
+        // capped (ForkCappedBody): a player answer is well under 1 MB; an empty one is a failure, not "no video"
+        json.parseToJsonElement(com.music.bitchord.data.ForkCappedBody.text(response, 2 * com.music.bitchord.data.ForkCappedBody.MB)) as? JsonObject ?: throw IOException("not JSON")
     }
 
     private fun JsonObject.text(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull

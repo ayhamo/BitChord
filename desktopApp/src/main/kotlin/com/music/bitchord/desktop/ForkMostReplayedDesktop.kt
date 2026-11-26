@@ -1,8 +1,5 @@
 package com.music.bitchord.desktop
 
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Whatshot
-import androidx.compose.runtime.Composable
 import com.music.bitchord.data.canvas.ForkMostReplayed
 import com.music.bitchord.data.model.Song
 import kotlinx.coroutines.CoroutineScope
@@ -12,14 +9,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Fork: the PC's "Jump to the most replayed part" ([ForkMostReplayed]), a row in the player's song
- * menu as on the phone (`ForkMostReplayedPhone`). The curve and the pick are the ones the PC's
- * music-video canvas already reads (`ForkVideoCanvas.heatmap`, `ForkBestPart.partStart`).
+ * Fork: the PC's seeks for the best part, as on the phone (`ForkMostReplayedPhone`): "Play from the
+ * best part" ([playFromBestPart]) and "Your best part"'s Now and Listen from here. (Its "Jump to the
+ * most replayed part" went with the switch to v1.10's Best Part pill, which shows the same spot.)
  *
  * The seek is the window's own `seekPlayer` ([install], from `DesktopApp`), the one the scrubber uses:
  * it clamps to the song, does nothing while a party locks the controls, and tells the party a local
- * seek happened. The lookup runs on a scope of its own, since the menu closes on the tap, and lands
- * only if the same song still plays.
+ * seek happened. The lookup runs on a scope of its own, since the menu closes on the tap.
  */
 internal object ForkMostReplayedDesktop {
 
@@ -60,19 +56,16 @@ internal object ForkMostReplayedDesktop {
      * played from there (seeking once the window plays it).
      */
     fun playFromBestPart(song: Song) {
-        scope.launch {
+        // A second tap replaces the first (as on the phone); on the UI thread.
+        pending?.cancel()
+        pending = scope.launch {
             val durationMs = com.music.bitchord.data.canvas.ForkMusicVideoMatch.lengthOf(song.durationText) * 1000
             // canvas.md §14 rule 6: 5 s to find it; without one, the song from the start, saying so.
-            val found = kotlinx.coroutines.withTimeoutOrNull(com.music.bitchord.data.canvas.ForkBestParts.FIND_MS) {
-                withContext(Dispatchers.IO) { runCatching { ForkMostReplayed.bestPart(song.videoId, durationMs) }.getOrNull() }
-            }
-            if (found == null) ForkNotice.show(com.music.bitchord.data.canvas.ForkBestParts.FROM_START)
-            if (found == null && playingId() == song.videoId) return@launch
-            val ms = found ?: 0L
-            if (DesktopListenTogether.state.value.controlsLocked) {
-                ForkNotice.show("Only the party host can change playback")
-                return@launch
-            }
+            val ms = ForkMostReplayed.startForPlay(
+                locked = { DesktopListenTogether.state.value.controlsLocked },
+                lockedText = "Only the party host can change playback",
+                say = { ForkNotice.show(it) },
+            ) { withContext(Dispatchers.IO) { runCatching { ForkMostReplayed.bestPart(song.videoId, durationMs) }.getOrNull() } } ?: return@launch
             if (playingId() != song.videoId) {
                 val p = play ?: return@launch
                 p(song)
@@ -88,34 +81,5 @@ internal object ForkMostReplayedDesktop {
         }
     }
 
-    fun jump(songId: String) {
-        scope.launch {
-            val outcome = withContext(Dispatchers.IO) { ForkMostReplayed.find(songId) }
-            if (outcome is ForkMostReplayed.Outcome.Jump) {
-                val s = seek
-                if (s == null || playingId() != songId) return@launch // the song changed meanwhile
-                if (DesktopListenTogether.state.value.controlsLocked) {
-                    ForkNotice.show("Only the party host can change playback")
-                    return@launch
-                }
-                s(outcome.ms)
-            }
-            ForkNotice.show(ForkMostReplayed.message(outcome))
-        }
-    }
-}
-
-/**
- * The player menu's fork rows: the jump (only for a YouTube song; closes the menu as the lookup
- * starts), then the song's canvas choices and best part ([ForkCanvasMenuRowsDesktop]).
- */
-@Composable
-internal fun ForkMostReplayedRow(song: Song, onDismiss: () -> Unit) {
-    if (ForkMostReplayed.eligible(song.videoId)) {
-        DesktopMenuRow(Icons.Rounded.Whatshot, ForkMostReplayed.MENU_TITLE) {
-            onDismiss()
-            ForkMostReplayedDesktop.jump(song.videoId)
-        }
-    }
-    ForkCanvasMenuRowsDesktop(song, onDismiss)
+    private var pending: kotlinx.coroutines.Job? = null
 }

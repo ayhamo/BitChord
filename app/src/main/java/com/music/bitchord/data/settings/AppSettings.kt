@@ -1172,6 +1172,7 @@ object AppSettings {
         syncedLyrics.value = prefs.getBoolean(KEY_SYNCED_LYRICS, true)
         lyricsSources.value = readLyricsSources()
         lyricsSourceOrder.value = readLyricsSourceOrder()
+        com.music.bitchord.data.lyrics.ForkLyricsDefaults.let { d -> if (d.due(prefs.getInt(d.KEY, 0))) { setLyricsSources(d.ticked.toSet()); setLyricsSourceOrder(d.order); prefs.edit().putInt(d.KEY, d.VERSION).apply() } } // fork: the owner's provider order, once (ForkLyricsDefaults)
         prioritizeSyllableSync.value = prefs.getBoolean(KEY_PRIORITIZE_SYLLABLE_SYNC, false)
         paxSenixApiKey.value = secret(KEY_PAXSENIX_API_KEY)
         com.music.bitchord.data.lyrics.PaxSenix.setApiKey(paxSenixApiKey.value)

@@ -84,6 +84,32 @@ object ForkAutomix {
         return Gains(times, out, times.copyOf(), inn)
     }
 
+    /**
+     * A loop mix's two gain curves, on the mix clock (0 = the incoming loop's entry), as the owner's baseline has
+     * them (research/automix-baseline-2026-11-08.md, the extension at d26dc16, BitChord web's loopMix.ts): the
+     * outgoing deck takes over from its song over [handoverSec] before 0, holds 1 through the enter bars, falls to
+     * 0.6 over the ramp and to 0 at the release; the incoming one rises 0 to 0.55 over the enter bars and to 1 over
+     * the ramp. No -3 dB trim, no equal-power scaling ([trimmedGains]): the baseline has neither.
+     */
+    fun loopGains(enterEnd: Double, rampEnd: Double, releaseAt: Double, handoverSec: Double): Gains = Gains(
+        doubleArrayOf(-handoverSec, 0.0, enterEnd, rampEnd, releaseAt), floatArrayOf(0f, 1f, 1f, 0.6f, 0f),
+        doubleArrayOf(0.0, enterEnd, rampEnd), floatArrayOf(0f, 0.55f, 1f),
+    )
+
+    /** A loop mix's bass swap: each deck's 250 Hz low-shelf gain (dB) at its knots. */
+    class BassSwap(val times: DoubleArray, val outDb: FloatArray, val inDb: FloatArray)
+
+    /**
+     * The bass swap that goes with rule 7 (the extension's study keeps the -3 dB only with it): a
+     * [LoopMix.BASS_CUT_DB] low shelf at 250 Hz on both decks, swapped over one [bar] centred on the
+     * ramp's middle ([handoffAt]). The incoming loop enters cut and the outgoing one ends cut, so the
+     * two beatmatched kicks never sum in phase. Both apps' renderers read it.
+     */
+    fun loopBassSwap(handoffAt: Double, bar: Double): BassSwap {
+        val cut = LoopMix.BASS_CUT_DB.toFloat()
+        return BassSwap(doubleArrayOf(handoffAt - bar / 2, handoffAt + bar / 2), floatArrayOf(0f, cut), floatArrayOf(cut, 0f))
+    }
+
     private fun valueAt(times: DoubleArray, values: FloatArray, t: Double): Double {
         if (times.isEmpty()) return 0.0
         if (t <= times.first()) return values.first().toDouble()

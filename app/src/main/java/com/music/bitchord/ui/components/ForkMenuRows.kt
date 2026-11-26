@@ -252,7 +252,6 @@ internal fun ForkPlayerMenuRows(song: com.music.bitchord.data.model.Song, accent
         ForkBackdropMenuRow(accent)
         ForkAnimatedCoversMenuRow(accent)
     }
-    com.music.bitchord.fork.ForkMostReplayedMenuRow(song, accent, onQueuePlayed)
     com.music.bitchord.fork.ForkCanvasMenuRows(song, accent, onQueuePlayed)
     ForkSavedQueuesRow(accent, onQueuePlayed)
     ForkHandoffMenuRow(accent, onQueuePlayed)

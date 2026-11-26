@@ -5,7 +5,6 @@ import com.music.bitchord.data.navidrome.NavidromeRadio
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
-import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -48,7 +47,7 @@ internal object ForkRadioNowPlaying {
     private class Held(val caption: Caption, val owner: Any)
 
     /** Stream address (as the engine opens it) to the station's song id. */
-    private val stations = ConcurrentHashMap<String, String>()
+    private val stations = com.music.bitchord.data.forkLruMap<String, String>(64) // bounded: one per station address opened
 
     private val held = MutableStateFlow<Map<String, Held>>(emptyMap())
 

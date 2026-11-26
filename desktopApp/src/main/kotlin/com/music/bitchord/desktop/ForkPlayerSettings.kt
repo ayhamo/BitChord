@@ -70,16 +70,20 @@ internal object ForkPlayerSettings {
     // Upstream's default is on; the phone's fork turns it off once (ForkSettings, `canvas_manual_set`),
     // so the controls over a clip stay until tapped away. The PC had it hard-coded off for the same reason.
     private val _spotifyCanvasAutoHide = flag(KEY_SPOTIFY_CANVAS_AUTO_HIDE, false)
+    // v1.10's Best Part pill, on by default as on the phone (`show_best_part`).
+    private val _showBestPart = flag(KEY_SHOW_BEST_PART, true)
 
     val hideSongStatus: StateFlow<Boolean> = _hideSongStatus
     val showQueueHistory: StateFlow<Boolean> = _showQueueHistory
     val showListenTogetherButton: StateFlow<Boolean> = _showListenTogetherButton
     val spotifyCanvasAutoHide: StateFlow<Boolean> = _spotifyCanvasAutoHide
+    val showBestPart: StateFlow<Boolean> = _showBestPart
 
     fun setHideSongStatus(on: Boolean) = write(KEY_HIDE_SONG_STATUS, on, _hideSongStatus)
     fun setShowQueueHistory(on: Boolean) = write(KEY_SHOW_QUEUE_HISTORY, on, _showQueueHistory)
     fun setShowListenTogetherButton(on: Boolean) = write(KEY_LISTEN_TOGETHER_BUTTON, on, _showListenTogetherButton)
     fun setSpotifyCanvasAutoHide(on: Boolean) = write(KEY_SPOTIFY_CANVAS_AUTO_HIDE, on, _spotifyCanvasAutoHide)
+    fun setShowBestPart(on: Boolean) = write(KEY_SHOW_BEST_PART, on, _showBestPart)
 
     private fun write(key: String, value: Boolean, into: MutableStateFlow<Boolean>) {
         DesktopPersistence().saveBoolean(key, value)
@@ -128,6 +132,7 @@ internal object ForkPlayerSettings {
         runCatching { AudioQuality.valueOf(quality.name) }.getOrDefault(AudioQuality.LOSSLESS)
 
     internal const val KEY_HIDE_SONG_STATUS = "hide_song_status"
+    internal const val KEY_SHOW_BEST_PART = "show_best_part"
     internal const val KEY_SHOW_QUEUE_HISTORY = "show_queue_history"
     internal const val KEY_LISTEN_TOGETHER_BUTTON = "show_listen_together_button"
     internal const val KEY_SPOTIFY_CANVAS_AUTO_HIDE = "spotify_canvas_auto_hide"

@@ -298,7 +298,7 @@ internal fun PlayerScrubber(
                     .matchParentSize()
                     .graphicsLayer { alpha = 1f - mixPulse.cover },
             ) {
-                if (!forkBestPartChip(shown, durationMs, onScrub, onScrubFinished)) centerLabel() // fork: Prism's "Best part" button in the label's place while it shows
+                centerLabel()
             }
             val mixingShown by remember { derivedStateOf { mixPulse.cover > 0f } }
             if (mixingShown) {
@@ -526,9 +526,10 @@ internal fun BestPartPill(
     overlayOpen: () -> Boolean = { false },
 ) {
     val enabled by PlayerSettings.showBestPart.collectAsStateWithLifecycle()
-    if (!enabled || !FORK_UPSTREAM_BEST_PART_PILL) return // fork: the rulebook's Best part button (ForkBestPartChip) is the one on the player
+    if (!enabled) return
     val start by produceState<Long?>(null, song.videoId) {
         value = runCatching { PlayerPlatform.host.bestPartMs(song) }.getOrNull()
+        com.music.bitchord.data.canvas.ForkBestParts.follow(song.videoId) { value = it } // fork: a chorus found later or "Your best part" saved now reaches the pill
     }
     // Remembered per track: having been heard is what puts the button away.
     var heard by remember(song.videoId) { mutableStateOf(false) }

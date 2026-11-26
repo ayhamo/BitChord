@@ -41,6 +41,16 @@ class ForkV2Mix {
     val out = Deck()
     val `in` = Deck()
 
+    /**
+     * The echo's and the delay's seconds from the window's start (editor.md §12 rule 3, a preset's curves.fxTime), null
+     * without an Effects lane: then the returns keep the times they had.
+     */
+    var fxTime: DoubleArray? = null
+
+    /** Whether any deck sends to the effect returns or plays noise (editor.md §12): the players then run them. */
+    val effects: Boolean
+        get() = listOf(out, `in`).any { d -> listOf(d.echoSend, d.reverbSend, d.delaySend, d.noise).any { it.moves() } }
+
     /** The mix's beats on the mix clock (the seek bar pulses on them); null: no beat (a crossfade). */
     var beats: DoubleArray? = null
 
@@ -76,6 +86,9 @@ class ForkV2Mix {
 
         fun empty(): Boolean = pts.isEmpty()
 
+        /** Whether it ever leaves its rest value. */
+        fun moves(): Boolean = pts.any { it[1] != rest }
+
         fun at(t: Double): Double {
             if (pts.isEmpty()) return rest
             var prevT = Double.NEGATIVE_INFINITY
@@ -104,6 +117,12 @@ class ForkV2Mix {
         var loopB = 0.0
         var release = 1e18
 
+        /**
+         * B's late entry (mix-file.md rule 2): before this mix second the deck is silent and its player held, then it
+         * starts at its first knot. Without one, never.
+         */
+        var startAt = Double.NEGATIVE_INFINITY
+
         /** After the last knot: on at rate 1 (the incoming song), or stop. */
         var runOn = false
         var stopAt = 1e9
@@ -112,6 +131,13 @@ class ForkV2Mix {
         val highDb = Lane(0.0)
         val hpHz = Lane(20.0)
         val lpHz = Lane(20000.0)
+
+        /** editor.md §12: the 1 kHz band (dB), the noise (0..1) and the sends to the three returns (0..1); at rest 0. */
+        val midDb = Lane(0.0)
+        val noise = Lane(0.0)
+        val echoSend = Lane(0.0)
+        val reverbSend = Lane(0.0)
+        val delaySend = Lane(0.0)
 
         /** Song seconds of decoded audio the deck needs. */
         var needFrom = 0.0
@@ -128,7 +154,13 @@ class ForkV2Mix {
             return knotP[i - 1] + (knotP[i] - knotP[i - 1]) * f
         }
 
-        private fun rate(seg: Int): Double = (knotP[seg + 1] - knotP[seg]) / (knotT[seg + 1] - knotT[seg])
+        private fun rate(seg: Int): Double {
+            val dt = knotT[seg + 1] - knotT[seg]
+            // A zero-length segment (a 0 s hand-over or fallback: the blend's two knots on one time) is 0/0: NaN, which
+            // made the cue, the incoming seconds and the hand-over time NaN. It runs at the next segment's rate.
+            if (!(dt > 0)) return if (seg + 2 < knotT.size) rate(seg + 1) else 1.0
+            return (knotP[seg + 1] - knotP[seg]) / dt
+        }
 
         /** The song second heard at mix second [t]: the loop and its release applied. */
         fun trackAt(t: Double): Double {
@@ -223,7 +255,7 @@ class ForkV2Mix {
 
         /** A plan's shape over [n] points: Automix v2's ladder shapes (drop-in, muffle) or djShape at its bass swap. */
         internal fun djShape(m: ForkV2Planner.Plan, D: Double, n: Int): Array<FloatArray> {
-            if ("blend" == m.style && ("dropin" == m.shape || "muffle" == m.shape)) return ladderShape(m, D, n)
+            if ("blend" == m.style && ("dropin" == m.shape || "muffle" == m.shape || "echo" == m.shape)) return ladderShape(m, D, n)
             return djShape(m.style, m.clash, D, m.bpm, m.swapAt, n)
         }
 
@@ -250,6 +282,20 @@ class ForkV2Mix {
             val outHp = FloatArray(n)
             val outLp = FloatArray(n)
             val dropin = "dropin" == m.shape
+            if ("echo" == m.shape) {
+                // echo out: the playing song's dry sound cut on the catch (10 ms), the next song in at full
+                // level with it; the echo (the outgoing deck's delay line) rings on over it
+                val c = min((m.echo?.cutSec ?: ForkV2Planner.ECHO_CUT_SEC) / D, 0.05)
+                for (i in 0 until n) {
+                    val p = i / (n - 1).toDouble()
+                    gIn[i] = clamp(p / c, 0.0, 1.0).toFloat()
+                    gOut[i] = (1 - clamp(p / c, 0.0, 1.0)).toFloat()
+                    outLp[i] = 20000f
+                    outHp[i] = 20f
+                    inHp[i] = 20f
+                }
+                return arrayOf(gIn, gOut, inHp, outHp, outLp)
+            }
             val e = min(0.02 / D, 0.05)
             val at = if (m.swapAt > 0 && m.swapAt < 1) m.swapAt else 0.5
             val from = max(0.0, at - (if (m.muffleLead > 0) m.muffleLead else 0.25))
@@ -420,24 +466,34 @@ class ForkV2Mix {
             // 0.25 s (the extension's deckGlideBack, and the plan's curves): a smooth glide, not steps
             val mixIn = p.mixInTrackTime
             val ik = ArrayList<DoubleArray>()
-            ik.add(doubleArrayOf(m.t0, mixIn))
+            // (B's late entry, mix-file.md rule 2: the deck's first point is that long into the mix, B silent and
+            // held until then; the curves below still run from t0)
+            val late = p.inDelaySec
+            if (late > 0) {
+                ik.add(doubleArrayOf(m.t0 + late, mixIn))
+                m.`in`.startAt = m.t0 + late
+            } else {
+                ik.add(doubleArrayOf(m.t0, mixIn))
+            }
             var it = m.t0 + m.D
-            var ip = mixIn + m.D * rate
+            var ip = if (late > 0) mixIn + (m.D - late) * rate else mixIn + m.D * rate
             ik.add(doubleArrayOf(it, ip))
-            if (kotlin.math.abs(rate - 1) < 0.002) {
+            // (a song at its playlist speed glides back to it and stays there, not x1: spotify-mixes.md rule 10)
+            val to = if (ForkSongSpeed.off1(p.speedIn)) p.speedIn else 1.0
+            if (kotlin.math.abs(rate - to) < 0.002) {
                 ik.add(doubleArrayOf(it + 0.5, ip + 0.5 * rate))
                 it += 0.5
             } else {
-                val steps = ceil(kotlin.math.abs(rate - 1) / GLIDE_STEP).toInt()
+                val steps = ceil(kotlin.math.abs(rate - to) / GLIDE_STEP).toInt()
                 var r = rate
                 for (i in 1..steps) {
                     it += GLIDE_STEP_SEC
                     ip += GLIDE_STEP_SEC * r
                     ik.add(doubleArrayOf(it, ip))
-                    r = if (i == steps) 1.0 else rate + (1 - rate) * i / steps.toDouble()
+                    r = if (i == steps) to else rate + (to - rate) * i / steps.toDouble()
                 }
-                // ...and on at x1.0 to the takeover
-                ik.add(doubleArrayOf(it + 0.5, ip + 0.5))
+                // ...and on at its own speed (x1.0, or the song's) to the takeover
+                ik.add(doubleArrayOf(it + 0.5, ip + 0.5 * to))
                 it += 0.5
             }
             m.`in`.knots(ik)
@@ -458,7 +514,7 @@ class ForkV2Mix {
                 planned(m, p)
             }
             val name = if (p.v3) "Automix v2" else if (m.v2) "Automix Classic" else "Automix"
-            val kind = if ("dropin" == p.shape) " · drop-in" else if ("muffle" == p.shape) " · muffle" else if (p.glide != null) " · glide" else ""
+            val kind = if ("dropin" == p.shape) " · drop-in" else if ("muffle" == p.shape) " · muffle" else if ("echo" == p.shape) " · echo out" else if (p.glide != null) " · glide" else ""
             m.title = if (p.style == "blend") name + kind else if (p.style == "filter") "$name · filter mix"
             else if (p.handoff) "Automix v2 · hand-over" else if (p.bridge) "Automix v2 · beatless bridge" else "Automix · crossfade"
             val g = p.glide
@@ -528,6 +584,21 @@ class ForkV2Mix {
             play(m.`in`.hpHz, c.`in`["highpassHz"], m.t0, P, m.D, true, null)
             play(m.out.lpHz, c.out["lowpassHz"], m.t0, P, m.D, true, null)
             play(m.`in`.lpHz, c.`in`["lowpassHz"], m.t0, P, m.D, true, null)
+            // editor.md §12: the mid band, and the noise and the sends, which are 0 again at the window's end
+            // (crossfade.js presetShape: the returns ring on by themselves)
+            play(m.out.midDb, c.out["midDb"], m.t0, P, m.D, false, null)
+            play(m.`in`.midDb, c.`in`["midDb"], m.t0, P, m.D, false, null)
+            for (d in listOf(true, false)) {
+                val deck = if (d) m.out else m.`in`
+                val side = if (d) c.out else c.`in`
+                for ((lane, key) in listOf(deck.noise to "noise", deck.echoSend to "echoSend", deck.reverbSend to "reverbSend", deck.delaySend to "delaySend")) {
+                    val pts = side[key] ?: continue
+                    if (pts.none { it[1] > 0 }) continue
+                    play(lane, pts, m.t0, P, m.D, false, null)
+                    lane.set(0.0, m.t0 + m.D + 0.002)
+                }
+            }
+            m.fxTime = c.fxTime
         }
 
         /**
@@ -540,6 +611,9 @@ class ForkV2Mix {
             val ts = HashSet<Double>()
             for (q in pts) ts.add(jround(q[0] * 1e6) / 1e6)
             if (mul != null) for (k in 0..32) ts.add(jround(D * k / 32 * 1e6) / 1e6)
+            // editor.md §3: a curve holds its first value before its first point (overviewValue answers pts[0] there).
+            // Without this a drawing starting past 0 played the lane's rest (flat, open) until it, then stepped.
+            ts.add(0.0)
             val fit = if (Dplay > 0 && D > 0) Dplay / D else 1.0
             var first = true
             for (tt in ts.sorted()) {

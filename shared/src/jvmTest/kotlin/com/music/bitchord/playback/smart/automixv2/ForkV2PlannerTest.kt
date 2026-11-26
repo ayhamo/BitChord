@@ -273,4 +273,23 @@ class ForkV2PlannerTest {
         assertEquals(0L, jround(Double.NaN))
         assertEquals(Math.round(1234.5678 * 1e3), jround(1234.5678 * 1e3))
     }
+
+    @Test
+    fun aSavedMixInIntoASongOfUnknownLengthIsNotNan() {
+        val next = song("b", 120.0, Double.NaN, 0.9)
+        assertEquals(0.0, ForkV2Planner.inRoom(next, 8.0))
+        assertEquals(0.0, ForkV2Planner.clampWindow(30.0, 0.0, ForkV2Planner.inRoom(next, 8.0), "the mix-in", null, null))
+        assertEquals(182.0, ForkV2Planner.inRoom(song("c", 120.0, 200.0, 0.9), 8.0))
+    }
+
+    @Test
+    fun loopsOnASideWithNoTempoFollowTheGridAndAZeroBarEnds() {
+        val side = ForkV2Analysis.BeatSide()
+        side.bpm = 0.0
+        side.downbeats = DoubleArray(12) { 0.5 + 2.0 * it }
+        val loops = ForkV2Planner.loopsBetween(side, 0.5, 2.0, 0.5, 16.5, 4)
+        assertTrue(loops.isNotEmpty())
+        loops.forEach { assertEquals(8.0, it[1] - it[0], 1e-9, "a loop is 4 bars long, not ended on the first downbeat") }
+        assertTrue(ForkV2Planner.loopsBetween(null, 0.0, 0.0, 0.0, 10.0, 4).isEmpty())
+    }
 }

@@ -111,6 +111,17 @@ private class ForkSkipMaskPlayer(
 @UnstableApi
 internal fun Player.forkMasked(crossfade: CrossfadeController): Player = ForkSkipMaskPlayer(this, crossfade)
 
+/**
+ * The session's player as a [T] (upstream's `SessionPlayer`), seen through the mask: the session
+ * holds the [ForkSkipMaskPlayer] wrapping it, so a plain `mediaSession?.player as? SessionPlayer`
+ * is always null here. v1.10 brought two such casts (the shuffle broadcast to the session's other
+ * controllers, and "Play again" from the queue's history), both silently off in the fork until
+ * this (audit 2026-11-24, 3B #1).
+ */
+@androidx.annotation.OptIn(UnstableApi::class)
+internal inline fun <reified T : Player> Player?.forkUnmasked(): T? =
+    this as? T ?: (this as? ForwardingPlayer)?.wrappedPlayer as? T
+
 /** The item Previous goes to, or unset when it only restarts this one (Media3's 3 s rule). */
 internal fun Player.forkPreviousTarget(): Int =
     if (currentPosition <= maxSeekToPreviousPosition) previousMediaItemIndex else C.INDEX_UNSET

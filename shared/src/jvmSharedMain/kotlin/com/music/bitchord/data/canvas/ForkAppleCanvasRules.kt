@@ -55,6 +55,35 @@ object ForkAppleCanvasRules {
     }
 
     /**
+     * Rule 3.1 over every bundle the web player loads: [jwts] is their JWTs in page order, read lazily (a bundle is
+     * fetched as its turn comes). The first unexpired, unrefused web player token anywhere wins and stops the read;
+     * else the first unexpired, unrefused one of all. Picking per bundle took the first bundle's unlabelled token
+     * before the later bundles, where the web player's own may sit, were read. Null for none (a failed scrape).
+     */
+    fun pickAcross(
+        jwts: Sequence<String>,
+        nowMs: Long,
+        rejected: Set<String>,
+        expiry: (String) -> Long? = ::expiryMs,
+        isWebPlayer: (String) -> Boolean = ::isWebPlayerToken,
+    ): Pair<String, Long>? {
+        var fallback: Pair<String, Long>? = null
+        val seen = HashSet<String>()
+        for (jwt in jwts) {
+            if (!seen.add(jwt) || jwt in rejected) continue
+            val exp = expiry(jwt)?.takeIf { it > nowMs } ?: continue
+            if (isWebPlayer(jwt)) return jwt to exp
+            if (fallback == null) fallback = jwt to exp
+        }
+        return fallback
+    }
+
+    /** The JWTs in a web player bundle, in order. */
+    fun jwtsIn(script: String): Sequence<String> = JWT.findAll(script).map(MatchResult::value)
+
+    private val JWT = Regex("""ey[A-Za-z0-9_-]+\.ey[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+""")
+
+    /**
      * Rule 3.6: the order hits are tried in, as indices into [scores]: by score, ties in Apple's
      * order; a rejected hit (null) never, and the list stops at the first under [MIN_SCORE].
      */

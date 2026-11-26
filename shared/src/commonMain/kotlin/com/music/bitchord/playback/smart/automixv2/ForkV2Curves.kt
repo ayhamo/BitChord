@@ -23,9 +23,18 @@ import kotlin.math.sin
 class ForkV2Curves {
     var durationSec = 0.0
 
-    /** Curve name (gain, lowpassHz, highpassHz, bassDb, highDb, rate) → its [t, v] points. */
+    /**
+     * Curve name (gain, lowpassHz, highpassHz, bassDb, midDb, highDb, noise, echoSend, reverbSend, delaySend, rate) → its
+     * [t, v] points.
+     */
     val out: MutableMap<String, Array<DoubleArray>> = LinkedHashMap()
     val `in`: MutableMap<String, Array<DoubleArray>> = LinkedHashMap()
+
+    /** The echo's and the delay's seconds, set at the window's start ([echoSec, delaySec], plan curves.fxTime, editor.md §12); null without an Effects lane. */
+    var fxTime: DoubleArray? = null
+
+    /** The Looping lane's length in beats (plan curves.loopBeats, editor.md §13); 0 without one. */
+    var loopBeats = 0
 
     companion object {
         /** A blend, filter mix or crossfade plan's curves (automix.js blendCurves). */
@@ -149,6 +158,7 @@ class ForkV2Curves {
             val half = x.bar / 2
             val c = ForkV2Curves()
             c.durationSec = x.releaseAt
+            // the baseline's (versions.md "The loop mix's baseline", 020f8a1): no trim
             c.out["gain"] = arrayOf(doubleArrayOf(0.0, 1.0), doubleArrayOf(x.enterEnd, 1.0), doubleArrayOf(x.rampEnd, 0.6), doubleArrayOf(x.releaseAt, 0.0))
             c.out["bassDb"] = arrayOf(doubleArrayOf(x.mid - half, 0.0), doubleArrayOf(x.mid + half, ForkV2Planner.BASS_CUT_DB))
             c.out["highpassHz"] = arrayOf(doubleArrayOf(x.rampEnd, 20.0), doubleArrayOf(x.releaseAt, 1500.0))

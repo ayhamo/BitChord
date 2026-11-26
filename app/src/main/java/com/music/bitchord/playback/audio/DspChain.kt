@@ -47,9 +47,10 @@ class DspChain(
      * it, and with no normalization gain and no EQ the loudness stage parks, so
      * nothing caught it: a 16-bit output clipped hard, heard as crackling only
      * during Automix (owner, S21 FE over Bluetooth, 16-bit PCM output). The
-     * limiter runs for the mix instead.
+     * -1 dBFS mix limiter runs for the mix instead ([ForkLoopClipGuard]).
      */
     var forkMixing = false
+    private val forkGuard = ForkLoopClipGuard()
 
     private var currentSampleRate: Int = 0
     private var processCounter: Long = 0L
@@ -95,8 +96,9 @@ class DspChain(
         transition.process(block)
         // The equaliser and spatial widener leave their overs in place for the stages
         // after them to see; the loudness stage's limiter is what catches whatever survives.
-        loudness.holdLimiter = equalizer.isShaping || spatial.enabled || forkMixing // fork: || forkMixing
+        loudness.holdLimiter = equalizer.isShaping || spatial.enabled
         loudness.process(block)
+        forkGuard.process(block, forkMixing, currentSampleRate) // fork: the loop mix's clip guard (ForkLoopClipGuard)
     }
 
     @Suppress("DEPRECATION")
@@ -105,6 +107,7 @@ class DspChain(
         equalizer.flush()
         transition.flush()
         loudness.flush()
+        forkGuard.reset() // fork
     }
 
     override fun reset() {
@@ -113,6 +116,7 @@ class DspChain(
         equalizer.reset()
         transition.reset()
         loudness.reset()
+        forkGuard.reset() // fork
     }
 
     companion object {

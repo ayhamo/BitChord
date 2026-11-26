@@ -16,10 +16,11 @@ import kotlin.test.fail
 /**
  * The transition editor (the extension's spec/automix/editor.md), checked as the phone patches'
  * EditorCasesTest.java checks it, ported:
- * - editor-cases.json, all three of its groups: `curves` (each preset and lane shape as curves,
- *   presetCurves), `windows` (a saved position read back on a grid, resolveWindow) and `plans` (an
+ * - editor-cases.json, all four of its groups: `curves` (each preset and lane shape as curves,
+ *   presetCurves), `windows` (a saved position read back on a grid, resolveWindow), `plans` (an
  *   override planned on two steady songs: the window played, glide, kick lock and the warnings word
- *   for word);
+ *   for word) and `draw` (§10's drawn curves: pointCurves, presetCurves with drawn lanes,
+ *   normalizeOverride on drawings, shapeDrawing, a drawn override planned);
  * - override.schema.json: the port's value lists are the schema's, and what it writes uses only the
  *   schema's fields;
  * - the override itself (§1): migration of the old picks, nothing-but-Auto, the JSON round trip, the
@@ -104,17 +105,20 @@ class ForkV2EditorCasesTest {
     @Test
     fun overridesPlayTheWindowsTheCasesSay() {
         val cases = cases()["plans"] as List<Any?>
-        assertEquals(9, cases.size)
+        assertEquals(11, cases.size)
         val diffs = ArrayList<String>()
         for (o in cases) {
             val c = o as Map<String, Any?>
             val engine = (c["engine"] as Number).toInt()
             val s = ForkV2Planner.Settings()
             s.version = engine
+            // the override's songs' speeds (spotify-mixes.md rule 10), as the app passes them
+            val ov = ForkV2MixOverride.fromJson(c["override"])
+            ov?.let { s.speedOut = it.speedOut; s.speedIn = it.speedIn }
             val from = steady("a", c["out"] as Map<String, Any?>)
             val to = steady("b", c["in"] as Map<String, Any?>)
             val pos = (c["pos"] as Number).toDouble()
-            val p = ForkV2Planner.plan(s, "a", "b", from, to, from.durationSec, pos, pos + 4.5, null, ForkV2MixOverride.fromJson(c["override"]))
+            val p = ForkV2Planner.plan(s, "a", "b", from, to, from.durationSec, pos, pos + 4.5, null, ov)
             val got = LinkedHashMap<String, Any?>()
             got["style"] = p.style
             got["bars"] = p.bars.toDouble()
@@ -124,10 +128,110 @@ class ForkV2EditorCasesTest {
             got["glide"] = p.glide != null
             got["kickLock"] = engine == 3 && ForkV2Planner.kickLockAllowed(p)
             got["warnings"] = ArrayList<Any?>(p.warnings.orEmpty())
+            if ((c["expect"] as Map<String, Any?>).containsKey("speedOut")) {
+                got["outRate"] = p.outRate
+                got["rate"] = p.rate
+                got["speedOut"] = p.speedOut
+                got["speedIn"] = p.speedIn
+            }
             val want = c["expect"]
             if (!same(want, got)) diffs.add("${c["name"]}:\n  got  ${ForkV2Json.write(got)}\n  want ${ForkV2Json.write(want)}")
         }
         assertTrue(diffs.isEmpty(), "${diffs.size} of ${cases.size} differ:\n" + diffs.joinToString("\n"))
+    }
+
+    /**
+     * editor.md §10, group `draw` (editor_cases.mjs): pointCurves, presetCurves with drawn and named
+     * lanes, normalizeOverride on drawings (count: the points kept per deck), shapeDrawing, and a
+     * drawn override planned on two steady songs (engine 2, the runner's default).
+     */
+    @Test
+    fun drawnCurvesMatchTheCases() {
+        val cases = (cases()["draw"] as List<Any?>).map { it as Map<String, Any?> }.filter { it["name"] != null }
+        assertEquals(17, cases.size)
+        val diffs = ArrayList<String>()
+        for (c in cases) {
+            val got: Any? = when (c["fn"]) {
+                "pointCurves" -> {
+                    val g = (c["glide"] as Map<String, Any?>?)?.let {
+                        ForkV2Planner.Glide((it["q"] as Number).toDouble(), (it["beats"] as Number).toInt(), (it["beatOutSec"] as Number).toDouble())
+                    }
+                    val d = (c["D"] as? Number)?.toDouble() ?: ForkV2Planner.glideSteps(g!!.q, g.beats, g.beatOutSec).total
+                    val lanes = c["lanes"] as Map<String, Any?>
+                    val ds = lanes.mapNotNull { (k, v) -> ForkV2Drawing.normalize(k, v) as? ForkV2Drawing }
+                    val pc = ForkV2Drawing.pointCurves(ds, d, (c["beatSec"] as Number).toDouble(), g)
+                    mapOf("out" to side(pc.out), "in" to side(pc.`in`))
+                }
+                "presetCurves" -> {
+                    val beat = (c["beatSec"] as Number).toDouble()
+                    ForkV2MixOverride.presetCurves(ForkV2MixOverride.fromJson(c["override"]), (c["D"] as Number).toDouble(), beat, beat, null)?.let { asJson(it) }
+                }
+                "normalizeOverride" -> {
+                    val j = ForkV2MixOverride.fromJson(c["override"])?.toJson()
+                    if (j != null && c["count"] == true) {
+                        val lanes = (j["lanes"] as Map<String, Any?>).mapValues { (_, v) ->
+                            if (v is Map<*, *>) mapOf("out" to count(v["out"]), "in" to count(v["in"])) else v
+                        }
+                        j + ("lanes" to lanes)
+                    } else j
+                }
+                "shapeDrawing" -> {
+                    val d = ForkV2Drawing.shapeDrawing(
+                        c["lane"] as String, c["shape"] as String, (c["D"] as Number).toDouble(), (c["beatSec"] as Number).toDouble(), null, c["unit"] as String,
+                    )
+                    if (d is ForkV2Drawing) d.toJson() else d
+                }
+                "plan" -> {
+                    val s = ForkV2Planner.Settings()
+                    s.version = 2
+                    val from = steady("a", c["out"] as Map<String, Any?>)
+                    val to = steady("b", c["in"] as Map<String, Any?>)
+                    val pos = (c["pos"] as Number).toDouble()
+                    val p = ForkV2Planner.plan(s, "a", "b", from, to, from.durationSec, pos, pos + 4.5, null, ForkV2MixOverride.fromJson(c["override"]))
+                    linkedMapOf(
+                        "style" to p.style, "bars" to p.bars, "durationSec" to p.durationSec, "outRate" to p.outRate, "rate" to p.rate,
+                        "gainOut" to p.curves!!.out["gain"]!!.map { listOf(it[0], it[1]) },
+                        "gainIn" to p.curves!!.`in`["gain"]!!.map { listOf(it[0], it[1]) },
+                    )
+                }
+                else -> fail("unknown fn ${c["fn"]}")
+            }
+            val want = c["expect"]
+            val gotJson = ForkV2Json.parse(ForkV2Json.write(got)) // ints and doubles alike
+            if (!same(want, gotJson)) diffs.add("${c["name"]}:\n  got  ${ForkV2Json.write(got)}\n  want ${ForkV2Json.write(want)}")
+        }
+        assertTrue(diffs.isEmpty(), "${diffs.size} of ${cases.size} differ:\n" + diffs.joinToString("\n"))
+    }
+
+    /** editor_cases.mjs counted: a volume deck's points, an EQ or effect deck's curves. */
+    private fun count(v: Any?): Int = when (v) {
+        is List<*> -> v.size
+        is Map<*, *> -> v.size
+        else -> 0
+    }
+
+    @Test
+    fun aDrawingSurvivesItsJsonAndPlaysInThePlanner() {
+        val text = """{"v":1,"preset":"custom","lanes":{"volume":{"unit":"beat","out":[[0,1],[8,1],[8,0],[8.5,0],[8.5,1],[16,0]],"in":[[0,0],[16,1]]},"eq":"centerBassSwap","effect":{"unit":"beat","out":{"hp":[[0,20],[16,1000]]},"in":{}}},"bars":4}"""
+        val o = ForkV2MixOverride.fromJson(json(text))!!
+        assertEquals(text, ForkV2Json.write(o.toJson()))
+        assertEquals(ForkV2MixOverride.DRAW, o.volume)
+        assertNotNull(o.drawing("volume"))
+        // a copy keeps its drawings; Smooth picked afterwards drops them
+        assertEquals(text, ForkV2Json.write(o.copy().toJson()))
+        val smooth = ForkV2EditorGeometry.edited(o, true) { preset = "smooth" }!!
+        assertTrue(smooth.drawings.isEmpty())
+        assertFalse("lanes" in smooth.toJson())
+        // the planner: 4 bars at 120 BPM, the gate at beat 8 = 4 s
+        val p = plan(v3(), ForkV2PlannerTest.song("a", 120.0, 200.0, 0.9), ForkV2PlannerTest.song("b", 120.0, 180.0, 0.9), o)
+        assertEquals("custom", p.preset)
+        val g = p.curves!!.out["gain"]!!
+        assertEquals(4.0, g[1][0], 1e-6)
+        assertEquals(4.008, g[2][0], 1e-6)
+        assertEquals(0.0, g[2][1], 1e-9)
+        assertNotNull(p.curves!!.out["bassDb"], "the named EQ lane stays")
+        assertNotNull(p.curves!!.out["highpassHz"])
+        assertNull(p.curves!!.out["lowpassHz"])
     }
 
     // ── override.schema.json ──
@@ -144,9 +248,29 @@ class ForkV2EditorCasesTest {
         assertEquals(enumOf(props["bars"]).map { (it as Number).toInt() }, ForkV2MixOverride.BARS.toList())
         assertEquals(enumOf(props["family"]), listOf("blend", "filter"))
         val lanes = (props["lanes"] as Map<String, Any?>)["properties"] as Map<String, Any?>
-        assertEquals(enumOf(lanes["volume"]), ForkV2MixOverride.VOLUMES.toList())
-        assertEquals(enumOf(lanes["eq"]), ForkV2MixOverride.EQS.toList())
-        assertEquals(enumOf(lanes["effect"]), ForkV2MixOverride.EFFECTS.toList())
+        // each lane oneOf: a shape name, or a drawing {unit, out, in} (editor.md §10)
+        fun oneOf(m: Any?): List<Map<String, Any?>> = ((m as Map<String, Any?>)["oneOf"] as List<Any?>).map { it as Map<String, Any?> }
+        val defs = schema["\$defs"] as Map<String, Any?>
+        for ((lane, names) in listOf("volume" to ForkV2MixOverride.VOLUMES, "eq" to ForkV2MixOverride.EQS, "effect" to ForkV2MixOverride.EFFECTS)) {
+            val alts = oneOf(lanes[lane])
+            assertEquals(2, alts.size, lane)
+            assertEquals(enumOf(alts[0]), names.toList())
+            assertEquals(listOf("unit", "out", "in"), alts[1]["required"], lane)
+            assertFalse(ForkV2MixOverride.DRAW in enumOf(alts[0]), "Draw is never saved as a name")
+        }
+        assertEquals(listOf("beat", "sec"), enumOf(defs["unit"]))
+        assertEquals(ForkV2Drawing.MAX_POINTS, ((defs["points"] as Map<String, Any?>)["maxItems"] as Number).toInt())
+        // the stored deck names and ranges are the schema's
+        fun props(def: String): Map<String, Any?> = (defs[def] as Map<String, Any?>)["properties"] as Map<String, Any?>
+        assertEquals(listOf("bass", "mid", "high"), props("eqDeck").keys.toList())
+        assertEquals(listOf("lp", "hp", "noise"), props("effectDeck").keys.toList())
+        assertEquals(listOf("echo", "reverb", "delay"), props("fxDeck").keys.toList())
+        for ((def, key) in listOf("gainCurve" to "gain", "dbCurve" to "bassDb", "hzCurve" to "lowpassHz")) {
+            val range = (((defs[def] as Map<String, Any?>)["items"] as Map<String, Any?>)["prefixItems"] as List<Any?>)[1] as Map<String, Any?>
+            val c = ForkV2Drawing.CURVES[key]!!
+            assertEquals(c.lo, (range["minimum"] as Number).toDouble(), def)
+            assertEquals(c.hi, (range["maximum"] as Number).toDouble(), def)
+        }
         assertEquals(ForkV2OverrideStore.ENGINE, enumOf(props["engine"]).map { (it as Number).toInt() }.last(), "Automix v2 is the extension's 3")
 
         // everything the port writes is a schema field, with a position's own fields
@@ -314,9 +438,10 @@ class ForkV2EditorCasesTest {
     }
 
     @Test
-    fun slamDefaultsToTwoBarsWithItsCutOnTheCentre() {
+    fun slamPlaysThePairsOwnLengthWithItsCutOnTheCentre() {
+        // editor.md §2 (2026-11-25): no preset sets a length, Slam's 2 bars included
         val p = plan(v3(), ForkV2PlannerTest.song("a", 120.0, 200.0, 0.9), ForkV2PlannerTest.song("b", 120.0, 180.0, 0.9), ov("""{"preset":"slam"}"""))
-        assertEquals(2, p.bars)
+        assertEquals(plan(v3(), ForkV2PlannerTest.song("a", 120.0, 200.0, 0.9), ForkV2PlannerTest.song("b", 120.0, 180.0, 0.9), null).bars, p.bars)
         val g = p.curves!!.out["gain"]!!
         assertEquals(p.durationSec / 2, g[1][0], 1e-6)
         assertEquals(p.durationSec / 2 + ForkV2MixOverride.CUT_RAMP_SEC, g[2][0], 1e-6)

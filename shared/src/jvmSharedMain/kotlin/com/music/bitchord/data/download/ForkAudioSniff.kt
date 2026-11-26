@@ -60,8 +60,8 @@ object ForkAudioSniff {
         // Read byte for byte, so a UTF-8 byte-order mark arrives as its three Latin-1 characters
         // rather than as one.
         val text = String(head, Charsets.ISO_8859_1).removePrefix("ï»¿").trimStart()
-        if ("mpegurl" in type || text.startsWith("#EXTM3U")) return Probe.Manifest(dash = false)
-        if ("dash+xml" in type || "<MPD" in text) return Probe.Manifest(dash = true)
+        if ("mpegurl" in type || text.startsWith("#EXTM3U", ignoreCase = true)) return Probe.Manifest(dash = false)
+        if ("dash+xml" in type || "<mpd" in text.lowercase()) return Probe.Manifest(dash = true) // any case, after a comment too
         return containerOf(head, statedCodec)?.let { Probe.File(it, totalBytes) }
     }
 

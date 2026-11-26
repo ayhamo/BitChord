@@ -2,16 +2,11 @@ package com.music.bitchord.fork
 
 import android.content.Context
 import android.widget.Toast
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Whatshot
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.media3.common.Player
 import com.music.bitchord.data.canvas.ForkMostReplayed
 import com.music.bitchord.data.listentogether.ListenTogether
-import com.music.bitchord.ui.components.ActionRow
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -19,8 +14,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Fork: the phone's "Jump to the most replayed part" ([ForkMostReplayed]), a row in the player's
- * menu ([ForkMostReplayedMenuRow], drawn by `ForkPlayerMenuRows`).
+ * Fork: the phone's seeks for the best part: "Play from the best part" ([playFromBestPart]) and
+ * "Your best part"'s Now and Listen from here. (Its "Jump to the most replayed part" went with the
+ * switch to v1.10's Best Part pill, which shows the same spot; the name stayed.)
  *
  * The seek goes through the UI's MediaController ([Attach], from `MainActivity` beside
  * `MusicVideoEngine.attach`), as the scrubber's does: the session's forwarding player then applies
@@ -28,7 +24,7 @@ import kotlinx.coroutines.withContext
  * when one plays). The service's active ExoPlayer would skip all of that.
  *
  * The lookup runs on a scope of its own rather than the menu's: the menu closes on the tap, and the
- * jump still has to land once the curve comes back. It lands only if the same song still plays.
+ * seek still has to land once the part is found.
  */
 object ForkMostReplayedPhone {
 
@@ -36,7 +32,7 @@ object ForkMostReplayedPhone {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
-    /** Keeps the screen's MediaController for [jump] while it is the one in use. */
+    /** Keeps the screen's MediaController while it is the one in use. */
     @Composable
     fun Attach(controller: Player?) {
         DisposableEffect(controller) {
@@ -57,24 +53,6 @@ object ForkMostReplayedPhone {
         }
     }
 
-    /** Looks [songId]'s curve up and seeks to its most replayed part, saying what happened in a toast. */
-    fun jump(context: Context, songId: String) {
-        val app = context.applicationContext
-        scope.launch {
-            val outcome = withContext(Dispatchers.IO) { ForkMostReplayed.find(songId) }
-            val c = controller
-            if (outcome is ForkMostReplayed.Outcome.Jump) {
-                if (c == null || c.currentMediaItem?.mediaId != songId) return@launch // the song changed meanwhile
-                if (ListenTogether.state.value.controlsLocked) {
-                    Toast.makeText(app, "Only the host can seek in this party", Toast.LENGTH_SHORT).show()
-                    return@launch
-                }
-                c.seekTo(outcome.ms)
-            }
-            Toast.makeText(app, ForkMostReplayed.message(outcome), Toast.LENGTH_SHORT).show()
-        }
-    }
-
     /** Where [songId] is now, while it is the controller's current song; null otherwise. */
     fun positionOf(songId: String): Long? {
         val c = controller ?: return null
@@ -89,19 +67,22 @@ object ForkMostReplayedPhone {
      */
     fun playFromBestPart(context: Context, songId: String, durationMs: Long, playNext: () -> Unit) {
         val app = context.applicationContext
-        scope.launch {
+        // A second tap (another song, or the same again) replaces the first: two lookups both
+        // queuing and seeking raced each other. On the main thread, so no lock is needed here.
+        pending?.cancel()
+        pending = scope.launch {
             // canvas.md §14 rule 6: 5 s to find it; without one, the song from the start, saying so.
-            val found = kotlinx.coroutines.withTimeoutOrNull(com.music.bitchord.data.canvas.ForkBestParts.FIND_MS) {
-                withContext(Dispatchers.IO) { runCatching { ForkMostReplayed.bestPart(songId, durationMs) }.getOrNull() }
-            }
-            if (found == null) Toast.makeText(app, com.music.bitchord.data.canvas.ForkBestParts.FROM_START, Toast.LENGTH_SHORT).show()
-            if (ListenTogether.state.value.controlsLocked) {
-                Toast.makeText(app, "Only the host can seek in this party", Toast.LENGTH_SHORT).show()
+            val ms = ForkMostReplayed.startForPlay(
+                locked = { ListenTogether.state.value.controlsLocked },
+                lockedText = "Only the host can seek in this party",
+                say = { Toast.makeText(app, it, Toast.LENGTH_SHORT).show() },
+            ) { withContext(Dispatchers.IO) { runCatching { ForkMostReplayed.bestPart(songId, durationMs) }.getOrNull() } } ?: return@launch
+            val c = controller ?: return@launch
+            if (c.currentMediaItem?.mediaId == songId) {
+                c.seekTo(ms)
+                if (!c.isPlaying) c.play()
                 return@launch
             }
-            val c = controller ?: return@launch
-            if (c.currentMediaItem?.mediaId == songId) { found?.let(c::seekTo); return@launch }
-            val ms = found ?: 0L
             playNext()
             // The queue is changed by the service; wait (up to 5 s) for the song to be next.
             repeat(25) {
@@ -116,20 +97,7 @@ object ForkMostReplayedPhone {
             }
         }
     }
+
+    private var pending: kotlinx.coroutines.Job? = null
 }
 
-/** The menu row: only for a YouTube song, closing the menu ([onDone]) as the lookup starts. */
-@Composable
-internal fun ForkMostReplayedMenuRow(song: com.music.bitchord.data.model.Song, accent: Color, onDone: () -> Unit) {
-    if (!ForkMostReplayed.eligible(song.videoId)) return
-    val context = LocalContext.current
-    ActionRow(
-        icon = Icons.Rounded.Whatshot,
-        label = ForkMostReplayed.MENU_TITLE,
-        value = null,
-        accent = accent,
-    ) {
-        onDone()
-        ForkMostReplayedPhone.jump(context, song.videoId)
-    }
-}

@@ -57,6 +57,20 @@ internal object ForkClipCache {
 
     fun isClip(path: Path): Boolean = path.fileName.toString().endsWith(".mp4")
 
+    /**
+     * A clip [ForkClipSource] is still fetching (its `<clip>.part`, renamed into place when complete). Not a `.mp4`, so
+     * the song cache's trim counted it as one of its own files and could delete it mid-write when another clip finished
+     * (Windows lets Java delete an open file), failing that fetch. One untouched for [PART_STALE_MS] is a crash's
+     * leftover and evictable.
+     */
+    fun writing(path: Path, nowMs: Long = System.currentTimeMillis()): Boolean {
+        if (!path.fileName.toString().endsWith(".part")) return false
+        val modified = runCatching { Files.getLastModifiedTime(path).toMillis() }.getOrDefault(nowMs)
+        return nowMs - modified < PART_STALE_MS
+    }
+
+    private const val PART_STALE_MS = 60 * 60_000L
+
     /** Evicting is disk work, and this is called from a Settings row on the main thread. */
     fun applyLimit() {
         scope.launch {

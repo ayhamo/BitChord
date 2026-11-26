@@ -8,8 +8,10 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.sources.ForkAddonRefusals
 import com.music.bitchord.data.sources.ForkWindowFit
 import com.music.bitchord.data.sources.SourceStream
+import com.music.bitchord.fork.ForkNextRowPhone
 import com.music.bitchord.playback.smart.AudioDecoder
 import com.music.bitchord.playback.smart.AutomixAnalysisSource
 import kotlinx.coroutines.Dispatchers
@@ -28,7 +30,8 @@ import java.io.IOException
  * what the audition cached, is fitted ([ForkWindowFit]) against YouTube's Opus of the song, which
  * the player has been caching as it plays. No match: no swap, the song stays on what plays. A
  * match: the swap lands at the position plus the offset ([swapAtMs]), and the cover lines the copies
- * up by it ([landShiftMs]).
+ * up by it ([landShiftMs]). A copy refused (no match, or its window doesn't decode) is passed over for
+ * the song and the next row or source is asked ([ForkNextRowPhone], protocol.md 8.1.4).
  *
  * Both sides go through [AudioDecoder] (the platform MediaCodec, which the player's renderers use
  * too), so a decoder delay is treated alike on both. The copy's bytes are read through the cache
@@ -71,14 +74,25 @@ internal object ForkWindowCheckPhone {
             TrackLog.d("BitChord", "window check: no YouTube audio of the song on disk to check against; staying", about = mediaId)
             return false
         }
-        val window = withContext(Dispatchers.IO) { copySide(Uri.parse(upgradedUri), p) }
+        val reader = AudioCache.forkReadAhead()
+        if (reader == null) {
+            // the cache isn't up, not the copy's fault: no refusal is booked
+            TrackLog.d("BitChord", "window check: no cache reader to read the copy with; staying", about = mediaId)
+            return false
+        }
+        // read once more before it counts: a refusal passes the row over for the song (ForkAddonRefusals.copyWindow)
+        val window = withContext(Dispatchers.IO) { ForkAddonRefusals.copyWindow { copySide(reader, Uri.parse(upgradedUri), p) } }
         if (window == null) {
             TrackLog.d("BitChord", "window check: the copy's window did not decode; staying", about = mediaId)
+            ForkNextRowPhone.refused(mediaId, playingUri, stream.url, "its window did not decode")
             return false
         }
         val fit = withContext(Dispatchers.Default) { ForkWindowFit.fitWindow(yt, window, p - from) }
         TrackLog.d("BitChord", "window check at ${"%.1f".format(java.util.Locale.ROOT, p)}s: ${fit.describe()}", about = mediaId)
-        if (!fit.match) return false
+        if (!fit.match) {
+            ForkNextRowPhone.refused(mediaId, playingUri, stream.url, "no match")
+            return false
+        }
         synchronized(offsets) { offsets[upgradedUri] = fit.offsetMs!! }
         return true
     }
@@ -109,8 +123,7 @@ internal object ForkWindowCheckPhone {
     }
 
     /** The copy's 12 s from [fromSec]; cached bytes from disk, any the extractor probes besides from the network. */
-    private fun copySide(uri: Uri, fromSec: Double): FloatArray? {
-        val source = AudioCache.forkReadAhead() ?: return null
+    private fun copySide(source: DataSource, uri: Uri, fromSec: Double): FloatArray? {
         val decoded = DataSourceReader(source, uri).use {
             AudioDecoder.decodeRegion(it, fromSec, fromSec + ForkWindowFit.WINDOW_SEC)
         } ?: return null

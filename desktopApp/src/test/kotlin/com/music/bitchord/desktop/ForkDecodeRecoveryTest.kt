@@ -79,6 +79,29 @@ class ForkDecodeRecoveryTest {
         reader.close()
     }
 
+    /** A hold (no reads at all: a pause, a loop mix holding the deck) is not a stall; the stall watchdog reopened the deck after one. */
+    @Test
+    fun aHoldWithNoReadsIsNotCountedAsAStall() {
+        val source = Source(blocks = 100).apply { stall = CountDownLatch(1) }
+        val reader = ahead(source)
+        var now = 1_000_000_000L
+        reader.forkNow = { now }
+        val ms = 1_000_000L
+        assertNull(reader.readSamples(0))
+        now += 500 * ms
+        assertNull(reader.readSamples(0))
+        assertEquals(500L, reader.forkUnderrunMs, "reads every poll: an underrun")
+        now += 60_000 * ms // held a minute, nobody reading
+        assertEquals(0L, reader.forkUnderrunMs, "a hold is not a stall")
+        assertNull(reader.readSamples(0))
+        assertEquals(0L, reader.forkUnderrunMs, "the first read after the hold starts the timing again")
+        now += 400 * ms
+        assertNull(reader.readSamples(0))
+        assertEquals(400L, reader.forkUnderrunMs)
+        source.stall?.countDown()
+        reader.close()
+    }
+
     @Test
     fun aDeckNeverReopenedIsNotForgivenSoTheTriesRunOut() {
         // nanoTime is far past a minute after 0: the old rule handed a never-reopened deck its tries
