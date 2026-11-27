@@ -636,6 +636,7 @@ class AddonClient(rawBaseUrl: String, private val pickedQuality: String? = null)
             Http.client.newBuilder()
                 .readTimeout(60, TimeUnit.SECONDS)
                 .callTimeout(45, TimeUnit.SECONDS)
+                .addNetworkInterceptor(com.music.bitchord.fork.ForkManifestPlay.redirectGuard) // fork: each redirect hop judged before it is followed (protocol.md §1 Redirects, 2026-11-27)
                 .build()
         }
     }

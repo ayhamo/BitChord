@@ -198,6 +198,26 @@ class ForkAddonStreamAssembleTest {
     }
 
     @Test
+    fun `a malformed manifest is refused before anything is fetched`() {
+        // protocol.md 8.1.5 (2026-11-27): empty, backwards, oversized or overflowing ranges, wide templates, huge repeats
+        val hls = { range: String -> ForkAddonStreamAssemble.hlsPlan("#EXTM3U\n#EXT-X-BYTERANGE:$range\n#EXTINF:4,\n1.aac\n#EXT-X-ENDLIST", "https://c.example/m.m3u8") }
+        assertEquals("an empty or backwards byte range", refusal { hls("0@0") })
+        assertEquals("an empty or backwards byte range", refusal { hls("-5@10") })
+        assertEquals("a byte range past the end", refusal { hls("100@${Long.MAX_VALUE - 10}") })
+        assertTrue("MB" in refusal { hls("${ForkAddonStreamAssemble.MAX_RANGE_BYTES + 1}@0") })
+        assertEquals("a byte range it can't read", refusal { hls("x@0") })
+        assertEquals(0L..99L, hls("100@0").media[0].range)
+        val list = { r: String -> ForkAddonStreamAssemble.dashPlan(mpd("<Period><AdaptationSet mimeType=\"audio/mp4\"><Representation id=\"a\" bandwidth=\"1\"><BaseURL>https://c.example/a.m4a</BaseURL><SegmentList><SegmentURL mediaRange=\"$r\"/></SegmentList></Representation></AdaptationSet></Period>"), "https://c.example/m.mpd") }
+        assertEquals("an empty or backwards byte range", refusal { list("100-50") })
+        assertEquals(50L..100L, list("50-100").media[0].range)
+        val template = { t: String, s: String -> ForkAddonStreamAssemble.dashPlan(mpd("<Period><AdaptationSet mimeType=\"audio/mp4\"><Representation id=\"a\" bandwidth=\"1\"><SegmentTemplate timescale=\"1\" media=\"$t\"><SegmentTimeline>$s</SegmentTimeline></SegmentTemplate></Representation></AdaptationSet></Period>"), "https://c.example/m.mpd") }
+        assertEquals("a template width over 32", refusal { template("s-\$Number%033d\$.m4s", "<S d=\"1\"/>") })
+        assertEquals("a template width over 32", refusal { template("s-\$Number%02000000000d\$.m4s", "<S d=\"1\"/>") })
+        assertEquals("too many segments", refusal { template("s-\$Number\$.m4s", "<S d=\"1\" r=\"4000000000\"/>") })
+        assertEquals(3, template("s-\$Number%032d\$.m4s", "<S d=\"1\" r=\"2\"/>").media.size)
+    }
+
+    @Test
     fun `a live, encrypted, multi-Period or Dolby-only DASH manifest is refused`() {
         val audio = "<AdaptationSet mimeType=\"audio/mp4\"><Representation id=\"a\" bandwidth=\"1\"><BaseURL>https://c.example/a.m4a</BaseURL></Representation></AdaptationSet>"
         assertEquals("live", refusal { ForkAddonStreamAssemble.dashPlan(mpd("<Period>$audio</Period>", "type=\"dynamic\""), "https://c.example/m.mpd") })

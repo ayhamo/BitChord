@@ -263,10 +263,9 @@ object ForkMixFiles {
         }
         val entries = pairs.mapNotNull { (k, ids) ->
             val (a, b) = ids
-            val ov = all[k]?.copy() ?: return@mapNotNull null
-            // the tempo the beats count on (rule 8): as saved, else this app's for A
-            if (!(ov.gridBpm > 0)) bpmOf(a)?.let { ov.gridBpm = it }
-            ForkV2MixFile.Mix(songOf(a), songOf(b), ov)
+            val saved = all[k] ?: return@mapNotNull null
+            // the tempo the beats count on (rule 8): as saved, else this app's for A; the beat match as it plays (rule 6)
+            ForkV2MixFile.Mix(songOf(a), songOf(b), ForkV2MixFile.forExport(saved, if (saved.gridBpm > 0) null else bpmOf(a)))
         }
         val n = ForkV2MixFile.writable(entries)
         if (n == 0) {

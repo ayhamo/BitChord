@@ -236,6 +236,9 @@ class ForkV2Mix {
 
         internal const val EP = 65
 
+        /** B's rise at a late entry (ForkMixShelf.LATE_RISE_SEC, crossfade.js LATE_RAMP), for djShape's trim. */
+        internal const val LATE_RISE_SEC = 0.01
+
         internal fun ep(isIn: Boolean): FloatArray {
             val c = FloatArray(EP)
             for (i in 0 until EP) {
@@ -256,7 +259,7 @@ class ForkV2Mix {
         /** A plan's shape over [n] points: Automix v2's ladder shapes (drop-in, muffle) or djShape at its bass swap. */
         internal fun djShape(m: ForkV2Planner.Plan, D: Double, n: Int): Array<FloatArray> {
             if ("blend" == m.style && ("dropin" == m.shape || "muffle" == m.shape || "echo" == m.shape)) return ladderShape(m, D, n)
-            return djShape(m.style, m.clash, D, m.bpm, m.swapAt, n)
+            return djShape(m.style, m.clash, D, m.bpm, m.swapAt, n, if (m.inDelaySec > 0 && D > 0) m.inDelaySec else 0.0)
         }
 
         internal fun djShape(m: ForkV2Planner.Plan, D: Double): Array<FloatArray> =
@@ -322,8 +325,12 @@ class ForkV2Mix {
         }
 
         /** djShape with the bass swap at [swapAtIn] (0..1; else on the bar nearest the middle). */
-        internal fun djShape(style: String, clashIn: Double, D: Double, bpm: Double, swapAtIn: Double, n: Int): Array<FloatArray> {
+        internal fun djShape(style: String, clashIn: Double, D: Double, bpm: Double, swapAtIn: Double, n: Int, lateSec: Double = 0.0): Array<FloatArray> {
             val clash = clamp(clashIn, 0.0, 1.0)
+            // The equal-power trim is worked out from B's heard rise (mix-file.md rule 2, "A while B is held", extension
+            // 43578ed): with a late entry ([lateSec], the plan's inDelaySec) B is silent until then and reaches its curve in
+            // 10 ms, so A isn't trimmed while it plays alone and its trim follows B in; the curves' shapes are unchanged
+            val heard = { p: Double -> if (!(lateSec > 0)) 1.0 else clamp((p * D - lateSec) / LATE_RISE_SEC, 0.0, 1.0) }
             val beat = if (bpm > 0) 60 / bpm else 0.0
             val grid = if (beat > 0) D / beat else 0.0
             val onBar = { f: Double -> if (grid >= 8) clamp(jround((f * grid) / 4) * 4 / grid, 4 / grid, 1 - 4 / grid) else f }
@@ -366,7 +373,8 @@ class ForkV2Mix {
                 }
                 r += (sin(p.pow(1.65) * S) - r) * clash
                 f += (cos(p.pow(0.65) * S) - f) * clash
-                val trim = if (r + f <= 1) 1.0 else max(0.5, 1 / kotlin.math.sqrt(r + f))
+                val rh = r * heard(p)
+                val trim = if (rh + f <= 1) 1.0 else max(0.5, 1 / kotlin.math.sqrt(rh + f))
                 gIn[i] = (r * trim).toFloat()
                 gOut[i] = (f * trim).toFloat()
             }

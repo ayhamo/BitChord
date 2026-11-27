@@ -52,6 +52,19 @@ class ForkSongSpeedTest {
         assertEquals(0.96, inn.last()[1], 0.0)
     }
 
+    /** A blend at x1 with B at a speed of its own: B glides back to its speed after the blend (extension 0ab9b80 L2). */
+    @Test
+    fun aBlendAtX1GlidesBackToBsOwnSpeed() {
+        val p = ForkV2Planner.Plan()
+        p.style = "blend"
+        p.durationSec = 8.0
+        p.speedIn = 0.97
+        p.rate = 1.0
+        val inn = ForkV2Curves.blend(p).`in`["rate"]!!.map { it.toList() }
+        val sec = kotlin.math.ceil(kotlin.math.abs(1.0 - 0.97) / ForkV2Mix.GLIDE_STEP) * ForkV2Mix.GLIDE_STEP_SEC
+        assertEquals(listOf(listOf(0.0, 1.0), listOf(8.0, 1.0), listOf(8.0 + sec, 0.97)), inn)
+    }
+
     /** A crossfade at playlist speeds: its curves show A at speedOut and B at speedIn throughout (automix.js blendCurves). */
     @Test
     fun aCrossfadesCurvesCarryBothSpeeds() {

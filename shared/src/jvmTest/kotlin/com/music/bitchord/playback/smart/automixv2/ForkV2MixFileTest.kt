@@ -133,6 +133,29 @@ class ForkV2MixFileTest {
     }
 
     @Test
+    fun anExportWritesTheBeatMatchAsItPlaysAndComesBackAsSaved() {
+        // mix-file.md rules 5, 6 (extension cb897a0, d9e6f90): an own Auto mix is written "auto", so it doesn't come back as Sync
+        val own = ForkV2MixOverride.fromJson(ov("""{"preset":"smooth","bars":8}"""))!!
+        val out = ForkV2MixFile.forExport(own, 120.0)
+        assertEquals("auto", out.beatMatch)
+        assertEquals(120.0, out.gridBpm)
+        val back = ForkV2MixFile.read(ForkV2MixFile.write(listOf(mixOf("aaaaaaaaaaa", "bbbbbbbbbbb", out)))).mixes[0].override
+        assertEquals("auto", back.beatMatchOf())
+        // re-imported over the saved mix: already saved as it is
+        val plan = ForkV2MixFile.importPlan(listOf(mixOf("aaaaaaaaaaa", "bbbbbbbbbbb", back))) { own }
+        assertEquals(listOf("aaaaaaaaaaa>bbbbbbbbbbb"), plan.same.map { it.key })
+        // an imported mix with none is written as Sync; a picked one stays; a loop gets none; no tempo: nothing added
+        val imported = own.copy().also { it.gridBpm = 100.0 }
+        assertEquals("sync", ForkV2MixFile.forExport(imported, null).beatMatch)
+        assertEquals("glide", ForkV2MixFile.forExport(own.copy().also { it.beatMatch = "glide" }, 120.0).beatMatch)
+        assertNull(ForkV2MixFile.forExport(ForkV2MixOverride.fromJson(ov("""{"preset":"loop"}"""))!!, 120.0).beatMatch)
+        assertNull(ForkV2MixFile.forExport(own, null).beatMatch)
+        // a change is named as it plays: the saved own Auto against an imported mix with none
+        assertEquals(listOf("beat match: auto → sync"), ForkV2MixFile.mixChanges(own, imported))
+        assertEquals(emptyList(), ForkV2MixFile.mixChanges(imported, ForkV2MixFile.forExport(imported, null)))
+    }
+
+    @Test
     fun beatsFoldOntoHalfOrDoubleTime() {
         val o = ForkV2MixFile.read(mixFixture(specDir(), "cinderella-drowning").readText()).mixes[0].override.copy()
         assertEquals("no gridBpm: its beats are taken as they are", ForkV2MixFile.foldNote(o.copy().also { it.gridBpm = 0.0 }, 65.0))

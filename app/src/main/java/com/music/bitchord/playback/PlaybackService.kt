@@ -5598,6 +5598,7 @@ class PlaybackService : MediaLibraryService() {
         // Parked before the audition rather than at the swap: the silent player
         // reaches its bytes through the same resolving data source the real one
         // does, and that is where a marked URI is turned back into a stream.
+        val forkPlayingCopy = QualityUpgrade.forcedStream(Uri.parse(at.uri)) // fork: an upgrade that plays now; parked under the same id, which [force] overwrites
         QualityUpgrade.force(mediaId, stream)
         val warmedThrough = auditionUpgrade(mediaId, at, upgradedUri, stream, alreadyFilled)
             // The audition takes seconds, long enough for the ceiling to drop
@@ -5613,6 +5614,7 @@ class PlaybackService : MediaLibraryService() {
             // [QualityUpgrade.forcedStream] serving a URL that has just failed
             // to prove itself.
             QualityUpgrade.forget(mediaId)
+            forkPlayingCopy?.let { QualityUpgrade.force(mediaId, it) } // fork: the playing copy is given back, so its reopen (a seek, a resume) still finds its stream (extension 0ab9b80 M3)
             withContext(Dispatchers.IO) { AudioCache.discardRendition(Uri.parse(upgradedUri)) }
             if (withContext(Dispatchers.Main) { swapPointFor(mediaId) } != null) withContext(Dispatchers.IO) { com.music.bitchord.fork.ForkNextRowPhone.next(mediaId, at.uri, stream) }?.let { swapIn(mediaId, it) } // fork: a copy the window check refused passes to the next row or source, up to 4 (rulebook 8.1.4); not for a song no longer playing (the audition took seconds)
             return
@@ -5684,9 +5686,15 @@ class PlaybackService : MediaLibraryService() {
             }
         }
 
+        ForkUpgradeSettle.await(mediaId) { withContext(Dispatchers.Main) { player?.playbackState } } // fork: not over a seek or a stall (phone audit 2026-11-27 P1-4)
         val forkCover = forkUpgradeCover.raise(mediaId) // fork: the standby takes over the old copy before the cut (ForkUpgradeCover)
         withContext(Dispatchers.Main) {
             val now = swapPointFor(mediaId)
+            if (ForkUpgradeSettle.moving(player?.playbackState)) { // fork: the same, asked again where the swap is made
+                QualityUpgrade.shelve(mediaId, stream)
+                TrackLog.d("BitChord", "upgrade for $mediaId shelved: the player was seeking or buffering")
+                return@withContext
+            }
             if (crossfade?.isTransitioning() == true) {
                 // Caught right before the swap that would have broken it —
                 // everything spent proving this stream is still worth keeping

@@ -147,13 +147,21 @@ class ForkV2MixOverride {
 
     fun beatMatchOrAuto(): String = beatMatch ?: "auto"
 
+    /**
+     * The beat match the planner plays (mix-file.md rule 6 "An imported mix beat-matches as Sync", ruled 2026-11-26 [all]):
+     * the mix's own; else Sync for a mix from a file, which [gridBpm] marks (the editor never sets it); else Auto. A loop
+     * mix is always Auto. Applied at play time, so a mix imported before needs no re-import; a listener's Auto on such a
+     * mix is kept as "auto" and gives Automix's limits back.
+     */
+    fun beatMatchOf(): String = if (loop()) "auto" else beatMatch ?: if (gridBpm > 0) "sync" else "auto"
+
     /** The loop mix asked for. */
     fun loop(): Boolean = "loop" == preset
 
     /** The user's own choice beyond Auto: the planner's style gates warn instead of refusing (editor.md §6). */
     fun forced(): Boolean =
         (preset != null && preset != "auto" && preset != "loop") ||
-            "sync" == beatMatch || "glide" == beatMatch || out != null || `in` != null
+            "sync" == beatMatchOf() || "glide" == beatMatchOf() || out != null || `in` != null
 
     /** The length the window asks for in bars (a preset's own default when Auto), 0: Auto. */
     fun pinnedBars(): Int {
@@ -390,6 +398,8 @@ class ForkV2MixOverride {
             }
             // a Loop stores no beat match either (editor.md §1, spec 4d14863: "preset: loop stores no bars, window or beatMatch")
             if (!n.loop() && ("sync" == o.beatMatch || "glide" == o.beatMatch || "off" == o.beatMatch)) n.beatMatch = o.beatMatch
+            // an Auto picked on a mix from a file is kept, or it would play as Sync again (mix-file.md rule 6)
+            if (!n.loop() && "auto" == o.beatMatch && o.gridBpm in 20.0..400.0) n.beatMatch = "auto"
             // each song's speed in the playlist it came from (editor.md §1, spotify-mixes.md rule 10)
             n.speedOut = speedOf(o.speedOut)
             n.speedIn = speedOf(o.speedIn)

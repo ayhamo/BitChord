@@ -425,6 +425,20 @@ object ForkV2Planner {
                 p.outRate = s.speedOut
             }
         }
+        // B's late entry (mix-file.md rule 2): B stays silent that long into the mix, then starts at its mix-in; the curves
+        // stay where they are. Only a plain blend or crossfade plays it (automix.js plan, 0a9559a). Set before the curves:
+        // djShape trims A's dip by it (extension 0ab9b80 M1); its warnings go last, after the pick's
+        val lateNotes = ArrayList<String>()
+        val late = if (ov != null && !ov.loop()) ov.`in`?.delaySec ?: 0.0 else 0.0
+        if (late > 0) {
+            if (p.fallback || p.handoff || p.bridge || p.shape != null || p.glide != null || (p.style != "blend" && p.style != "crossfade")) {
+                lateNotes += "B's late start (${js(late)} s) isn't played in this kind of mix: B starts with it"
+            } else {
+                val most = max(0.0, p.durationSec - 0.5)
+                if (late > most + 1e-6) lateNotes += "B's late start of ${js(late)} s is past the mix's end: ${forkV2Format("%.1f", most)} s"
+                p.inDelaySec = jround(min(late, most) * 1e3) / 1e3
+            }
+        }
         p.curves = ForkV2Curves.blend(p)
         // A length picked is kept whatever the move (editor.md §6, ruled 2026-11-26 [all]); only a song with no tempo
         // can't take it (automix.js plan). Before, a hand-over, a bridge, a crossfade or a drop-in's two bars said
@@ -436,7 +450,7 @@ object ForkV2Planner {
         if (ov != null && !ov.loop()) {
             if (warnings.isNotEmpty()) p.warnings = warnings
             if (ov.`in` != null) p.windowIn = true // placed by the user: the kick lock leaves it
-            if (p.style == "blend" && (ov.beatMatch == "sync" || ov.beatMatch == "glide")) p.pickedTempo = true
+            if (p.style == "blend" && (ov.beatMatchOf() == "sync" || ov.beatMatchOf() == "glide")) p.pickedTempo = true
             val both = from != null && to != null
             // a drawing's beats (editor.md §10 rule 4): the mix's beat of A, its glide steps; with no beat match, A's own beat
             val beatMatched = p.style != "crossfade" && p.barSec > 0
@@ -468,18 +482,7 @@ object ForkV2Planner {
                 p.outRate = s.speedOut // (the deck schedule's outgoing clock: A plays at it, whatever the style)
             }
         }
-        // B's late entry (mix-file.md rule 2): B stays silent that long into the mix, then starts at its mix-in; the curves
-        // stay where they are. Only a plain blend or crossfade plays it (automix.js plan, 0a9559a).
-        val late = if (ov != null && !ov.loop()) ov.`in`?.delaySec ?: 0.0 else 0.0
-        if (late > 0) {
-            if (p.fallback || p.handoff || p.bridge || p.shape != null || p.glide != null || (p.style != "blend" && p.style != "crossfade")) {
-                p.warnings = (p.warnings ?: emptyList()) + "B's late start (${js(late)} s) isn't played in this kind of mix: B starts with it"
-            } else {
-                val most = max(0.0, p.durationSec - 0.5)
-                if (late > most + 1e-6) p.warnings = (p.warnings ?: emptyList()) + "B's late start of ${js(late)} s is past the mix's end: ${forkV2Format("%.1f", most)} s"
-                p.inDelaySec = jround(min(late, most) * 1e3) / 1e3
-            }
-        }
+        if (lateNotes.isNotEmpty()) p.warnings = (p.warnings ?: emptyList()) + lateNotes
         return p
     }
 
@@ -582,7 +585,7 @@ object ForkV2Planner {
         sung.out = ForkV2Sung.forPlanner(sungIn?.out, cur)
         sung.`in` = ForkV2Sung.forPlanner(sungIn?.`in`, next)
         val forced = pick != null && pick.forced()
-        val bm = pick?.beatMatchOrAuto() ?: "auto"
+        val bm = pick?.beatMatchOf() ?: "auto" // an imported mix plays as Sync (mix-file.md rule 6)
         val family = pick?.family
 
         if (bm == "off" && both) {

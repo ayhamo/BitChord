@@ -73,6 +73,35 @@ class ForkV2LateEntryTest {
     }
 
     @Test
+    fun aIsNotTrimmedWhileBIsHeldAndThePlansCurvesShowIt() {
+        // mix-file.md rule 2 "A while B is held" (extension 43578ed), and the plan's curves carry it (0ab9b80 M1)
+        val n = 1601
+        val D = 16.0
+        val none = ForkV2Mix.djShape("blend", 0.0, D, 120.0, Double.NaN, n)
+        val held = ForkV2Mix.djShape("blend", 0.0, D, 120.0, Double.NaN, n, 4.0)
+        var louder = false
+        for (i in 0 until n) {
+            val t = i / (n - 1.0) * D
+            if (t < 4.0) {
+                assertTrue(held[1][i] >= none[1][i] - 1e-6, "A at $t s")
+                if (held[1][i] > none[1][i] + 1e-3) louder = true
+            } else if (t > 4.0 + ForkV2Mix.LATE_RISE_SEC + 1e-6) {
+                assertEquals(none[1][i], held[1][i], 1e-6f, "A at $t s")
+                assertEquals(none[0][i], held[0][i], 1e-6f, "B at $t s")
+            }
+        }
+        assertTrue(louder, "A was trimmed by B's curve while B was silent")
+        val auto = ov("""{"window":{"in":{"sec":0,"delaySec":4}}}""")
+        val p = plan(auto)
+        if (p.style == "blend" && p.v2 && p.inDelaySec > 0) {
+            val q = plan(ov("""{"window":{"in":{"sec":0}}}"""))
+            val a1 = p.curves!!.out["gain"]!!.first { it[0] >= 2.0 }[1]
+            val a0 = q.curves!!.out["gain"]!!.first { it[0] >= 2.0 }[1]
+            assertTrue(a1 >= a0, "the plan's curve for A at 2 s: $a1 vs $a0")
+        }
+    }
+
+    @Test
     fun theCurvesAreTheSameWithoutTheDelay() {
         val with = transition(plan(late(3.0)))
         val without = transition(plan(late(null)))

@@ -103,10 +103,20 @@ object ForkManifestCheck {
         }
         val body = first.text.trimStart('﻿', ' ', '\t', '\r', '\n')
         seen.allow(first.url)
-        val why = when {
-            body.startsWith("#EXTM3U") -> seen.hls(first.url, body, dolbyOk, fetch)
-            MPD.containsMatchIn(body.take(4096)) -> seen.dash(first.url, body, dolbyOk)
-            else -> UNREADABLE
+        // any error while reading it is a refusal (the next row is asked), never a failure that ends the song's rows
+        // (protocol.md 8.1.5, 2026-11-27; extension 0ab9b80 L4): a deep nest of XML can overflow the walk's stack
+        val why = try {
+            when {
+                body.startsWith("#EXTM3U") -> seen.hls(first.url, body, dolbyOk, fetch)
+                MPD.containsMatchIn(body.take(4096)) -> seen.dash(first.url, body, dolbyOk)
+                else -> UNREADABLE
+            }
+        } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            UNREADABLE
+        } catch (e: StackOverflowError) {
+            UNREADABLE
         }
         if (why == null) accepted(Accepted(url, seen.pick, seen.mpd, seen.hosts.toSet()))
         return why
@@ -189,6 +199,7 @@ object ForkManifestCheck {
         if (lines.none { it.startsWith("#EXT-X-ENDLIST") }) return LIVE
         val maps = lines.filter { it.startsWith("#EXT-X-MAP") }.map(::attrs)
         if (maps.distinct().size > 1) return INITS
+        if (maps.any { it["URI"].isNullOrBlank() }) return UNREADABLE // an init segment with no link (protocol.md 8.1.5, 2026-11-27)
         val segments = lines.filter { it.isNotEmpty() && !it.startsWith("#") }
         if (segments.isEmpty()) return UNREADABLE
         val links = maps.mapNotNull { it["URI"] } + segments

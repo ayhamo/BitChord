@@ -136,6 +136,20 @@ object ForkV2MixFile {
         return linkedMapOf("format" to FORMAT, "version" to VERSION, "mixes" to mixes)
     }
 
+    /**
+     * A saved mix as it goes into a file (mix-file.md rules 6, 8; extension cb897a0 exportOverride): with the tempo its
+     * beats count on ([gridBpm]: as saved, else [bpm], this app's for A) and its beat match as it plays (beatMatchOf). A
+     * file's mix carries gridBpm, so an own mix's Auto is written as "auto" (unwritten it would come back as Sync) and an
+     * imported one with none as "sync". A loop mix has no beat match.
+     */
+    fun forExport(o: ForkV2MixOverride, bpm: Double?): ForkV2MixOverride {
+        val ov = o.copy()
+        val bm = if (ov.loop()) null else ov.beatMatchOf()
+        if (!(ov.gridBpm > 0) && bpm != null && bpm > 0) ov.gridBpm = bpm
+        if (bm != null && ov.gridBpm > 0) ov.beatMatch = bm
+        return ov
+    }
+
     /** How many mixes [write] keeps of [entries]. */
     fun writable(entries: List<Mix>): Int = entries.count { song(it.from) != null && song(it.to) != null && mixOverride(it.override) != null }
 
@@ -191,7 +205,7 @@ object ForkV2MixFile {
             rows += Triple(if (k == "fx") "effects" else k, lane(a, k), lane(b, k))
         }
         rows += Triple("length", if (a.bars > 0) "${a.bars} bars" else "auto", if (b.bars > 0) "${b.bars} bars" else "auto")
-        rows += Triple("beat match", a.beatMatch ?: "auto", b.beatMatch ?: "auto")
+        rows += Triple("beat match", a.beatMatchOf(), b.beatMatchOf()) // as it plays (rule 5, 2026-11-27); a loop: auto
         rows += Triple("speed", speed(a), speed(b))
         rows += Triple("mix-out", pos(a.out) ?: "auto", pos(b.out) ?: "auto")
         rows += Triple("mix-in", pos(a.`in`) ?: "auto", pos(b.`in`) ?: "auto")
@@ -267,9 +281,12 @@ object ForkV2MixFile {
 
     private fun sameMix(a: ForkV2MixOverride?, b: ForkV2MixOverride?): Boolean = stable(a) == stable(b)
 
-    /** The override's saved JSON without gridBpm (a tempo is not an edit), for comparing. */
+    /**
+     * The override's saved JSON without gridBpm (a tempo is not an edit), for comparing; the beat match as it plays
+     * (beatMatchOf, rule 5, extension d9e6f90): an own export's beatMatch "auto" is the saved mix's unwritten Auto.
+     */
     private fun stable(o: ForkV2MixOverride?): String? =
-        mixOverride(o)?.let { n -> n.gridBpm = 0.0; ForkV2Json.write(n.toJson()) }
+        mixOverride(o)?.let { n -> n.beatMatch = if (n.loop()) null else n.beatMatchOf(); n.gridBpm = 0.0; ForkV2Json.write(n.toJson()) }
 
     private fun drawn(o: ForkV2MixOverride, lane: String): String? = o.drawing(lane)?.let { ForkV2Json.write(it.toJson()) }
 

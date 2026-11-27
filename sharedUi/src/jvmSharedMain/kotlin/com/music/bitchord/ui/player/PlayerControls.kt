@@ -2169,7 +2169,7 @@ private fun LosslessOrStats(
         // [nerdStats] exists there is something measured to show instead, so
         // only a genuinely unmeasured track — or a real race via
         // [stillRacing] — earns this label.
-        (stillRacing && nerdStats?.isLossless != true) ||
+        (stillRacing && nerdStats?.isLossless != true && !ForkUpgradeBadge.keeps(nerdStats)) || // fork: an addon copy that plays keeps its badge through the upgrade pass
             (isLoading && losslessRequested && nerdStats == null) -> LosslessLabel(
             text = stringResource(Res.string.upgrading_quality),
             iconPainter = painterResource(Res.drawable.ic_lossless),

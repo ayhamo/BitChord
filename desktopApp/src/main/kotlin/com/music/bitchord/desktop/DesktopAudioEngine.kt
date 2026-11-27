@@ -543,13 +543,14 @@ class DesktopPlaybackEngine(
         if (!ForkWindowCheckPc.passes(song, forkPlayingStream(song.videoId), better, current.positionMs)) return ForkNextRowPc.next(song, better, current = { _state.value.song?.videoId == song.videoId }) { DesktopMusicSources.upgradeFor(song, DesktopStream(url = "", format = current.streamFormat ?: DesktopStreamFormat(), sourceId = current.streamSourceId)) }?.let { take(song, it) } ?: false // fork: the rulebook's 12 s window check; no match stays on what plays, and the next row or source is asked, up to 4 (8.1.4), while the song still plays
         ForkUpgradeLength.expect(better) // fork: swapStream checks this copy's decoded length
         forkTaken = song.videoId to better // fork: see worthSwapping above
-        swapStream(song, better, current.positionMs)
+        swapStream(song, better, current.positionMs, forkQuiet = true) // fork: forkQuiet
         return true
     }
 
     /** Re-opens the current track on a different stream, carrying the playhead over. */
-    private fun swapStream(song: Song, stream: DesktopStream, positionMs: Long) {
+    private fun swapStream(song: Song, stream: DesktopStream, positionMs: Long, forkQuiet: Boolean = false) { // fork: forkQuiet, an upgrade pass's own swap
         ForkAddonCopyPc.switching(song.videoId, stream) // fork: the progress row's "Switching to the lossless copy…" until heard (editor.md §11 rule 6)
+        var forkHanded = false // fork: whether the copy reached the audio thread
         scope.launch {
             openTrack(song, stream, positionMs).fold(
                 onSuccess = { track ->
@@ -568,6 +569,7 @@ class DesktopPlaybackEngine(
                         track.startUs = latest.positionMs * 1_000
                     }
                     ForkAddonCopyPc.queued(song.videoId) // fork: the audio thread takes the watch over (ForkAddonCopyPc.engineStep)
+                    forkHanded = true // fork
                     commands += Command.ReplaceCurrent(track, playWhenReady = latest.isPlaying)
                 },
                 onFailure = { failure ->
@@ -575,12 +577,17 @@ class DesktopPlaybackEngine(
                         "could not open the copy of '${song.title}' from " +
                             "${DesktopMusicSources.sourceNameFor(stream)}: ${failure.message}",
                     )
-                    _state.update { it.copy(
+                    if (!forkQuiet) _state.update { it.copy( // fork: an upgrade pass's failure leaves the playing copy as it is, no error over it (extension 0ab9b80 M3)
                         error = "Could not switch version: ${failure.message ?: "that copy would not open"}",
                     ) }
                 },
             )
-        }.invokeOnCompletion { ForkAddonCopyPc.opened(song.videoId) } // fork: was `}`; a copy closed or failed before the audio thread had it ends its progress-row line
+        }.invokeOnCompletion {
+            ForkAddonCopyPc.opened(song.videoId) // fork: was `}`; a copy closed or failed before the audio thread had it ends its progress-row line
+            // fork: a copy refused, failed or closed before the audio thread had it is not what plays: later passes
+            // measure against the playing copy again (extension 0ab9b80 M3, "the upgrade gives the playing copy back")
+            if (!forkHanded && forkTaken?.second === stream) forkTaken = null
+        }
     }
 
     /** Re-opens the current track, keeping the playhead. */

@@ -2,6 +2,8 @@ package com.music.bitchord.desktop
 
 import com.music.bitchord.data.sources.ForkThisMachine
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -318,14 +320,14 @@ internal object ForkAddonStreamAssemble {
                 }
                 line.startsWith("#EXT-X-BYTERANGE:") -> {
                     val spec = line.substringAfter(':')
-                    pendingRange = spec.substringBefore('@').toLong() to spec.substringAfter('@', "").toLongOrNull()
+                    pendingRange = spec.substringBefore('@').trim().toLongOrNull()?.let { it to spec.substringAfter('@', "").trim().toLongOrNull() }
+                        ?: throw Refused("a byte range it can't read")
                 }
                 line.isNotEmpty() && !line.startsWith("#") -> {
                     val url = resolve(playlistUrl, line)
                     val range = pendingRange?.let { (length, offset) ->
                         val from = offset ?: nextOffset[url] ?: 0L
-                        nextOffset[url] = from + length
-                        from until from + length
+                        checkedRange(from, length).also { nextOffset[url] = it.last + 1 }
                     }
                     pendingRange = null
                     media += Ref(url, range)
@@ -340,8 +342,19 @@ internal object ForkAddonStreamAssemble {
 
     /** `n@o` (or `n`, from [after]) as an inclusive range. */
     private fun byteRange(spec: String, after: Long): LongRange {
-        val length = spec.substringBefore('@').trim().toLong()
+        val length = spec.substringBefore('@').trim().toLongOrNull() ?: throw Refused("a byte range it can't read")
         val from = spec.substringAfter('@', "").trim().toLongOrNull() ?: after
+        return checkedRange(from, length)
+    }
+
+    /**
+     * [length] bytes from [from], refused when empty, backwards, past [MAX_RANGE_BYTES] or past a Long (protocol.md
+     * 8.1.5, 2026-11-27: a malformed manifest is refused, never fetched; extension 0ab9b80 M2, the phone's B2-03).
+     */
+    internal fun checkedRange(from: Long, length: Long): LongRange {
+        if (from < 0 || length <= 0) throw Refused("an empty or backwards byte range")
+        if (length > MAX_RANGE_BYTES) throw Refused("a byte range over ${MAX_RANGE_BYTES / (1024 * 1024)} MB")
+        if (from > Long.MAX_VALUE - length) throw Refused("a byte range past the end")
         return from until from + length
     }
 
@@ -417,6 +430,7 @@ internal object ForkAddonStreamAssemble {
                         val stop = end ?: throw Refused("an open timeline with no duration")
                         while (t < stop) { times += t; t += d; if (times.size > MAX_SEGMENTS) throw Refused("too many segments") }
                     } else {
+                        if (r >= MAX_SEGMENTS - times.size) throw Refused("too many segments") // capped before anything is made (the phone's B2-06)
                         repeat((r + 1).toInt()) { times += t; t += d }
                     }
                     if (times.size > MAX_SEGMENTS) throw Refused("too many segments")
@@ -457,7 +471,8 @@ internal object ForkAddonStreamAssemble {
         if (spec.isEmpty()) return null
         val from = spec.substringBefore('-').trim().toLongOrNull() ?: return null
         val to = spec.substringAfter('-').trim().toLongOrNull() ?: return null
-        return from..to
+        if (to < from || to == Long.MAX_VALUE) throw Refused("an empty or backwards byte range")
+        return checkedRange(from, to - from + 1)
     }
 
     private val TEMPLATE = Regex("""\$(RepresentationID|Number|Time|Bandwidth)(%0(\d+)d)?\$|\$\$""")
@@ -471,7 +486,7 @@ internal object ForkAddonStreamAssemble {
                 "Time" -> time?.toString() ?: throw Refused("\$Time\$ in an initialization")
                 else -> vars[name].orEmpty()
             }
-            val width = m.groupValues[3].toIntOrNull()
+            val width = m.groupValues[3].let { if (it.isEmpty()) null else it.toIntOrNull()?.takeIf { w -> w <= MAX_WIDTH } ?: throw Refused("a template width over $MAX_WIDTH") }
             if (width != null && value.length < width) value.padStart(width, '0') else value
         }
 
@@ -563,6 +578,7 @@ internal object ForkAddonStreamAssemble {
                                 // a PES header: 00 00 01, stream id, length, two flag bytes, header length
                                 if (p + 9 > end || bytes[p] != 0.toByte() || bytes[p + 1] != 0.toByte() || bytes[p + 2] != 1.toByte()) throw Refused("a segment it can't read")
                                 p += 9 + (bytes[p + 8].toInt() and 0xFF)
+                                if (p > end) throw Refused("a segment it can't read") // a header longer than its packet (extension 0ab9b80 L5)
                                 inPes = true
                             }
                             if (inPes && p < end) out.write(bytes, p, end - p)
@@ -628,7 +644,9 @@ internal object ForkAddonStreamAssemble {
                     .apply { range?.let { header("Range", "bytes=${it.first}-${it.last}") } }
                     .build()
                 val answer = try {
-                    client.newCall(request).await().use { response -> read(response, range, limit) }
+                    // the body read is interruptible: a sibling that fails, or the 120 s limit, stops this one at once
+                    // rather than at its own 30 s (protocol.md 8.1.5, 2026-11-27; extension 0ab9b80 L3)
+                    client.newCall(request).await().use { response -> runInterruptible(Dispatchers.IO) { read(response, range, limit) } }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Refused) {
@@ -732,6 +750,10 @@ internal object ForkAddonStreamAssemble {
     private const val TS_SYNC: Byte = 0x47
     private const val MAX_REDIRECTS = 5
     private const val MAX_SEGMENTS = 20_000
+    /** One byte range at most (the phone's B2-03). */
+    internal const val MAX_RANGE_BYTES = 64L * 1024 * 1024
+    /** A `%0Nd` width at most (the phone's B2-02). */
+    private const val MAX_WIDTH = 32
 
     /** Above this the whole-file index is left out: reading the file back in would hold it twice in memory. */
     private const val SIDX_MAX_BYTES = 100L * 1024 * 1024

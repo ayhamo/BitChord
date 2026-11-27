@@ -483,6 +483,25 @@ class ForkV2EditorCasesTest {
         assertTrue((auto.warnings ?: emptyList()).joinToString(" ").contains("without beat match"), "${auto.warnings}")
     }
 
+    /** An imported mix (gridBpm) beat-matches as Sync; a file's Off stays Off; a listener's Auto gives Automix's limits back (mix-file.md rule 6, 2026-11-26 [all]). */
+    @Test
+    fun anImportedMixBeatMatchesAsSync() {
+        val a = ForkV2PlannerTest.song("a", 100.0, 200.0, 0.9)
+        val b = ForkV2PlannerTest.song("b", 109.0, 200.0, 0.9) // 9% apart: past Automix's 8%
+        val imported = plan(v3(), a, b, ov("""{"preset":"smooth","bars":8,"gridBpm":100}"""))
+        assertEquals("blend", imported.style, "${imported.reason}")
+        assertTrue(imported.warnings.isNullOrEmpty(), "${imported.warnings}")
+        assertTrue(imported.pickedTempo)
+        assertEquals("crossfade", plan(v3(), a, b, ov("""{"preset":"smooth","bars":8,"gridBpm":100,"beatMatch":"off"}""")).style)
+        val auto = ov("""{"preset":"smooth","bars":8,"gridBpm":100,"beatMatch":"auto"}""")!!
+        assertEquals("auto", auto.beatMatch, "an Auto on an imported mix is kept")
+        assertTrue((plan(v3(), a, b, auto).warnings ?: emptyList()).joinToString(" ").contains("without beat match"))
+        val editor = ov("""{"preset":"smooth","bars":8,"beatMatch":"auto"}""")!!
+        assertEquals(null, editor.beatMatch, "an editor pick's Auto is still dropped")
+        assertTrue((plan(v3(), a, b, editor).warnings ?: emptyList()).joinToString(" ").contains("without beat match"))
+        assertEquals("auto", ov("""{"preset":"loop","gridBpm":100}""")!!.beatMatchOf())
+    }
+
     /** A length picked on a weak grid is kept and plays without beat match; Auto alone still shortens (editor.md §6, ruled 2026-11-26 [all]). */
     @Test
     fun aLengthPickedOnAWeakGridIsKeptWithoutBeatMatch() {

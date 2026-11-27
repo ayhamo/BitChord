@@ -86,6 +86,20 @@ object ForkManifestPlay {
         return ForkManifestCheck.linkAllowed(to.toString())
     }
 
+    /**
+     * An addon request's redirect hop judged before it is followed ([hopAllowed]: https, not this phone; protocol.md §1
+     * Redirects, 2026-11-27, the phone's B2-04): the addon client's search and /stream followed any hop.
+     */
+    val redirectGuard = okhttp3.Interceptor { chain ->
+        val request = chain.request()
+        val response = chain.proceed(request)
+        if (response.isRedirect && !hopAllowed(request.url, response.header("Location"))) {
+            response.close()
+            throw IOException("refused: a redirect off https or to this machine")
+        }
+        response
+    }
+
     private val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .connectionPool(Http.client.connectionPool)

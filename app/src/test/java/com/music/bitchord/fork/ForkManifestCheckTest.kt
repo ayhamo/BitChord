@@ -121,6 +121,10 @@ class ForkManifestCheckTest {
         val master = master("#EXT-X-STREAM-INF:BANDWIDTH=1,CODECS=\"mp4a.40.2\"", "a.m3u8")
         assertEquals(u, check(mapOf("${base}master.m3u8" to master)).first) // its media playlist won't load
         assertEquals(u, check(mapOf("${base}master.m3u8" to "#EXTM3U\n#EXT-X-ENDLIST")).first) // no segment
+        // protocol.md 8.1.5 (2026-11-27): an init segment with no link, and a manifest that throws while read, are refusals
+        assertEquals(u, check(mapOf("${base}master.m3u8" to media.replace("#EXT-X-MAP:URI=\"init.mp4\"", "#EXT-X-MAP:BYTERANGE=\"100@0\""))).first)
+        val deep = "<?xml version=\"1.0\"?><MPD xmlns=\"urn:mpeg:dash:schema:mpd:2011\" type=\"static\">" + "<a>".repeat(200_000) + "</a>".repeat(200_000) + "</MPD>"
+        assertEquals(u, check(mapOf("${base}master.mpd" to deep), url = "${base}master.mpd").first)
     }
 
     private fun mpd(body: String, type: String = "static") =

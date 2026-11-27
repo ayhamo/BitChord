@@ -117,7 +117,8 @@ class ForkV2Curves {
                 i.add(doubleArrayOf(D, sIn))
                 c.out["rate"] = o.toTypedArray()
                 c.`in`["rate"] = i.toTypedArray()
-            } else if (style == "blend" && abs(rate - 1) > 1e-9 && abs(rate - sIn) > 1e-9) {
+            } else if (style == "blend" && abs(rate - sIn) > 1e-9) {
+                // (also at a rate of x1 when B has a speed of its own: extension 0ab9b80 L2)
                 // the glide back to B's speed, timed as the player times it (ForkV2Mix: |rate − to| in GLIDE_STEPs; automix.js
                 // glideBack). Written as |1 + rate − sIn − 1| it lost a step to rounding (1 + 1.05 − 1 is 1.0499…98).
                 val back = abs(rate - sIn)

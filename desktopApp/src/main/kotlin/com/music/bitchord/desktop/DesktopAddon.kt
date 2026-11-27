@@ -498,11 +498,29 @@ internal class DesktopAddonClient(rawBaseUrl: String, private val forkSourceId: 
             callTimeoutMs: Long = CALL_TIMEOUT_MS,
             readTimeoutMs: Long = READ_TIMEOUT_MS,
         ) = HttpClient(OkHttp) {
+            engine { addNetworkInterceptor(forkRedirectGuard) } // fork: each redirect hop judged before it is followed (protocol.md §1 Redirects, 2026-11-27)
             install(HttpTimeout) {
                 requestTimeoutMillis = callTimeoutMs
                 socketTimeoutMillis = readTimeoutMs
                 connectTimeoutMillis = CONNECT_TIMEOUT_MS
             }
+        }
+        /**
+         * Fork: a redirect hop of an addon's search or /stream judged before it is followed
+         * ([ForkDirectSourceCheck.hopAllowed]: https and not this machine, or a local addon's own origin; protocol.md §1
+         * Redirects, 2026-11-27, the phone's B2-04). Ktor's OkHttp engine followed any hop.
+         */
+        internal val forkRedirectGuard = okhttp3.Interceptor { chain ->
+            val request = chain.request()
+            val response = chain.proceed(request)
+            if (response.isRedirect) {
+                val next = response.header("Location")?.let { request.url.resolve(it) }
+                if (next == null || !ForkDirectSourceCheck.hopAllowed(request.url, next)) {
+                    response.close()
+                    throw java.io.IOException("refused: a redirect off https or to this machine")
+                }
+            }
+            response
         }
         const val MANIFEST_TTL_MS = 10 * 60 * 1000L
         const val SEARCH_TTL_MS = 10 * 60 * 1000L

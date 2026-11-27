@@ -1214,7 +1214,7 @@ internal fun ForkTransitionEditor(live: Boolean, view: MixTransitionView?, modif
                     modifier = Modifier.padding(start = 76.dp, bottom = 4.dp),
                 )
             }
-            val bm = ov?.beatMatch ?: "auto"
+            val bm = ov?.beatMatchOf() ?: "auto" // fork: an imported mix shows Sync (mix-file.md rule 6)
             EditorRow("Beat match") {
                 for ((id, name) in listOf("auto" to "Auto", "sync" to "Sync", "glide" to "Glide", "off" to "Off")) {
                     EditorChip(name, lit = bm == id, enabled = on && m.preset != "loop" && m.preset != "none") { edit(m, false) { beatMatch = id } }
